@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -26,6 +27,42 @@ func getHTTPClient() *http.Client {
 
 // Environment variable pattern for safe parsing
 var envVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+
+// validatePathParameter validates a path parameter to prevent security issues
+func validatePathParameter(name, value string) error {
+	// Check for path traversal attempts
+	if strings.Contains(value, "..") {
+		return fmt.Errorf("path traversal attempt detected")
+	}
+	
+	// Check for null bytes
+	if strings.Contains(value, "\x00") {
+		return fmt.Errorf("null byte injection detected")
+	}
+	
+	// Check for URL encoding attacks
+	if strings.Contains(value, "%2e%2e") || strings.Contains(value, "%252e") {
+		return fmt.Errorf("encoded path traversal detected")
+	}
+	
+	// Limit length to prevent buffer overflow attacks
+	const maxParamLength = 1024
+	if len(value) > maxParamLength {
+		return fmt.Errorf("parameter too long (max %d chars)", maxParamLength)
+	}
+	
+	return nil
+}
+
+// isComplexType checks if a value is a complex type (map, slice, etc)
+func isComplexType(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any, []map[string]any:
+		return true
+	default:
+		return false
+	}
+}
 
 // HTTPAdapter is a unified HTTP adapter that handles both manifest-based and generic HTTP requests.
 type HTTPAdapter struct {
@@ -72,19 +109,58 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	// Prepare headers
 	headers := a.prepareManifestHeaders(enrichedInputs)
 
+	// Replace path parameters in URL with validation
+	url := a.ToolManifest.Endpoint
+	for k, v := range enrichedInputs {
+		placeholder := "{" + k + "}"
+		// Handle string values with security validation
+		if str, ok := v.(string); ok {
+			// Validate to prevent path traversal attacks
+			if err := validatePathParameter(k, str); err != nil {
+				return nil, utils.Errorf("invalid path parameter %s: %w", k, err)
+			}
+			url = strings.ReplaceAll(url, placeholder, str)
+		}
+		// Handle other types by converting to string
+		if v != nil && !isComplexType(v) {
+			sanitized := fmt.Sprintf("%v", v)
+			if err := validatePathParameter(k, sanitized); err != nil {
+				return nil, utils.Errorf("invalid path parameter %s: %w", k, err)
+			}
+			url = strings.ReplaceAll(url, placeholder, sanitized)
+		}
+	}
+
+	// Determine HTTP method (default to POST for manifest tools)
+	method := constants.HTTPMethodPOST
+	if a.ToolManifest.Method != "" {
+		method = a.ToolManifest.Method
+	}
+
 	// Create request
 	req := HTTPRequest{
-		Method:  constants.HTTPMethodPOST,
-		URL:     a.ToolManifest.Endpoint,
+		Method:  method,
+		URL:     url,
 		Headers: headers,
 	}
 
-	// Marshal body
-	body, err := json.Marshal(enrichedInputs)
-	if err != nil {
-		return nil, utils.Errorf("failed to marshal request body: %w", err)
+	// Marshal body (but not for GET requests)
+	if method != constants.HTTPMethodGET {
+		// Filter out parameters that are used in the URL path
+		bodyInputs := make(map[string]any)
+		for k, v := range enrichedInputs {
+			// Skip parameters that appear as placeholders in the original endpoint
+			if !strings.Contains(a.ToolManifest.Endpoint, "{"+k+"}") {
+				bodyInputs[k] = v
+			}
+		}
+		
+		body, err := json.Marshal(bodyInputs)
+		if err != nil {
+			return nil, utils.Errorf("failed to marshal request body: %w", err)
+		}
+		req.Body = body
 	}
-	req.Body = body
 
 	// Execute request
 	return a.executeHTTPRequest(ctx, req)

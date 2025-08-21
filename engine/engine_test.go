@@ -21,7 +21,158 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Set test environment variables
+	os.Setenv("TEST_ENV_VAR", "test_value_123")
+	os.Setenv("BEEMFLOW_TEST_TOKEN", "secret_token_456")
+	
 	utils.WithCleanDirs(m, ".beemflow", config.DefaultConfigDir, config.DefaultFlowsDir)
+}
+
+// TestEnvironmentVariablesInTemplates tests that environment variables are accessible in templates
+func TestEnvironmentVariablesInTemplates(t *testing.T) {
+	e := NewDefaultEngine(context.Background())
+	
+	// Create a flow that uses environment variables
+	flow := &model.Flow{
+		Name: "env-test",
+		Steps: []model.Step{
+			{
+				ID:  "test_env",
+				Use: "core.echo",
+				With: map[string]interface{}{
+					"text": "Env var: {{ env.TEST_ENV_VAR }}, Token: {{ env.BEEMFLOW_TEST_TOKEN }}",
+				},
+			},
+		},
+	}
+	
+	outputs, err := e.Execute(context.Background(), flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("failed to execute flow: %v", err)
+	}
+	
+	// Check that environment variables were properly substituted
+	echoOutput, ok := outputs["test_env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output from echo step, got %T", outputs["test_env"])
+	}
+	
+	text, ok := echoOutput["text"].(string)
+	if !ok {
+		t.Fatalf("expected string text in echo output, got %T", echoOutput["text"])
+	}
+	
+	expectedText := "Env var: test_value_123, Token: secret_token_456"
+	if text != expectedText {
+		t.Errorf("expected text '%s', got '%s'", expectedText, text)
+	}
+}
+
+// TestTemplateDataPrepare tests that template data is properly prepared with all fields
+func TestTemplateDataPrepare(t *testing.T) {
+	e := NewDefaultEngine(context.Background())
+	
+	// Create a step context with test data
+	stepCtx := NewStepContext(
+		map[string]any{"event_key": "event_value"},
+		map[string]any{"var_key": "var_value"},
+		map[string]any{"secret_key": "secret_value"},
+	)
+	stepCtx.Outputs = map[string]any{
+		"prev_step": map[string]any{"result": "success"},
+	}
+	
+	templateData := e.prepareTemplateData(stepCtx)
+	
+	// Verify all fields are populated
+	if templateData.Event["event_key"] != "event_value" {
+		t.Errorf("Event data not properly set")
+	}
+	
+	if templateData.Vars["var_key"] != "var_value" {
+		t.Errorf("Vars data not properly set")
+	}
+	
+	if templateData.Outputs["prev_step"].(map[string]any)["result"] != "success" {
+		t.Errorf("Outputs data not properly set")
+	}
+	
+	if templateData.Secrets["secret_key"] != "secret_value" {
+		t.Errorf("Secrets data not properly set")
+	}
+	
+	// Check that environment variables are included
+	if len(templateData.Env) == 0 {
+		t.Errorf("Environment variables not included in template data")
+	}
+	
+	// Check specific test env vars
+	if templateData.Env["TEST_ENV_VAR"] != "test_value_123" {
+		t.Errorf("TEST_ENV_VAR not properly included in env map")
+	}
+}
+
+// TestSecretMasking tests that sensitive fields are properly masked in logs
+func TestSecretMasking(t *testing.T) {
+	// Test input with various sensitive fields
+	input := map[string]any{
+		"url": "https://api.example.com",
+		"method": "POST",
+		"headers": map[string]any{
+			"Authorization": "Bearer secret-token-12345",
+			"Content-Type": "application/json",
+			"X-API-Key": "api-key-67890",
+		},
+		"body": map[string]any{
+			"data": "normal data",
+			"password": "super-secret-password",
+			"nested": map[string]any{
+				"access_token": "nested-token-abc",
+				"normal_field": "visible",
+			},
+		},
+	}
+	
+	// Mask the sensitive fields
+	masked := maskSensitiveFields(input)
+	
+	// Check that sensitive fields are masked
+	headers := masked["headers"].(map[string]any)
+	if headers["Authorization"] != "***MASKED***" {
+		t.Errorf("Authorization header not masked: %v", headers["Authorization"])
+	}
+	if headers["X-API-Key"] != "***MASKED***" {
+		t.Errorf("X-API-Key header not masked: %v", headers["X-API-Key"])
+	}
+	if headers["Content-Type"] != "application/json" {
+		t.Errorf("Content-Type should not be masked: %v", headers["Content-Type"])
+	}
+	
+	// Check body masking
+	body := masked["body"].(map[string]any)
+	if body["password"] != "***MASKED***" {
+		t.Errorf("Password field not masked: %v", body["password"])
+	}
+	if body["data"] != "normal data" {
+		t.Errorf("Normal data should not be masked: %v", body["data"])
+	}
+	
+	// Check nested masking
+	nested := body["nested"].(map[string]any)
+	if nested["access_token"] != "***MASKED***" {
+		t.Errorf("Nested access_token not masked: %v", nested["access_token"])
+	}
+	if nested["normal_field"] != "visible" {
+		t.Errorf("Normal nested field should not be masked: %v", nested["normal_field"])
+	}
+	
+	// Check that non-sensitive fields remain unchanged
+	if masked["url"] != "https://api.example.com" {
+		t.Errorf("URL should not be masked: %v", masked["url"])
+	}
+	if masked["method"] != "POST" {
+		t.Errorf("Method should not be masked: %v", masked["method"])
+	}
 }
 
 func TestGenerateDeterministicRunID(t *testing.T) {
