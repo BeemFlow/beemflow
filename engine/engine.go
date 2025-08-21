@@ -36,19 +36,19 @@ func generateDeterministicRunID(flowName string, event map[string]any) uuid.UUID
 	// Build raw data for UUID v5 generation
 	var data []byte
 	data = append(data, []byte(flowName)...)
-	
+
 	// Add time window (5 minute buckets) to allow same workflow to run again after window
 	now := time.Now().UTC()
 	timeBucket := now.Truncate(5 * time.Minute).Unix()
 	data = append(data, []byte(fmt.Sprintf(":%d", timeBucket))...)
-	
+
 	// Sort map keys for deterministic ordering
 	keys := make([]string, 0, len(event))
 	for k := range event {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	
+
 	// Add event data in sorted order
 	for _, k := range keys {
 		data = append(data, []byte(k)...)
@@ -59,7 +59,7 @@ func generateDeterministicRunID(flowName string, event map[string]any) uuid.UUID
 			data = append(data, []byte(fmt.Sprintf("%v", event[k]))...)
 		}
 	}
-	
+
 	// Generate UUID v5 (deterministic) using SHA1 internally
 	// uuid.NewSHA1 will hash the raw data with SHA1
 	return uuid.NewSHA1(uuid.NameSpaceDNS, data)
@@ -220,7 +220,7 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 	// Setup execution context
 	stepCtx, runID := e.setupExecutionContext(ctx, flow, event)
-	
+
 	// Check if this is a duplicate run
 	if runID == uuid.Nil {
 		// Duplicate detected - return empty outputs and no error to signal successful deduplication
@@ -244,7 +244,7 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 
 	// Create deterministic run ID based on flow name, event data, and time window
 	runID := generateDeterministicRunID(flow.Name, event)
-	
+
 	// Check if this run already exists (deduplication)
 	existingRun, err := e.Storage.GetRun(ctx, runID)
 	if err == nil && existingRun != nil {
@@ -257,7 +257,7 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 		// Older run with same ID, generate a new unique ID
 		runID = uuid.New()
 	}
-	
+
 	run := &model.Run{
 		ID:        runID,
 		FlowName:  flow.Name,
@@ -959,7 +959,7 @@ func (e *Engine) handleToolExecution(ctx context.Context, toolName, stepID strin
 // prepareTemplateData creates template data from step context
 func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 	snapshot := stepCtx.Snapshot()
-	
+
 	// Get environment variables but with lazy loading for security
 	// We create a proxy map that loads values on demand
 	env := createEnvProxy()
@@ -1386,8 +1386,12 @@ func setEmptyOutputAndError(stepCtx *StepContext, stepID, errMsg string, args ..
 }
 
 // logToolPayload logs the tool payload for debugging, handling marshal errors gracefully
+// It masks sensitive fields to prevent secret exposure in logs
 func logToolPayload(ctx context.Context, toolName string, inputs map[string]any) {
-	result := utils.MarshalJSON(inputs)
+	// Create a copy and mask sensitive fields
+	masked := maskSensitiveFields(inputs)
+
+	result := utils.MarshalJSON(masked)
 	if result.Err == nil {
 		utils.Debug("tool %s payload: %s", toolName, result.Data)
 	} else {
@@ -1395,10 +1399,70 @@ func logToolPayload(ctx context.Context, toolName string, inputs map[string]any)
 	}
 }
 
+// maskSensitiveFields creates a copy of the input map with sensitive values masked
+func maskSensitiveFields(inputs map[string]any) map[string]any {
+	masked := make(map[string]any)
+
+	for k, v := range inputs {
+		// Check if this is a sensitive field
+		if isSensitiveField(k) {
+			// Mask the value but show it exists
+			if str, ok := v.(string); ok && len(str) > 0 {
+				masked[k] = "***MASKED***"
+			} else if m, ok := v.(map[string]any); ok {
+				// Recursively mask nested maps (like headers)
+				masked[k] = maskSensitiveFields(m)
+			} else {
+				masked[k] = "***MASKED***"
+			}
+		} else if m, ok := v.(map[string]any); ok {
+			// Recursively check nested maps
+			masked[k] = maskSensitiveFields(m)
+		} else {
+			// Keep non-sensitive values as-is
+			masked[k] = v
+		}
+	}
+
+	return masked
+}
+
+// isSensitiveField checks if a field name indicates sensitive data
+func isSensitiveField(fieldName string) bool {
+	lower := strings.ToLower(fieldName)
+
+	// List of sensitive field patterns
+	sensitivePatterns := []string{
+		"authorization",
+		"auth",
+		"token",
+		"key",
+		"secret",
+		"password",
+		"pwd",
+		"api_key",
+		"apikey",
+		"access_token",
+		"refresh_token",
+		"bearer",
+		"credential",
+	}
+
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // logToolOutputs logs tool execution outputs for debugging
 func logToolOutputs(stepID string, outputs map[string]any) {
-	utils.Debug("Writing outputs for step %s: %+v", stepID, outputs)
-	utils.Debug("Outputs map after step %s: %+v", stepID, outputs)
+	// Mask sensitive fields in outputs too
+	masked := maskSensitiveFields(outputs)
+	utils.Debug("Writing outputs for step %s: %+v", stepID, masked)
+	utils.Debug("Outputs map after step %s: %+v", stepID, masked)
 }
 
 // flattenTemplateDataToMap creates a flattened map for template rendering

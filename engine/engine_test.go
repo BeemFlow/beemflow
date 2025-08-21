@@ -112,6 +112,69 @@ func TestTemplateDataPrepare(t *testing.T) {
 	}
 }
 
+// TestSecretMasking tests that sensitive fields are properly masked in logs
+func TestSecretMasking(t *testing.T) {
+	// Test input with various sensitive fields
+	input := map[string]any{
+		"url": "https://api.example.com",
+		"method": "POST",
+		"headers": map[string]any{
+			"Authorization": "Bearer secret-token-12345",
+			"Content-Type": "application/json",
+			"X-API-Key": "api-key-67890",
+		},
+		"body": map[string]any{
+			"data": "normal data",
+			"password": "super-secret-password",
+			"nested": map[string]any{
+				"access_token": "nested-token-abc",
+				"normal_field": "visible",
+			},
+		},
+	}
+	
+	// Mask the sensitive fields
+	masked := maskSensitiveFields(input)
+	
+	// Check that sensitive fields are masked
+	headers := masked["headers"].(map[string]any)
+	if headers["Authorization"] != "***MASKED***" {
+		t.Errorf("Authorization header not masked: %v", headers["Authorization"])
+	}
+	if headers["X-API-Key"] != "***MASKED***" {
+		t.Errorf("X-API-Key header not masked: %v", headers["X-API-Key"])
+	}
+	if headers["Content-Type"] != "application/json" {
+		t.Errorf("Content-Type should not be masked: %v", headers["Content-Type"])
+	}
+	
+	// Check body masking
+	body := masked["body"].(map[string]any)
+	if body["password"] != "***MASKED***" {
+		t.Errorf("Password field not masked: %v", body["password"])
+	}
+	if body["data"] != "normal data" {
+		t.Errorf("Normal data should not be masked: %v", body["data"])
+	}
+	
+	// Check nested masking
+	nested := body["nested"].(map[string]any)
+	if nested["access_token"] != "***MASKED***" {
+		t.Errorf("Nested access_token not masked: %v", nested["access_token"])
+	}
+	if nested["normal_field"] != "visible" {
+		t.Errorf("Normal nested field should not be masked: %v", nested["normal_field"])
+	}
+	
+	// Check that non-sensitive fields remain unchanged
+	if masked["url"] != "https://api.example.com" {
+		t.Errorf("URL should not be masked: %v", masked["url"])
+	}
+	if masked["method"] != "POST" {
+		t.Errorf("Method should not be masked: %v", masked["method"])
+	}
+}
+
 func TestGenerateDeterministicRunID(t *testing.T) {
 	// Test that the same inputs generate the same UUID
 	flowName := "test-flow"
