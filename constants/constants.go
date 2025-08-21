@@ -227,6 +227,7 @@ const (
 	TemplateFieldOutputs = "outputs"
 	TemplateFieldSecrets = "secrets"
 	TemplateFieldSteps   = "steps"
+	TemplateFieldEnv     = "env"
 )
 
 // Engine error messages

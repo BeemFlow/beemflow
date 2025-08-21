@@ -21,7 +21,95 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Set test environment variables
+	os.Setenv("TEST_ENV_VAR", "test_value_123")
+	os.Setenv("BEEMFLOW_TEST_TOKEN", "secret_token_456")
+	
 	utils.WithCleanDirs(m, ".beemflow", config.DefaultConfigDir, config.DefaultFlowsDir)
+}
+
+// TestEnvironmentVariablesInTemplates tests that environment variables are accessible in templates
+func TestEnvironmentVariablesInTemplates(t *testing.T) {
+	e := NewDefaultEngine(context.Background())
+	
+	// Create a flow that uses environment variables
+	flow := &model.Flow{
+		Name: "env-test",
+		Steps: []model.Step{
+			{
+				ID:  "test_env",
+				Use: "core.echo",
+				With: map[string]interface{}{
+					"text": "Env var: {{ env.TEST_ENV_VAR }}, Token: {{ env.BEEMFLOW_TEST_TOKEN }}",
+				},
+			},
+		},
+	}
+	
+	outputs, err := e.Execute(context.Background(), flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("failed to execute flow: %v", err)
+	}
+	
+	// Check that environment variables were properly substituted
+	echoOutput, ok := outputs["test_env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output from echo step, got %T", outputs["test_env"])
+	}
+	
+	text, ok := echoOutput["text"].(string)
+	if !ok {
+		t.Fatalf("expected string text in echo output, got %T", echoOutput["text"])
+	}
+	
+	expectedText := "Env var: test_value_123, Token: secret_token_456"
+	if text != expectedText {
+		t.Errorf("expected text '%s', got '%s'", expectedText, text)
+	}
+}
+
+// TestTemplateDataPrepare tests that template data is properly prepared with all fields
+func TestTemplateDataPrepare(t *testing.T) {
+	e := NewDefaultEngine(context.Background())
+	
+	// Create a step context with test data
+	stepCtx := NewStepContext(
+		map[string]any{"event_key": "event_value"},
+		map[string]any{"var_key": "var_value"},
+		map[string]any{"secret_key": "secret_value"},
+	)
+	stepCtx.Outputs = map[string]any{
+		"prev_step": map[string]any{"result": "success"},
+	}
+	
+	templateData := e.prepareTemplateData(stepCtx)
+	
+	// Verify all fields are populated
+	if templateData.Event["event_key"] != "event_value" {
+		t.Errorf("Event data not properly set")
+	}
+	
+	if templateData.Vars["var_key"] != "var_value" {
+		t.Errorf("Vars data not properly set")
+	}
+	
+	if templateData.Outputs["prev_step"].(map[string]any)["result"] != "success" {
+		t.Errorf("Outputs data not properly set")
+	}
+	
+	if templateData.Secrets["secret_key"] != "secret_value" {
+		t.Errorf("Secrets data not properly set")
+	}
+	
+	// Check that environment variables are included
+	if len(templateData.Env) == 0 {
+		t.Errorf("Environment variables not included in template data")
+	}
+	
+	// Check specific test env vars
+	if templateData.Env["TEST_ENV_VAR"] != "test_value_123" {
+		t.Errorf("TEST_ENV_VAR not properly included in env map")
+	}
 }
 
 func TestGenerateDeterministicRunID(t *testing.T) {

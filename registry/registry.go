@@ -20,6 +20,7 @@ type RegistryEntry struct {
 	Kind        string            `json:"kind,omitempty"`
 	Parameters  map[string]any    `json:"parameters,omitempty"`
 	Endpoint    string            `json:"endpoint,omitempty"`
+	Method      string            `json:"method,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	// MCP server fields
 	Command   string            `json:"command,omitempty"`
@@ -212,5 +213,6 @@ type ToolManifest struct {
 	Kind        string            `json:"kind"`
 	Parameters  map[string]any    `json:"parameters"`
 	Endpoint    string            `json:"endpoint,omitempty"`
+	Method      string            `json:"method,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 }

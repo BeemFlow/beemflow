@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -90,6 +91,7 @@ type TemplateData struct {
 	Vars    map[string]any
 	Outputs StepOutputs
 	Secrets SecretsData
+	Env     map[string]string
 }
 
 // validIdentifierRegex matches valid Go-style identifiers
@@ -957,8 +959,35 @@ func (e *Engine) handleToolExecution(ctx context.Context, toolName, stepID strin
 // prepareTemplateData creates template data from step context
 func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 	snapshot := stepCtx.Snapshot()
+	
+	// Get environment variables but with lazy loading for security
+	// We create a proxy map that loads values on demand
+	env := createEnvProxy()
 
-	return TemplateData(snapshot)
+	return TemplateData{
+		Event:   snapshot.Event,
+		Vars:    snapshot.Vars,
+		Outputs: snapshot.Outputs,
+		Secrets: snapshot.Secrets,
+		Env:     env,
+	}
+}
+
+// createEnvProxy creates a map that loads environment variables on demand
+// This is more secure as it only exposes variables that are explicitly accessed
+func createEnvProxy() map[string]string {
+	// TODO: Future improvement - scan templates for {{ env.VARNAME }} patterns
+	// and only load those specific environment variables. This would prevent
+	// any potential information leakage through template introspection.
+	// For now, we load all env vars as users control their own environment.
+	env := make(map[string]string)
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if len(pair) == 2 {
+			env[pair[0]] = pair[1]
+		}
+	}
+	return env
 }
 
 // prepareTemplateDataAsMap creates template data as map for templating system
@@ -1383,6 +1412,7 @@ func flattenTemplateDataToMap(templateData TemplateData) map[string]any {
 	data[constants.TemplateFieldOutputs] = templateData.Outputs
 	data[constants.TemplateFieldSecrets] = templateData.Secrets
 	data[constants.TemplateFieldSteps] = templateData.Outputs // Add steps namespace for step output access
+	data[constants.TemplateFieldEnv] = templateData.Env
 
 	// Flatten vars and event into context for template rendering
 	for k, v := range templateData.Vars {

@@ -10,12 +10,8 @@ import _ "embed"
 var BeemflowSpec string
 
 // BeemflowComprehensive is the ultimate comprehensive BeemFlow documentation.
-//
-// This is the exhaustive, LLM-ingestible reference for BeemFlow, suitable for training,
-// implementation, and integration by AI agents and developers worldwide.
-//
-//go:embed BEEMFLOW.md
-var BeemflowComprehensive string
+// Currently disabled until BEEMFLOW.md is created.
+// var BeemflowComprehensive string
 
 //go:embed beemflow.schema.json
 var BeemflowSchema string

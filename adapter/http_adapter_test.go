@@ -14,6 +14,216 @@ import (
 	"github.com/awantoch/beemflow/registry"
 )
 
+// TestHTTPAdapter_PathParameterSubstitution tests path parameter replacement in manifest URLs
+func TestHTTPAdapter_PathParameterSubstitution(t *testing.T) {
+	// Create a test server that verifies the path
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check that path parameters were properly substituted
+		if !strings.Contains(r.URL.Path, "test-sheet-id") || !strings.Contains(r.URL.Path, "Sheet1!A:D") {
+			t.Errorf("Path parameters not substituted. Got path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		
+		// Check that path parameters are NOT in the body
+		body, _ := io.ReadAll(r.Body)
+		var bodyData map[string]any
+		json.Unmarshal(body, &bodyData)
+		
+		if _, exists := bodyData["spreadsheetId"]; exists {
+			t.Errorf("spreadsheetId should not be in request body")
+			w.WriteHeader(400)
+			return
+		}
+		
+		if _, exists := bodyData["range"]; exists {
+			t.Errorf("range should not be in request body")
+			w.WriteHeader(400)
+			return
+		}
+		
+		// Check that only non-path parameters are in body
+		if bodyData["values"] == nil {
+			t.Errorf("values should be in request body")
+			w.WriteHeader(400)
+			return
+		}
+		
+		w.WriteHeader(200)
+		w.Write([]byte(`{"success": true}`))
+	}))
+	defer server.Close()
+	
+	// Create manifest with path parameters
+	manifest := &registry.ToolManifest{
+		Name:        "test.sheets.append",
+		Description: "Test Google Sheets append",
+		Endpoint:    server.URL + "/spreadsheets/{spreadsheetId}/values/{range}:append",
+		Method:      "POST",
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+	}
+	
+	adapter := &HTTPAdapter{
+		AdapterID:    "http",
+		ToolManifest: manifest,
+	}
+	
+	// Execute with path parameters and body data
+	result, err := adapter.Execute(context.Background(), map[string]any{
+		"spreadsheetId": "test-sheet-id",
+		"range":         "Sheet1!A:D",
+		"values": [][]any{
+			{"2025-08-21", "Test Title", "Test Content", "pending"},
+		},
+	})
+	
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	
+	if result["success"] != true {
+		t.Errorf("Expected success=true, got %v", result)
+	}
+}
+
+// TestHTTPAdapter_SecurityValidation tests security measures for path parameters
+func TestHTTPAdapter_SecurityValidation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok": true}`))
+	}))
+	defer server.Close()
+	
+	manifest := &registry.ToolManifest{
+		Name:     "test.security",
+		Endpoint: server.URL + "/api/{resource}/{id}",
+		Method:   "GET",
+	}
+	
+	adapter := &HTTPAdapter{
+		AdapterID:    "http",
+		ToolManifest: manifest,
+	}
+	
+	// Test path traversal attempts
+	testCases := []struct {
+		name      string
+		params    map[string]any
+		shouldErr bool
+		errMsg    string
+	}{
+		{
+			name: "valid parameters",
+			params: map[string]any{
+				"resource": "users",
+				"id":       "123",
+			},
+			shouldErr: false,
+		},
+		{
+			name: "path traversal with ..",
+			params: map[string]any{
+				"resource": "../etc/passwd",
+				"id":       "123",
+			},
+			shouldErr: true,
+			errMsg:    "path traversal",
+		},
+		{
+			name: "null byte injection",
+			params: map[string]any{
+				"resource": "users\x00.txt",
+				"id":       "123",
+			},
+			shouldErr: true,
+			errMsg:    "null byte",
+		},
+		{
+			name: "encoded path traversal",
+			params: map[string]any{
+				"resource": "%2e%2e/etc/passwd",
+				"id":       "123",
+			},
+			shouldErr: true,
+			errMsg:    "encoded path traversal",
+		},
+		{
+			name: "very long parameter",
+			params: map[string]any{
+				"resource": strings.Repeat("a", 2000),
+				"id":       "123",
+			},
+			shouldErr: true,
+			errMsg:    "too long",
+		},
+	}
+	
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adapter.Execute(context.Background(), tc.params)
+			
+			if tc.shouldErr {
+				if err == nil {
+					t.Errorf("Expected error for %s, got none", tc.name)
+				} else if !strings.Contains(err.Error(), tc.errMsg) {
+					t.Errorf("Expected error containing '%s', got: %v", tc.errMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for %s: %v", tc.name, err)
+				}
+			}
+		})
+	}
+}
+
+// TestHTTPAdapter_EnvironmentVariableExpansion tests $env: variable expansion in manifests
+func TestHTTPAdapter_EnvironmentVariableExpansion(t *testing.T) {
+	// Set test environment variable
+	os.Setenv("TEST_API_TOKEN", "secret-token-123")
+	defer os.Unsetenv("TEST_API_TOKEN")
+	
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check that Authorization header was expanded from environment
+		authHeader := r.Header.Get("Authorization")
+		expectedAuth := "Bearer secret-token-123"
+		if authHeader != expectedAuth {
+			t.Errorf("Expected Authorization header '%s', got '%s'", expectedAuth, authHeader)
+			w.WriteHeader(401)
+			return
+		}
+		
+		w.WriteHeader(200)
+		w.Write([]byte(`{"authenticated": true}`))
+	}))
+	defer server.Close()
+	
+	manifest := &registry.ToolManifest{
+		Name:     "test.auth",
+		Endpoint: server.URL + "/api/test",
+		Method:   "GET",
+		Headers: map[string]string{
+			"Authorization": "Bearer $env:TEST_API_TOKEN",
+		},
+	}
+	
+	adapter := &HTTPAdapter{
+		AdapterID:    "http",
+		ToolManifest: manifest,
+	}
+	
+	result, err := adapter.Execute(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	
+	if result["authenticated"] != true {
+		t.Errorf("Expected authenticated=true, got %v", result)
+	}
+}
+
 // TestHTTPAdapter_Generic covers both manifest-based and generic HTTP requests.
 func TestHTTPAdapter_Generic(t *testing.T) {
 	// Test generic HTTP GET
@@ -117,8 +327,8 @@ func TestHTTPAdapter_ManifestBased(t *testing.T) {
 	}
 }
 
-// TestHTTPAdapter_EnvironmentVariableExpansion tests environment variable expansion in headers and defaults
-func TestHTTPAdapter_EnvironmentVariableExpansion(t *testing.T) {
+// TestHTTPAdapter_EnvVarExpansionInDefaults tests environment variable expansion in parameter defaults
+func TestHTTPAdapter_EnvVarExpansionInDefaults(t *testing.T) {
 	// Set test environment variables
 	os.Setenv("TEST_API_KEY", "secret-key-123")
 	defer func() {

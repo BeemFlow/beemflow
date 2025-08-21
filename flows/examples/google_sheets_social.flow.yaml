@@ -1,0 +1,32 @@
+name: google_sheets_social_post
+on: cli.manual
+
+vars:
+  SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"
+  SHEET_NAME: "Sheet1"
+
+steps:
+  # Generate social media post with AI
+  - id: generate_post
+    use: openai.chat_completion
+    with:
+      model: "gpt-4o-mini"
+      messages:
+        - role: system
+          content: |
+            Generate a social media post about workflow automation.
+            Keep it under 280 characters for Twitter/X.
+            Do not include hashtags in the post.
+            Don't be corny.
+            Return ONLY the post text, nothing else.
+        - role: user
+          content: "Write about how BeemFlow makes workflow automation easy"
+
+  # Append to Google Sheet using manifest tool
+  - id: append_to_sheet
+    use: google_sheets.values.append
+    with:
+      spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+      range: "{{ vars.SHEET_NAME }}!A:B"
+      values:
+        - ["{{ generate_post.choices.0.message.content }}", "pending"]

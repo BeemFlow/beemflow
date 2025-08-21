@@ -243,6 +243,43 @@
   },
   {
     "type": "tool",
+    "name": "google_sheets.values.append",
+    "description": "Append values to a Google Sheets spreadsheet",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["spreadsheetId", "range", "values"],
+      "properties": {
+        "spreadsheetId": {
+          "type": "string",
+          "description": "ID of the spreadsheet"
+        },
+        "range": {
+          "type": "string",
+          "description": "A1 notation range to append to (e.g., 'Sheet1!A:D')"
+        },
+        "values": {
+          "type": "array",
+          "description": "2D array of values to append",
+          "items": {
+            "type": "array"
+          }
+        }
+      }
+    },
+    "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:append?valueInputOption=USER_ENTERED",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
     "name": "x.post",
     "description": "Post a tweet to X (Twitter) via the API v2",
     "kind": "task",
