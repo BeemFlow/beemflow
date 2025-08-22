@@ -225,7 +225,7 @@ func (l *LocalRegistry) ListMCPServers(ctx context.Context, opts ListOptions) ([
 	if err != nil {
 		return nil, err
 	}
-	var out []RegistryEntry
+	out := []RegistryEntry{} // Initialize as empty slice instead of nil
 	for _, e := range entries {
 		if e.Type == "mcp_server" {
 			out = append(out, e)

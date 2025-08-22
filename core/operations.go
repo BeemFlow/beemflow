@@ -17,6 +17,8 @@ import (
 	"github.com/awantoch/beemflow/docs"
 	"github.com/awantoch/beemflow/dsl"
 	"github.com/awantoch/beemflow/graph"
+	"github.com/awantoch/beemflow/mcp"
+	"github.com/awantoch/beemflow/registry"
 	"github.com/awantoch/beemflow/utils"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -91,6 +93,12 @@ type FlowFileArgs struct {
 // SearchArgs represents arguments for search operations
 type SearchArgs struct {
 	Query string `json:"query" flag:"query" description:"Search query"`
+}
+
+// MCPServeArgs represents arguments for MCP serve
+type MCPServeArgs struct {
+	Stdio bool   `json:"stdio" flag:"stdio" description:"Serve over stdin/stdout instead of HTTP"`
+	Addr  string `json:"addr" flag:"addr" description:"Listen address for HTTP mode"`
 }
 
 // Global operation registry
@@ -571,6 +579,45 @@ func init() {
 		Handler: func(ctx context.Context, args any) (any, error) {
 			return ListToolManifests(ctx)
 		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			
+			// Use registry manager to get full registry entry info
+			factory := registry.NewFactory()
+			cfg := GetConfigFromContext(ctx)
+			mgr := factory.CreateStandardManager(ctx, cfg)
+			
+			entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
+			if err != nil {
+				return err
+			}
+			
+			// Print table header
+			utils.User(constants.HeaderToolsList, "Source", "Name", "Description", "Kind", "Endpoint")
+			
+			// Print each tool in table format
+			for _, entry := range entries {
+				// Only show tools, not MCP servers
+				if entry.Type != "tool" {
+					continue
+				}
+				
+				// Truncate description for readability
+				desc := entry.Description
+				if len(desc) > 50 {
+					desc = desc[:47] + "..."
+				}
+				
+				// Use the registry field from the entry
+				source := entry.Registry
+				if source == "" {
+					source = "default"
+				}
+				
+				utils.User(constants.FormatFiveColumns, source, entry.Name, desc, entry.Kind, entry.Endpoint)
+			}
+			return nil
+		},
 	})
 
 	// Get Tool Manifest
@@ -588,6 +635,207 @@ func init() {
 		Handler: func(ctx context.Context, args any) (any, error) {
 			a := args.(*GetFlowArgs)
 			return GetToolManifest(ctx, a.Name)
+		},
+	})
+
+	// List MCP Servers
+	RegisterOperation(&OperationDefinition{
+		ID:          "list_mcp_servers",
+		Name:        "List MCP Servers",
+		Description: "List all available MCP servers",
+		Group:       "mcp",
+		HTTPMethod:  http.MethodGet,
+		HTTPPath:    "/mcp/servers",
+		CLIUse:      "mcp list",
+		CLIShort:    "List all MCP servers",
+		MCPName:     "beemflow_list_mcp_servers",
+		ArgsType:    reflect.TypeOf(EmptyArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			return ListMCPServers(ctx)
+		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			cfg := GetConfigFromContext(ctx)
+			
+			// Print table header
+			utils.User(constants.HeaderMCPList, "Source", "Name", "Description", "Type", "Endpoint")
+			
+			// List servers from config first
+			if cfg != nil && cfg.MCPServers != nil {
+				for name, spec := range cfg.MCPServers {
+					transport := spec.Transport
+					if transport == "" {
+						transport = "stdio"
+					}
+					utils.User(constants.FormatFiveColumns, "config", name, "", transport, spec.Endpoint)
+				}
+			}
+			
+			// List servers from all registries
+			factory := registry.NewFactory()
+			manager := factory.CreateStandardManager(ctx, cfg)
+			allEntries, err := manager.ListAllServers(ctx, registry.ListOptions{})
+			if err == nil {
+				for _, entry := range allEntries {
+					if entry.Type == "mcp_server" {
+						desc := entry.Description
+						if len(desc) > 50 {
+							desc = desc[:47] + "..."
+						}
+						transport := entry.Transport
+						if transport == "" {
+							transport = "stdio"
+						}
+						utils.User(constants.FormatFiveColumns, entry.Registry, entry.Name, desc, transport, entry.Endpoint)
+					}
+				}
+			}
+			return nil
+		},
+	})
+
+	// MCP Search
+	RegisterOperation(&OperationDefinition{
+		ID:          "search_mcp_servers",
+		Name:        "Search MCP Servers",
+		Description: "Search for MCP servers in registries",
+		Group:       "mcp",
+		HTTPMethod:  http.MethodGet,
+		HTTPPath:    "/mcp/search",
+		CLIUse:      "mcp search [query]",
+		CLIShort:    "Search for MCP servers in the registry",
+		MCPName:     "beemflow_search_mcp_servers",
+		ArgsType:    reflect.TypeOf(SearchArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*SearchArgs)
+			return SearchMCPServers(ctx, a.Query)
+		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			query := ""
+			if len(args) > 0 {
+				query = args[0]
+			}
+			
+			ctx := context.Background()
+			servers, err := SearchMCPServers(ctx, query)
+			if err != nil {
+				return err
+			}
+			
+			utils.User(constants.HeaderServers, "Name", "Description", "Endpoint")
+			for _, s := range servers {
+				desc := s.Description
+				if len(desc) > 50 {
+					desc = desc[:47] + "..."
+				}
+				utils.User(constants.FormatThreeColumns, s.Name, desc, s.Endpoint)
+			}
+			return nil
+		},
+	})
+
+	// MCP Install
+	RegisterOperation(&OperationDefinition{
+		ID:          "install_mcp_server",
+		Name:        "Install MCP Server",
+		Description: "Install an MCP server from the registry",
+		Group:       "mcp",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/mcp/install/{name}",
+		CLIUse:      "mcp install <serverName>",
+		CLIShort:    "Install an MCP server from the registry",
+		MCPName:     "beemflow_install_mcp_server",
+		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*GetFlowArgs)
+			return InstallMCPServer(ctx, a.Name)
+		},
+	})
+
+	// MCP Serve
+	RegisterOperation(&OperationDefinition{
+		ID:          "serve_mcp",
+		Name:        "Serve MCP",
+		Description: "Start MCP server for BeemFlow tools",
+		Group:       "mcp",
+		SkipHTTP:    true, // This is a long-running server
+		CLIUse:      "mcp serve",
+		CLIShort:    "Start MCP server for BeemFlow tools",
+		SkipMCP:     true, // Can't expose serve via MCP
+		ArgsType:    reflect.TypeOf(MCPServeArgs{}),
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			stdio, _ := cmd.Flags().GetBool("stdio")
+			addr, _ := cmd.Flags().GetString("addr")
+			
+			// Default to stdio mode if no addr is provided and stdio not explicitly set
+			if !stdio && addr == "" {
+				stdio = true
+			}
+			
+			// Get config path from global flag
+			configPath := cmd.Flag("config").Value.String()
+			debug, _ := cmd.Flags().GetBool("debug")
+			
+			tools := GenerateMCPTools()
+			return mcp.Serve(configPath, debug, stdio, addr, tools)
+		},
+	})
+
+	// Tools Search
+	RegisterOperation(&OperationDefinition{
+		ID:          "search_tools",
+		Name:        "Search Tools",
+		Description: "Search for tools in registries",
+		Group:       "tools",
+		HTTPMethod:  http.MethodGet,
+		HTTPPath:    "/tools/search",
+		CLIUse:      "tools search [query]",
+		CLIShort:    "Search for tools in the registry",
+		MCPName:     "beemflow_search_tools",
+		ArgsType:    reflect.TypeOf(SearchArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*SearchArgs)
+			return SearchTools(ctx, a.Query)
+		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			query := ""
+			if len(args) > 0 {
+				query = args[0]
+			}
+			
+			ctx := context.Background()
+			tools, err := SearchTools(ctx, query)
+			if err != nil {
+				return err
+			}
+			
+			utils.User(constants.HeaderTools, "Name", "Description", "Endpoint")
+			for _, t := range tools {
+				desc := t.Description
+				if len(desc) > 50 {
+					desc = desc[:47] + "..."
+				}
+				utils.User(constants.FormatThreeColumns, t.Name, desc, t.Endpoint)
+			}
+			return nil
+		},
+	})
+
+	// Tools Install
+	RegisterOperation(&OperationDefinition{
+		ID:          "install_tool",
+		Name:        "Install Tool",
+		Description: "Install a tool from the registry",
+		Group:       "tools",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/tools/install/{name}",
+		CLIUse:      "tools install <toolName>",
+		CLIShort:    "Install a tool from the registry",
+		MCPName:     "beemflow_install_tool",
+		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*GetFlowArgs)
+			return InstallTool(ctx, a.Name)
 		},
 	})
 

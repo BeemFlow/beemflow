@@ -291,7 +291,7 @@ FROM runs ORDER BY started_at DESC`)
 	}
 	defer rows.Close()
 
-	var runs []*model.Run
+	runs := []*model.Run{} // Initialize as empty slice instead of nil
 	for rows.Next() {
 		var run model.Run
 		var event, vars []byte

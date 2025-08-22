@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -19,8 +17,6 @@ import (
 	api "github.com/awantoch/beemflow/core"
 	"github.com/awantoch/beemflow/dsl"
 	beemhttp "github.com/awantoch/beemflow/http"
-	mcpserver "github.com/awantoch/beemflow/mcp"
-	"github.com/awantoch/beemflow/registry"
 	"github.com/awantoch/beemflow/utils"
 )
 
@@ -41,10 +37,6 @@ func main() {
 		os.Exit(1)
 	}
 }
-
-// ============================================================================
-// ROOT COMMAND (from root.go)
-// ============================================================================
 
 // NewRootCmd creates the root 'flow' command with persistent flags and subcommands.
 func NewRootCmd() *cobra.Command {
@@ -73,7 +65,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(
 		newServeCmd(),
 		newRunCmd(),
-		newMCPCmd(),
+		// MCP commands now handled via operations framework
 	)
 
 	// Add auto-generated commands from the unified system
@@ -415,265 +407,3 @@ func loadEvent(path, inline string) (map[string]any, error) {
 	// No event provided: return empty event for flows that don't use event data
 	return map[string]any{}, nil
 }
-
-// ============================================================================
-// SHARED UTILITIES FOR MCP AND TOOLS COMMANDS (DRY)
-// ============================================================================
-
-// registrySearchOptions holds parameters for registry searches
-type registrySearchOptions struct {
-	query          string
-	filterKind     string // "mcp" for MCP servers, "tool" for tool manifests
-	headerFormat   string
-	threeColFormat string
-}
-
-// runRegistrySearch handles search functionality for both MCP servers and tools
-func runRegistrySearch(opts registrySearchOptions) error {
-	ctx := context.Background()
-
-	// Use federated registry system instead of just Smithery
-	factory := registry.NewFactory()
-	cfg, _ := config.LoadConfig(configPath) // Ignore errors, use defaults
-	manager := factory.CreateStandardManager(ctx, cfg)
-
-	entries, err := manager.ListAllServers(ctx, registry.ListOptions{
-		Query:    opts.query,
-		PageSize: constants.DefaultMCPPageSize,
-	})
-	if err != nil {
-		return err
-	}
-
-	utils.User(opts.headerFormat, "Name", "Description", "Endpoint")
-	for _, s := range entries {
-		// Apply filtering based on type (not kind)
-		switch {
-		case opts.filterKind == "mcp" && s.Type == "mcp_server":
-			utils.User(opts.threeColFormat, s.Name, s.Description, s.Endpoint)
-		case opts.filterKind == "tool" && s.Type == "tool":
-			utils.User(opts.threeColFormat, s.Name, s.Description, s.Endpoint)
-		case opts.filterKind == "":
-			// No filtering, show all
-			utils.User(opts.threeColFormat, s.Name, s.Description, s.Endpoint)
-		}
-	}
-	return nil
-}
-
-// runRegistryInstall handles installation for MCP servers to config file
-func runRegistryInstall(itemName, configFile, successMsg string) error {
-	// Read existing config as raw JSON (preserve only user overrides)
-	doc, err := loadConfigAsMap(configFile)
-	if err != nil {
-		return err
-	}
-
-	// Ensure mcpServers map exists (tools and servers share the same registry)
-	mcpMap := ensureMCPServersMap(doc)
-
-	// Fetch spec from Smithery (same registry for tools and servers)
-	spec, err := fetchServerSpec(itemName)
-	if err != nil {
-		return err
-	}
-
-	// Update configuration
-	mcpMap[itemName] = spec
-	doc[constants.MCPServersKey] = mcpMap
-
-	// Write updated config
-	if err := writeConfigMap(doc, configFile); err != nil {
-		return err
-	}
-
-	// Success message
-	utils.User(successMsg, itemName, configFile)
-	return nil
-}
-
-// ============================================================================
-// SHARED UTILITY FUNCTIONS
-// ============================================================================
-
-// loadConfigAsMap loads configuration file as a generic map
-func loadConfigAsMap(configFile string) (map[string]any, error) {
-	var doc map[string]any
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]any{}, nil
-		}
-		return nil, err
-	}
-
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf(constants.ErrConfigParseFailed, configFile, err)
-	}
-	return doc, nil
-}
-
-// ensureMCPServersMap ensures the mcpServers map exists in the config
-func ensureMCPServersMap(doc map[string]any) map[string]any {
-	mcpMap, ok := doc[constants.MCPServersKey].(map[string]any)
-	if !ok {
-		mcpMap = map[string]any{}
-	}
-	return mcpMap
-}
-
-// fetchServerSpec fetches server specification from Smithery registry
-func fetchServerSpec(serverName string) (any, error) {
-	ctx := context.Background()
-	apiKey := os.Getenv(constants.EnvSmitheryKey)
-	if apiKey == "" {
-		return nil, fmt.Errorf(constants.ErrEnvVarRequired, constants.EnvSmitheryKey)
-	}
-
-	client := registry.NewSmitheryRegistry(apiKey, "")
-	return client.GetServerSpec(ctx, serverName)
-}
-
-// writeConfigMap writes the configuration map to file
-func writeConfigMap(doc map[string]any, configFile string) error {
-	out, err := json.MarshalIndent(doc, "", constants.JSONIndent)
-	if err != nil {
-		return fmt.Errorf("failed to serialize config: %w", err)
-	}
-
-	if err := os.WriteFile(configFile, out, constants.FilePermission); err != nil {
-		return fmt.Errorf(constants.ErrConfigWriteFailed, configFile, err)
-	}
-	return nil
-}
-
-// ============================================================================
-// MCP COMMANDS
-// ============================================================================
-
-// newMCPCmd creates the 'mcp' subcommand and its subcommands.
-func newMCPCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   constants.CmdMCP,
-		Short: constants.DescMCPCommands,
-	}
-
-	var configFile = &configPath
-
-	cmd.AddCommand(
-		newMCPServeCmd(),
-		newMCPSearchCmd(),
-		newMCPInstallCmd(configFile),
-		newMCPListCmd(configFile),
-	)
-	return cmd
-}
-
-// newMCPSearchCmd creates the search subcommand for MCP servers
-func newMCPSearchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   constants.CmdSearch + " [query]",
-		Short: constants.DescSearchServers,
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runMCPSearch,
-	}
-}
-
-// runMCPSearch handles the search functionality for MCP servers
-func runMCPSearch(cmd *cobra.Command, args []string) error {
-	query := ""
-	if len(args) > 0 {
-		query = args[0]
-	}
-
-	return runRegistrySearch(registrySearchOptions{
-		query:          query,
-		filterKind:     "mcp",
-		headerFormat:   constants.HeaderServers,
-		threeColFormat: constants.FormatThreeColumns,
-	})
-}
-
-// newMCPInstallCmd creates the install subcommand for MCP servers
-func newMCPInstallCmd(configFile *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   constants.CmdInstall + " <serverName>",
-		Short: constants.DescInstallServer,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPInstall(args[0], *configFile)
-		},
-	}
-}
-
-// runMCPInstall handles the installation of MCP servers
-func runMCPInstall(serverName, configFile string) error {
-	return runRegistryInstall(serverName, configFile, constants.MsgServerInstalled)
-}
-
-// newMCPListCmd creates the list subcommand for MCP servers
-func newMCPListCmd(configFile *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   constants.CmdList,
-		Short: constants.DescListServers,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPList(*configFile)
-		},
-	}
-}
-
-// runMCPList handles listing all MCP servers
-func runMCPList(configFile string) error {
-	// Load config to get installed MCP servers
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	ctx := context.Background()
-	utils.User(constants.HeaderMCPList, "Source", "Name", "Description", "Type", "Endpoint")
-
-	// List servers from config
-	if cfg != nil && cfg.MCPServers != nil {
-		for name, spec := range cfg.MCPServers {
-			utils.User(constants.FormatFiveColumns, "config", name, "", spec.Transport, spec.Endpoint)
-		}
-	}
-
-	// List servers from all registries using factory
-	factory := registry.NewFactory()
-	manager := factory.CreateStandardManager(ctx, cfg)
-	allEntries, err := manager.ListAllServers(ctx, registry.ListOptions{
-		PageSize: constants.DefaultToolPageSize,
-	})
-	if err == nil {
-		// Filter for MCP servers only
-		for _, s := range allEntries {
-			if s.Type == "mcp_server" {
-				utils.User(constants.FormatFiveColumns, s.Registry, s.Name, s.Description, s.Kind, s.Endpoint)
-			}
-		}
-	}
-	return nil
-}
-
-// newMCPServeCmd creates the serve subcommand for MCP
-func newMCPServeCmd() *cobra.Command {
-	var stdio bool
-	var addr string
-	cmd := &cobra.Command{
-		Use:   constants.CmdServe,
-		Short: constants.DescMCPServe,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			tools := api.GenerateMCPTools()
-			return mcpserver.Serve(configPath, debug, stdio, addr, tools)
-		},
-	}
-	cmd.Flags().BoolVar(&stdio, "stdio", true, "serve over stdin/stdout instead of HTTP (default)")
-	cmd.Flags().StringVar(&addr, "addr", constants.DefaultMCPAddr, "listen address for HTTP mode")
-	return cmd
-}
-
-// ============================================================================
-// END OF FILE - Clean Architecture Achieved
-// ============================================================================

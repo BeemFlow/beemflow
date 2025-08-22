@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -12,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
 	"github.com/awantoch/beemflow/utils"
 	"github.com/spf13/cobra"
 )
@@ -479,210 +476,17 @@ func TestOutputDebugResults(t *testing.T) {
 	}
 }
 
-func TestNewMCPCmd(t *testing.T) {
-	cmd := newMCPCmd()
+// MCP commands are now handled through the unified operations framework
+// Tests for MCP functionality should be in core/operations_test.go
 
-	if cmd.Use != "mcp" {
-		t.Errorf("Expected command name 'mcp', got %s", cmd.Use)
-	}
+// Config loading is now handled through the config package
+// Tests for config functionality should be in config/config_test.go
 
-	// Check subcommands
-	commands := cmd.Commands()
-	expectedSubcommands := []string{"serve", "search", "install", "list"}
+// MCP server configuration is now handled through the MCP package
+// Tests for MCP configuration should be in mcp/manager_test.go
 
-	for _, expected := range expectedSubcommands {
-		found := false
-		for _, subcmd := range commands {
-			if subcmd.Name() == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Expected MCP subcommand '%s' to be added", expected)
-		}
-	}
-}
-
-func TestNewMCPSearchCmd(t *testing.T) {
-	cmd := newMCPSearchCmd()
-
-	if cmd.Use != "search [query]" {
-		t.Errorf("Expected command use 'search [query]', got %s", cmd.Use)
-	}
-
-	if cmd.Short == "" {
-		t.Error("Expected non-empty short description")
-	}
-}
-
-func TestNewMCPInstallCmd(t *testing.T) {
-	configFile := "test-config.json"
-	cmd := newMCPInstallCmd(&configFile)
-
-	if cmd.Use != "install <serverName>" {
-		t.Errorf("Expected command use 'install <serverName>', got %s", cmd.Use)
-	}
-
-	if cmd.Short == "" {
-		t.Error("Expected non-empty short description")
-	}
-}
-
-func TestNewMCPListCmd(t *testing.T) {
-	configFile := "test-config.json"
-	cmd := newMCPListCmd(&configFile)
-
-	if cmd.Use != "list" {
-		t.Errorf("Expected command use 'list', got %s", cmd.Use)
-	}
-
-	if cmd.Short == "" {
-		t.Error("Expected non-empty short description")
-	}
-}
-
-func TestNewMCPServeCmd(t *testing.T) {
-	cmd := newMCPServeCmd()
-
-	if cmd.Use != "serve" {
-		t.Errorf("Expected command use 'serve', got %s", cmd.Use)
-	}
-
-	if cmd.Short == "" {
-		t.Error("Expected non-empty short description")
-	}
-}
-
-func TestLoadConfigAsMap(t *testing.T) {
-	tests := []struct {
-		name       string
-		createFile bool
-		content    string
-		wantErr    bool
-	}{
-		{
-			name:       "non-existent file",
-			createFile: false,
-			wantErr:    false, // Should return empty map
-		},
-		{
-			name:       "valid JSON",
-			createFile: true,
-			content:    `{"key": "value"}`,
-			wantErr:    false,
-		},
-		{
-			name:       "invalid JSON",
-			createFile: true,
-			content:    `{invalid json}`,
-			wantErr:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			configPath := filepath.Join(tmpDir, "config.json")
-
-			if tt.createFile {
-				if err := os.WriteFile(configPath, []byte(tt.content), 0644); err != nil {
-					t.Fatalf("Failed to write test config: %v", err)
-				}
-			}
-
-			result, err := loadConfigAsMap(configPath)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("loadConfigAsMap() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr && result == nil {
-				t.Error("loadConfigAsMap() returned nil result")
-			}
-		})
-	}
-}
-
-func TestEnsureMCPServersMap(t *testing.T) {
-	tests := []struct {
-		name string
-		doc  map[string]any
-		want map[string]any
-	}{
-		{
-			name: "existing mcpServers",
-			doc:  map[string]any{"mcp_servers": map[string]any{"server1": "config1"}},
-			want: map[string]any{"server1": "config1"},
-		},
-		{
-			name: "no mcpServers",
-			doc:  map[string]any{"other": "value"},
-			want: map[string]any{},
-		},
-		{
-			name: "invalid mcpServers type",
-			doc:  map[string]any{"mcp_servers": "not a map"},
-			want: map[string]any{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ensureMCPServersMap(tt.doc)
-
-			if len(result) != len(tt.want) {
-				t.Errorf("ensureMCPServersMap() length = %d, want %d", len(result), len(tt.want))
-			}
-
-			for k, v := range tt.want {
-				if result[k] != v {
-					t.Errorf("ensureMCPServersMap()[%s] = %v, want %v", k, result[k], v)
-				}
-			}
-		})
-	}
-}
-
-func TestWriteConfigMap(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
-
-	doc := map[string]any{
-		"key1": "value1",
-		"key2": map[string]any{"nested": "value"},
-	}
-
-	err := writeConfigMap(doc, configPath)
-	if err != nil {
-		t.Errorf("writeConfigMap() error = %v", err)
-		return
-	}
-
-	// Verify file was written
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		t.Error("writeConfigMap() did not create config file")
-		return
-	}
-
-	// Verify content
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Errorf("Failed to read written config: %v", err)
-		return
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(content, &result); err != nil {
-		t.Errorf("Written config is not valid JSON: %v", err)
-		return
-	}
-
-	if result["key1"] != "value1" {
-		t.Errorf("Written config key1 = %v, want 'value1'", result["key1"])
-	}
-}
+// Config writing is now handled through the config package
+// Tests for config functionality should be in config/config_test.go
 
 func TestMain(m *testing.M) {
 	utils.WithCleanDirs(m, ".beemflow", config.DefaultConfigDir)
@@ -700,39 +504,8 @@ func TestMain(m *testing.M) {
 // SHARED UTILITY FUNCTION TESTS (DRY VALIDATION)
 // ============================================================================
 
-func TestRegistrySearchOptions(t *testing.T) {
-	opts := registrySearchOptions{
-		query:          "test",
-		filterKind:     "tool",
-		headerFormat:   constants.HeaderTools,
-		threeColFormat: constants.FormatThreeColumns,
-	}
-
-	if opts.query != "test" {
-		t.Errorf("expected query 'test', got %s", opts.query)
-	}
-	if opts.filterKind != "tool" {
-		t.Errorf("expected filterKind 'tool', got %s", opts.filterKind)
-	}
-}
-
-func TestRunRegistryInstall(t *testing.T) {
-	// Test that the shared install function can handle different success messages
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config.json")
-
-	// This should fail gracefully without SMITHERY_API_KEY
-	err := runRegistryInstall("test-tool", configFile, "Test tool %s installed to %s")
-	if err == nil {
-		t.Error("expected error without SMITHERY_API_KEY, got nil")
-	}
-
-	// Check error message contains the expected environment variable requirement
-	expectedErr := fmt.Sprintf(constants.ErrEnvVarRequired, constants.EnvSmitheryKey)
-	if !strings.Contains(err.Error(), constants.EnvSmitheryKey) {
-		t.Errorf("expected error about %s, got %v", expectedErr, err)
-	}
-}
+// Registry operations are now handled through the unified operations framework
+// Tests for registry functionality should be in core/operations_test.go
 
 // ============================================================================
 // INTEGRATION TESTS (SHARED FUNCTIONALITY)
@@ -752,7 +525,8 @@ func TestUnifiedCommandIntegration(t *testing.T) {
 	}
 
 	// Basic commands should still exist
-	expectedCommands := []string{"serve", "run", "mcp"}
+	// Note: mcp commands are now generated through the unified operations framework
+	expectedCommands := []string{"serve", "run"}
 	for _, expected := range expectedCommands {
 		if !foundCommands[expected] {
 			t.Errorf("expected command %s not found", expected)

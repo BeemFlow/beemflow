@@ -112,7 +112,7 @@ func NewRegistryManager(registries ...MCPRegistry) *RegistryManager {
 // Entries from earlier registries override entries with the same name from later registries
 func (m *RegistryManager) ListAllServers(ctx context.Context, opts ListOptions) ([]RegistryEntry, error) {
 	seen := make(map[string]bool)
-	var allEntries []RegistryEntry
+	allEntries := []RegistryEntry{} // Initialize as empty slice instead of nil
 	var errors []string
 
 	// Process registries in priority order (first = highest priority)

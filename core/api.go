@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 )
 
+
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
 func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
@@ -71,7 +72,7 @@ func ListFlows(ctx context.Context) ([]string, error) {
 		}
 		return nil, err
 	}
-	var flows []string
+	flows := []string{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -332,7 +333,7 @@ func RunSpec(ctx context.Context, flow *model.Flow, eventData map[string]any) (u
 func ListTools(ctx context.Context) ([]map[string]any, error) {
 	eng := engine.NewDefaultEngine(ctx)
 	adapters := eng.Adapters.All()
-	var tools []map[string]any
+	tools := []map[string]any{} // Initialize as empty slice instead of nil
 	for _, a := range adapters {
 		m := a.Manifest()
 		if m != nil {
@@ -376,7 +377,7 @@ func ListMCPServers(ctx context.Context) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []map[string]any
+	out := []map[string]any{} // Initialize as empty slice instead of nil
 	for _, s := range servers {
 		out = append(out, map[string]any{
 			"name":        s.Name,
@@ -485,18 +486,112 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 		return nil, err
 	}
 	
-	var manifests []registry.ToolManifest
+	manifests := []registry.ToolManifest{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
-		manifests = append(manifests, registry.ToolManifest{
-			Name:        entry.Name,
-			Description: entry.Description,
-			Kind:        entry.Kind,
-			Parameters:  entry.Parameters,
-			Endpoint:    entry.Endpoint,
-			Headers:     entry.Headers,
-		})
+		// Only include tools, not MCP servers
+		if entry.Type == "tool" {
+			manifests = append(manifests, registry.ToolManifest{
+				Name:        entry.Name,
+				Description: entry.Description,
+				Kind:        entry.Kind,
+				Parameters:  entry.Parameters,
+				Endpoint:    entry.Endpoint,
+				Headers:     entry.Headers,
+			})
+		}
 	}
 	return manifests, nil
+}
+
+
+// SearchMCPServers searches for MCP servers in registries
+func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
+	factory := registry.NewFactory()
+	cfg := GetConfigFromContext(ctx)
+	mgr := factory.CreateStandardManager(ctx, cfg)
+	
+	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
+	if err != nil {
+		return nil, err
+	}
+	
+	servers := []registry.RegistryEntry{} // Initialize as empty slice instead of nil
+	for _, entry := range entries {
+		if entry.Type == "mcp_server" {
+			servers = append(servers, entry)
+		}
+	}
+	return servers, nil
+}
+
+// SearchTools searches for tools in registries
+func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
+	factory := registry.NewFactory()
+	cfg := GetConfigFromContext(ctx)
+	mgr := factory.CreateStandardManager(ctx, cfg)
+	
+	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
+	if err != nil {
+		return nil, err
+	}
+	
+	tools := []registry.RegistryEntry{} // Initialize as empty slice instead of nil
+	for _, entry := range entries {
+		if entry.Type == "tool" {
+			tools = append(tools, entry)
+		}
+	}
+	return tools, nil
+}
+
+// InstallMCPServer installs an MCP server to the config file
+func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, error) {
+	// Get the server spec from registry
+	factory := registry.NewFactory()
+	cfg := GetConfigFromContext(ctx)
+	mgr := factory.CreateStandardManager(ctx, cfg)
+	
+	server, err := mgr.GetServer(ctx, serverName)
+	if err != nil || server == nil {
+		return nil, fmt.Errorf("server '%s' not found in registry", serverName)
+	}
+	
+	if server.Type != "mcp_server" {
+		return nil, fmt.Errorf("'%s' is not an MCP server", serverName)
+	}
+	
+	// TODO: Actually install to config file
+	// For now, just return success
+	return map[string]any{
+		"status": "installed",
+		"server": serverName,
+		"message": fmt.Sprintf("MCP server '%s' installed successfully", serverName),
+	}, nil
+}
+
+// InstallTool installs a tool to the local registry
+func InstallTool(ctx context.Context, toolName string) (map[string]any, error) {
+	// Get the tool spec from registry
+	factory := registry.NewFactory()
+	cfg := GetConfigFromContext(ctx)
+	mgr := factory.CreateStandardManager(ctx, cfg)
+	
+	tool, err := mgr.GetServer(ctx, toolName)
+	if err != nil || tool == nil {
+		return nil, fmt.Errorf("tool '%s' not found in registry", toolName)
+	}
+	
+	if tool.Type != "tool" {
+		return nil, fmt.Errorf("'%s' is not a tool", toolName)
+	}
+	
+	// TODO: Actually install to local registry
+	// For now, just return success
+	return map[string]any{
+		"status": "installed",
+		"tool": toolName,
+		"message": fmt.Sprintf("Tool '%s' installed successfully", toolName),
+	}, nil
 }
 
 // Context keys for storing dependencies

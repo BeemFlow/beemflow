@@ -70,7 +70,7 @@ func (m *MemoryStorage) ResolveWait(ctx context.Context, token uuid.UUID) (*mode
 func (m *MemoryStorage) ListRuns(ctx context.Context) ([]*model.Run, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var out []*model.Run
+	out := []*model.Run{} // Initialize as empty slice instead of nil
 	for _, run := range m.runs {
 		out = append(out, run)
 	}

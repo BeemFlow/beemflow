@@ -397,6 +397,7 @@ func TestOperationGroups(t *testing.T) {
 		"runs":   true,
 		"events": true,
 		"tools":  true,
+		"mcp":    true,
 		"system": true,
 	}
 

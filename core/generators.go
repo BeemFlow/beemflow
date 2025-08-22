@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	mcpserver "github.com/awantoch/beemflow/mcp"
+	"github.com/awantoch/beemflow/mcp"
 	"github.com/awantoch/beemflow/utils"
-	mcp "github.com/metoro-io/mcp-golang"
+	mcpgolang "github.com/metoro-io/mcp-golang"
 	"github.com/spf13/cobra"
 )
 
@@ -169,8 +169,8 @@ func setFieldValue(field reflect.Value, value string) error {
 }
 
 // GenerateMCPTools creates MCP tool registrations for all operations
-func GenerateMCPTools() []mcpserver.ToolRegistration {
-	var tools []mcpserver.ToolRegistration
+func GenerateMCPTools() []mcp.ToolRegistration {
+	var tools []mcp.ToolRegistration
 
 	for _, op := range GetAllOperations() {
 		if op.SkipMCP {
@@ -185,7 +185,7 @@ func GenerateMCPTools() []mcpserver.ToolRegistration {
 			continue
 		}
 
-		tools = append(tools, mcpserver.ToolRegistration{
+		tools = append(tools, mcp.ToolRegistration{
 			Name:        op.MCPName,
 			Description: op.Description,
 			Handler:     handler,
@@ -225,7 +225,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 	// Create handlers using predefined MCP-compatible types
 	switch argsType.Name() {
 	case "StartRunArgs":
-		return func(args MCPStartRunArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPStartRunArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &StartRunArgs{
 				FlowName: args.FlowName,
 				Event:    parseJSONString(args.Event),
@@ -237,7 +237,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "PublishEventArgs":
-		return func(args MCPPublishEventArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPPublishEventArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &PublishEventArgs{
 				Topic:   args.Topic,
 				Payload: parseJSONString(args.Payload),
@@ -249,7 +249,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "ResumeRunArgs":
-		return func(args MCPResumeRunArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPResumeRunArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &ResumeRunArgs{
 				Token: args.Token,
 				Event: parseJSONString(args.Event),
@@ -261,7 +261,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "GetFlowArgs":
-		return func(args MCPGetFlowArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPGetFlowArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &GetFlowArgs{Name: args.Name})
 			if err != nil {
 				return nil, err
@@ -270,7 +270,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "ValidateFlowArgs":
-		return func(args MCPValidateFlowArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPValidateFlowArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &ValidateFlowArgs{Name: args.Name})
 			if err != nil {
 				return nil, err
@@ -279,7 +279,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "GraphFlowArgs":
-		return func(args MCPGraphFlowArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPGraphFlowArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &GraphFlowArgs{Name: args.Name})
 			if err != nil {
 				return nil, err
@@ -288,7 +288,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "GetRunArgs":
-		return func(args MCPGetRunArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPGetRunArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &GetRunArgs{RunID: args.RunID})
 			if err != nil {
 				return nil, err
@@ -297,7 +297,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "ConvertOpenAPIExtendedArgs":
-		return func(args MCPConvertOpenAPIExtendedArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPConvertOpenAPIExtendedArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &ConvertOpenAPIExtendedArgs{
 				OpenAPI: args.Spec,
 				APIName: "",
@@ -310,7 +310,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "FlowFileArgs":
-		return func(args MCPFlowFileArgs) (*mcp.ToolResponse, error) {
+		return func(args MCPFlowFileArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &FlowFileArgs{File: args.Name})
 			if err != nil {
 				return nil, err
@@ -319,7 +319,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	case "EmptyArgs":
-		return func(args EmptyArgs) (*mcp.ToolResponse, error) {
+		return func(args EmptyArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &args)
 			if err != nil {
 				return nil, err
@@ -334,14 +334,14 @@ func generateMCPHandler(op *OperationDefinition) any {
 }
 
 // convertToMCPResponse converts operation result to MCP response
-func convertToMCPResponse(result any) (*mcp.ToolResponse, error) {
+func convertToMCPResponse(result any) (*mcpgolang.ToolResponse, error) {
 	if result == nil {
-		return mcp.NewToolResponse(mcp.NewTextContent("success")), nil
+		return mcpgolang.NewToolResponse(mcpgolang.NewTextContent("success")), nil
 	}
 
 	// If result is already a string, return as text
 	if str, ok := result.(string); ok {
-		return mcp.NewToolResponse(mcp.NewTextContent(str)), nil
+		return mcpgolang.NewToolResponse(mcpgolang.NewTextContent(str)), nil
 	}
 
 	// Otherwise, convert to JSON
@@ -350,7 +350,7 @@ func convertToMCPResponse(result any) (*mcp.ToolResponse, error) {
 		return nil, err
 	}
 
-	return mcp.NewToolResponse(mcp.NewTextContent(string(data))), nil
+	return mcpgolang.NewToolResponse(mcpgolang.NewTextContent(string(data))), nil
 }
 
 // GenerateCLICommands creates CLI commands for all operations
