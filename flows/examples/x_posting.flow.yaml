@@ -65,7 +65,7 @@ steps:
         use: google_sheets.values.update
         with:
           spreadsheetId: "{{ SHEETS_ID }}"
-          range: "Sheet1!F{{ loop.index }}"
+          range: "Sheet1!F{{ row_row }}"
           valueInputOption: "USER_ENTERED"
           values:
             - - "{{ post_if_approved.data.id if post_if_approved.data else 'posted' }}"

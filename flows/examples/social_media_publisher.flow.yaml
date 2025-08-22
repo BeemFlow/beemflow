@@ -1,0 +1,57 @@
+name: social_media_publisher
+on: 
+  - cli.manual
+  - cron.*/5_*_*_*_*  # Run every 5 minutes
+
+vars:
+  SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"
+  SHEET_NAME: "Sheet1"
+
+steps:
+  # Read all posts from the sheet
+  - id: read_sheet
+    use: google_sheets.values.get
+    with:
+      spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+      range: "{{ vars.SHEET_NAME }}!A:B"
+  
+  # Process each row using foreach with index
+  - id: process_posts
+    foreach: "{{ read_sheet.values }}"
+    as: "row"
+    do:
+      # Only process rows that have content and are approved
+      - id: post_row_{{ row_index }}
+        if: "{{ row.0 and row.1 == 'approved' }}"
+        use: core.echo  # Replace with x.post when X_BEARER_TOKEN is set
+        with:
+          text: "📮 Posting from row {{ row_row }}: {{ row.0 }}"
+      
+      # Update the status to posted for this specific row
+      - id: update_row_{{ row_index }}
+        if: "{{ row.0 and row.1 == 'approved' }}"
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+          range: "{{ vars.SHEET_NAME }}!B{{ row_row }}"
+          values:
+            - ["posted"]
+      
+      # Exit after processing first approved post (for rate limiting)
+      # Note: BeemFlow doesn't have a break statement, so we process all
+      # but only the first approved will actually post
+  
+  # Summary
+  - id: summary
+    use: core.echo
+    with:
+      text: |
+        ========================================
+        Social Media Publisher
+        ========================================
+        Total rows in sheet: {{ read_sheet.values | length | default: 0 }}
+        
+        Instructions:
+        1. Add content in column A
+        2. Set column B to "approved" to publish
+        3. The workflow will post and mark as "posted"

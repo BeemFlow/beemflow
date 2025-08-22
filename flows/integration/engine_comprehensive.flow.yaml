@@ -75,7 +75,7 @@ steps:
       - id: "seq_process_{{item}}"
         use: core.echo
         with:
-          text: "Processing {{item}} sequentially - index: {{loop.index0}}"
+          text: "Processing {{item}} sequentially - index: {{item_index}}"
 
   # Test nested parallel within foreach
   - id: nested_parallel_test

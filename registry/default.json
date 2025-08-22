@@ -225,16 +225,10 @@
               "type": "string"
             }
           }
-        },
-        "valueInputOption": {
-          "type": "string",
-          "description": "How input data should be interpreted",
-          "enum": ["INPUT_VALUE_OPTION_UNSPECIFIED", "RAW", "USER_ENTERED"],
-          "default": "USER_ENTERED"
         }
       }
     },
-    "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
+    "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}?valueInputOption=USER_ENTERED",
     "method": "PUT",
     "headers": {
       "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",

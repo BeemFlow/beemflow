@@ -37,9 +37,9 @@ func generateDeterministicRunID(flowName string, event map[string]any) uuid.UUID
 	var data []byte
 	data = append(data, []byte(flowName)...)
 
-	// Add time window (5 minute buckets) to allow same workflow to run again after window
+	// Add time window (1 minute buckets) to allow same workflow to run again after window
 	now := time.Now().UTC()
-	timeBucket := now.Truncate(5 * time.Minute).Unix()
+	timeBucket := now.Truncate(1 * time.Minute).Unix()
 	data = append(data, []byte(fmt.Sprintf(":%d", timeBucket))...)
 
 	// Sort map keys for deterministic ordering
@@ -163,6 +163,7 @@ func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
 					Kind:        entry.Kind,
 					Parameters:  entry.Parameters,
 					Endpoint:    entry.Endpoint,
+					Method:      entry.Method,
 					Headers:     entry.Headers,
 				}
 				reg.Register(&adapter.HTTPAdapter{AdapterID: entry.Name, ToolManifest: manifest})
@@ -248,8 +249,8 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 	// Check if this run already exists (deduplication)
 	existingRun, err := e.Storage.GetRun(ctx, runID)
 	if err == nil && existingRun != nil {
-		// Run already exists, check if it's recent (within 5 minutes)
-		if time.Since(existingRun.StartedAt) < 5*time.Minute {
+		// Run already exists, check if it's recent (within 1 minute)
+		if time.Since(existingRun.StartedAt) < 1*time.Minute {
 			// This is a duplicate run within the deduplication window
 			utils.Info("Duplicate run detected for %s, skipping (existing run: %s)", flow.Name, existingRun.ID)
 			return stepCtx, uuid.Nil // Return nil ID to signal duplicate
@@ -361,7 +362,7 @@ func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Fl
 
 	// Execute steps sequentially from startIdx
 	// Note: Future enhancement could add dependency mapping for more sophisticated
-	// parallel execution patterns while maintaining backward compatibility
+	// parallel execution patterns
 	for i := startIdx; i < len(flow.Steps); i++ {
 		step := &flow.Steps[i]
 
@@ -644,6 +645,21 @@ func (e *Engine) GetCompletedOutputs(token string) map[string]any {
 
 // executeStep runs a single step (use/with) and stores output.
 func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
+	// Check if condition first - skip step if condition is false
+	if step.If != "" {
+		utils.Debug("Evaluating condition for step %s: %s", stepID, step.If)
+		shouldExecute, err := e.evaluateCondition(step.If, stepCtx)
+		if err != nil {
+			return utils.Errorf("failed to evaluate condition '%s': %w", step.If, err)
+		}
+		utils.Debug("Condition result for step %s: %v", stepID, shouldExecute)
+		if !shouldExecute {
+			// Skip this step - condition not met
+			utils.Debug("Skipping step %s - condition not met: %s", stepID, step.If)
+			return nil
+		}
+	}
+
 	// Nested parallel block logic
 	if step.Parallel && len(step.Steps) > 0 {
 		return e.executeParallelBlock(ctx, step, stepCtx, stepID)
@@ -728,9 +744,24 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 		return utils.Errorf(constants.ErrTemplateErrorForeach, err)
 	}
 
-	// The rendered result should be a list
-	list, ok := rendered.([]any)
-	if !ok {
+	// The rendered result should be a list - handle different slice types
+	var list []any
+	switch v := rendered.(type) {
+	case []any:
+		list = v
+	case []map[string]any:
+		// Convert []map[string]any to []any
+		list = make([]any, len(v))
+		for i, item := range v {
+			list[i] = item
+		}
+	case []string:
+		// Convert []string to []any
+		list = make([]any, len(v))
+		for i, item := range v {
+			list[i] = item
+		}
+	default:
 		return utils.Errorf(constants.ErrForeachNotList, rendered)
 	}
 
@@ -751,9 +782,9 @@ func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, s
 	errChan := make(chan error, len(list))
 
 	// Process each item in parallel
-	for _, item := range list {
+	for index, item := range list {
 		wg.Add(1)
-		go e.processParallelForeachItem(ctx, step, stepCtx, item, &wg, errChan)
+		go e.processParallelForeachItem(ctx, step, stepCtx, item, index, &wg, errChan)
 	}
 
 	// Wait for all goroutines and collect errors
@@ -761,11 +792,11 @@ func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, s
 }
 
 // processParallelForeachItem processes a single item in a parallel foreach loop
-func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, wg *sync.WaitGroup, errChan chan<- error) {
+func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, index int, wg *sync.WaitGroup, errChan chan<- error) {
 	defer wg.Done()
 
 	// Create iteration context for this item
-	iterStepCtx := e.createIterationContext(stepCtx, step.As, item)
+	iterStepCtx := e.createIterationContext(stepCtx, step.As, item, index)
 
 	// Execute all steps for this iteration
 	if err := e.executeIterationSteps(ctx, step.Do, iterStepCtx, stepCtx); err != nil {
@@ -839,10 +870,14 @@ func (e *Engine) collectParallelErrors(wg *sync.WaitGroup, errChan chan error, s
 
 // executeForeachSequential handles sequential foreach execution
 func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
-	for _, item := range list {
+	for index, item := range list {
 		// Set the loop variable for this iteration
 		if step.As != "" {
 			stepCtx.SetVar(step.As, item)
+			// Also expose the index (0-based)
+			stepCtx.SetVar(step.As+"_index", index)
+			// And 1-based index for row numbers
+			stepCtx.SetVar(step.As+"_row", index+1)
 		}
 
 		// Execute all steps for this iteration
@@ -1013,8 +1048,34 @@ func isValidIdentifier(s string) bool {
 	return validIdentifierRegex.MatchString(s)
 }
 
+// evaluateCondition evaluates a condition expression and returns whether it's true
+func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool, error) {
+	// Condition MUST be in {{ }} format
+	trimmed := strings.TrimSpace(condition)
+	if !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
+		return false, utils.Errorf("condition must use template syntax: {{ expression }}, got: %s", condition)
+	}
+	
+	// Extract the inner expression
+	innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+	
+	// Prepare template data
+	data := e.prepareTemplateDataAsMap(stepCtx)
+	
+	// Use {% if %} to evaluate as boolean
+	wrappedCondition := fmt.Sprintf("{%% if %s %%}true{%% else %%}false{%% endif %%}", innerExpr)
+	
+	// Render and return result
+	rendered, err := e.Templater.Render(wrappedCondition, data)
+	if err != nil {
+		return false, err
+	}
+	
+	return strings.TrimSpace(rendered) == "true", nil
+}
+
 // createIterationContext creates a new context for foreach iterations
-func (e *Engine) createIterationContext(stepCtx *StepContext, asVar string, item any) *StepContext {
+func (e *Engine) createIterationContext(stepCtx *StepContext, asVar string, item any, index int) *StepContext {
 	snapshot := stepCtx.Snapshot()
 	iterStepCtx := NewStepContext(snapshot.Event, snapshot.Vars, snapshot.Secrets)
 
@@ -1026,6 +1087,10 @@ func (e *Engine) createIterationContext(stepCtx *StepContext, asVar string, item
 	// Set the loop variable to the current item
 	if asVar != "" {
 		iterStepCtx.SetVar(asVar, item)
+		// Also expose the index (0-based)
+		iterStepCtx.SetVar(asVar+"_index", index)
+		// And 1-based index for row numbers
+		iterStepCtx.SetVar(asVar+"_row", index+1)
 	}
 
 	return iterStepCtx

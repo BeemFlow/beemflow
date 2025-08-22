@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,7 +252,7 @@ func TestGenerateDeterministicRunID(t *testing.T) {
 }
 
 func TestGenerateDeterministicRunID_TimeWindow(t *testing.T) {
-	// This test verifies that UUIDs change after the 5-minute time window
+	// This test verifies that UUIDs change after the 1-minute time window
 	// We can't easily test this without mocking time, but we can verify
 	// that UUIDs generated at different times are different
 	
@@ -264,10 +265,10 @@ func TestGenerateDeterministicRunID_TimeWindow(t *testing.T) {
 	// Sleep a tiny bit to ensure time has changed
 	time.Sleep(time.Millisecond)
 	
-	// Generate second UUID - should still be the same (within 5 min window)
+	// Generate second UUID - should still be the same (within 1 min window)
 	id2 := generateDeterministicRunID(flowName, event)
 	
-	// Within the same 5-minute window, UUIDs should be identical
+	// Within the same 1-minute window, UUIDs should be identical
 	if id1 != id2 {
 		t.Log("Note: UUIDs differ within time window, this might happen if test runs across minute boundary")
 		// This is not necessarily an error - it depends on when the test runs
@@ -1443,5 +1444,973 @@ func TestAutoFillRequiredParams(t *testing.T) {
 	// The function modifies inputs in place, so just verify it doesn't crash
 	if inputs["existing"] != "value" {
 		t.Error("Expected existing value to be preserved")
+	}
+}
+
+func TestEvaluateCondition(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	tests := []struct {
+		name      string
+		condition string
+		stepCtx   *StepContext
+		want      bool
+		wantErr   bool
+	}{
+		{
+			name:      "simple true boolean",
+			condition: "{{ true }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      true,
+		},
+		{
+			name:      "simple false boolean",
+			condition: "{{ false }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      false,
+		},
+		{
+			name:      "numeric comparison true",
+			condition: "{{ 1 == 1 }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      true,
+		},
+		{
+			name:      "numeric comparison false",
+			condition: "{{ 1 == 2 }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      false,
+		},
+		{
+			name:      "string comparison true",
+			condition: "{{ 'hello' == 'hello' }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      true,
+		},
+		{
+			name:      "string comparison false",
+			condition: "{{ 'hello' == 'world' }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      false,
+		},
+		{
+			name:      "variable comparison",
+			condition: "{{ vars.status == 'approved' }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"status": "approved"},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "complex and condition true",
+			condition: "{{ vars.content and vars.status == 'approved' }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{
+					"content": "some text",
+					"status":  "approved",
+				},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "complex and condition false",
+			condition: "{{ vars.content and vars.status == 'approved' }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{
+					"content": "",
+					"status":  "approved",
+				},
+				map[string]any{},
+			),
+			want: false,
+		},
+		{
+			name:      "or condition true",
+			condition: "{{ vars.status == 'approved' or vars.status == 'pending' }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"status": "pending"},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "not condition",
+			condition: "{{ not (vars.status == 'posted') }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"status": "pending"},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "greater than comparison",
+			condition: "{{ vars.count > 5 }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"count": 10},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "less than or equal comparison",
+			condition: "{{ vars.count <= 5 }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"count": 3},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "nil value as false",
+			condition: "{{ vars.missing_var }}",
+			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
+			want:      false,
+		},
+		{
+			name:      "empty string as false",
+			condition: "{{ vars.empty_var }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"empty_var": ""},
+				map[string]any{},
+			),
+			want: false,
+		},
+		{
+			name:      "non-empty string as true",
+			condition: "{{ vars.non_empty_var }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"non_empty_var": "value"},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "zero as false",
+			condition: "{{ vars.zero_var }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"zero_var": 0},
+				map[string]any{},
+			),
+			want: false,
+		},
+		{
+			name:      "non-zero as true",
+			condition: "{{ vars.nonzero_var }}",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"nonzero_var": 42},
+				map[string]any{},
+			),
+			want: true,
+		},
+		{
+			name:      "legacy syntax rejected",
+			condition: "vars.status == 'active'",
+			stepCtx: NewStepContext(
+				map[string]any{},
+				map[string]any{"status": "active"},
+				map[string]any{},
+			),
+			want:    false,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set variables in context
+			for k, v := range tt.stepCtx.Vars {
+				tt.stepCtx.SetVar(k, v)
+			}
+			
+			got, err := engine.evaluateCondition(tt.condition, tt.stepCtx)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("evaluateCondition() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExecuteStepWithConditions(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	// Test that steps with false conditions are skipped
+	flow := &model.Flow{
+		Name: "test_conditions",
+		Steps: []model.Step{
+			{
+				ID:   "always_run",
+				Use:  "core.echo",
+				With: map[string]any{"text": "always"},
+			},
+			{
+				ID:   "should_run",
+				If:   "{{ 1 == 1 }}",
+				Use:  "core.echo",
+				With: map[string]any{"text": "yes"},
+			},
+			{
+				ID:   "should_not_run",
+				If:   "{{ 1 == 2 }}",
+				Use:  "core.echo",
+				With: map[string]any{"text": "no"},
+			},
+			{
+				ID:   "conditional_on_var",
+				If:   "{{ event.run_this == true }}",
+				Use:  "core.echo",
+				With: map[string]any{"text": "conditional"},
+			},
+		},
+	}
+
+	// First run without the variable
+	outputs, err := engine.Execute(ctx, flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check outputs - should_not_run and conditional_on_var should not have outputs
+	if _, exists := outputs["always_run"]; !exists {
+		t.Error("always_run should have executed")
+	}
+	if _, exists := outputs["should_run"]; !exists {
+		t.Error("should_run should have executed")
+	}
+	if _, exists := outputs["should_not_run"]; exists {
+		t.Error("should_not_run should NOT have executed")
+	}
+	if _, exists := outputs["conditional_on_var"]; exists {
+		t.Error("conditional_on_var should NOT have executed without variable")
+	}
+
+	// Second run with the variable
+	outputs, err = engine.Execute(ctx, flow, map[string]any{"run_this": true})
+	if err != nil {
+		t.Fatalf("Execute with variable failed: %v", err)
+	}
+
+	if _, exists := outputs["conditional_on_var"]; !exists {
+		t.Error("conditional_on_var should have executed with variable")
+	}
+}
+
+func TestForeachWithConditions(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "test_foreach_conditions",
+		Vars: map[string]any{
+			"items": []any{
+				map[string]any{"name": "item1", "process": true},
+				map[string]any{"name": "item2", "process": false},
+				map[string]any{"name": "item3", "process": true},
+			},
+		},
+		Steps: []model.Step{
+			{
+				ID:      "process_items",
+				Foreach: "{{items}}",
+				As:      "item",
+				Do: []model.Step{
+					{
+						ID:   "process_{{item.name}}",
+						If:   "{{ item.process == true }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "Processing {{item.name}}"},
+					},
+				},
+			},
+		},
+	}
+
+	outputs, err := engine.Execute(ctx, flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Should have processed item1 and item3, but not item2
+	if _, exists := outputs["process_item1"]; !exists {
+		t.Error("process_item1 should have executed")
+	}
+	if _, exists := outputs["process_item2"]; exists {
+		t.Error("process_item2 should NOT have executed")
+	}
+	if _, exists := outputs["process_item3"]; !exists {
+		t.Error("process_item3 should have executed")
+	}
+}
+
+func TestNestedConditions(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "test_nested_conditions",
+		Steps: []model.Step{
+			{
+				ID: "outer",
+				If: "{{ true }}",
+				Steps: []model.Step{
+					{
+						ID:   "inner_true",
+						If:   "{{ true }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "inner true"},
+					},
+					{
+						ID:   "inner_false",
+						If:   "{{ false }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "inner false"},
+					},
+				},
+			},
+			{
+				ID: "outer_false",
+				If: "{{ false }}",
+				Steps: []model.Step{
+					{
+						ID:   "should_not_run",
+						Use:  "core.echo",
+						With: map[string]any{"text": "should not run"},
+					},
+				},
+			},
+		},
+	}
+
+	outputs, err := engine.Execute(ctx, flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if _, exists := outputs["inner_true"]; !exists {
+		t.Error("inner_true should have executed")
+	}
+	if _, exists := outputs["inner_false"]; exists {
+		t.Error("inner_false should NOT have executed")
+	}
+	if _, exists := outputs["should_not_run"]; exists {
+		t.Error("should_not_run should NOT have executed")
+	}
+}
+
+// TestPristineConditionSyntax tests that conditions MUST use {{ }} syntax
+func TestPristineConditionSyntax(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	tests := []struct {
+		name    string
+		flow    *model.Flow
+		event   map[string]any
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid_template_syntax",
+			flow: &model.Flow{
+				Name: "valid_syntax",
+				Steps: []model.Step{
+					{
+						ID:   "test",
+						If:   "{{ vars.enabled == true }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "enabled"},
+					},
+				},
+			},
+			event:   map[string]any{"enabled": true},
+			wantErr: false,
+		},
+		{
+			name: "invalid_no_braces",
+			flow: &model.Flow{
+				Name: "invalid_syntax",
+				Steps: []model.Step{
+					{
+						ID:   "test",
+						If:   "vars.enabled == true",
+						Use:  "core.echo",
+						With: map[string]any{"text": "should fail"},
+					},
+				},
+			},
+			event:   map[string]any{"enabled": true},
+			wantErr: true,
+			errMsg:  "condition must use template syntax",
+		},
+		{
+			name: "complex_valid_condition",
+			flow: &model.Flow{
+				Name: "complex_condition",
+				Steps: []model.Step{
+					{
+						ID:   "complex",
+						If:   "{{ vars.count > 5 and env.USER and not vars.disabled }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "complex"},
+					},
+				},
+			},
+			event:   map[string]any{"count": 10, "disabled": false},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := engine.Execute(ctx, tt.flow, tt.event)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestPristineForeachSyntax tests foreach with clean index variables
+func TestPristineForeachSyntax(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "foreach_test",
+		Vars: map[string]any{
+			"items": []map[string]any{
+				{"name": "first"},
+				{"name": "second"},
+				{"name": "third"},
+			},
+		},
+		Steps: []model.Step{
+			{
+				ID:      "process",
+				Foreach: "{{ vars.items }}",
+				As:      "item",
+				Do: []model.Step{
+					{
+						ID:  "echo_{{ item_index }}",
+						Use: "core.echo",
+						With: map[string]any{
+							"text": "Item {{ item_row }}: {{ item.name }}",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	event := map[string]any{}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify outputs for each iteration
+	if _, exists := outputs["echo_0"]; !exists {
+		t.Error("Missing output for first iteration (echo_0)")
+	}
+	if _, exists := outputs["echo_1"]; !exists {
+		t.Error("Missing output for second iteration (echo_1)")
+	}
+	if _, exists := outputs["echo_2"]; !exists {
+		t.Error("Missing output for third iteration (echo_2)")
+	}
+}
+
+// TestPristineArrayAccess tests Pongo2's dot notation for arrays
+func TestPristineArrayAccess(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "array_access",
+		Vars: map[string]any{
+			"users": []map[string]any{
+				{"name": "Alice"},
+				{"name": "Bob"},
+			},
+			"data": map[string]any{
+				"rows": []map[string]any{
+					{"value": "first"},
+					{"value": "second"},
+				},
+			},
+		},
+		Steps: []model.Step{
+			{
+				ID:  "first_element",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "{{ vars.users.0.name }}",
+				},
+			},
+			{
+				ID:  "nested_access",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "{{ vars.data.rows.1.value }}",
+				},
+			},
+		},
+	}
+
+	event := map[string]any{}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check first element access
+	if out, ok := outputs["first_element"].(map[string]any); ok {
+		if out["text"] != "Alice" {
+			t.Errorf("Expected 'Alice', got %v", out["text"])
+		}
+	} else {
+		t.Error("first_element output not found or wrong type")
+	}
+
+	// Check nested access
+	if out, ok := outputs["nested_access"].(map[string]any); ok {
+		if out["text"] != "second" {
+			t.Errorf("Expected 'second', got %v", out["text"])
+		}
+	} else {
+		t.Error("nested_access output not found or wrong type")
+	}
+}
+
+// TestPristineVariableScoping tests explicit variable scoping
+func TestPristineVariableScoping(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "scoping_test",
+		Vars: map[string]any{
+			"flow_var": "from_flow",
+		},
+		Steps: []model.Step{
+			{
+				ID:  "test_vars",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "{{ vars.flow_var }}",
+				},
+			},
+			{
+				ID:  "test_event",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "{{ event.event_var }}",
+				},
+			},
+			{
+				ID:  "test_env",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "{{ env.USER }}",
+				},
+			},
+			{
+				ID:  "test_output",
+				Use: "core.echo",
+				With: map[string]any{
+					"text": "Previous: {{ outputs.test_vars.text }}",
+				},
+			},
+		},
+	}
+
+	event := map[string]any{
+		"event_var": "from_event",
+	}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify variable scoping
+	if out, ok := outputs["test_vars"].(map[string]any); ok {
+		if out["text"] != "from_flow" {
+			t.Errorf("vars scope failed: expected 'from_flow', got %v", out["text"])
+		}
+	}
+
+	if out, ok := outputs["test_event"].(map[string]any); ok {
+		if out["text"] != "from_event" {
+			t.Errorf("event scope failed: expected 'from_event', got %v", out["text"])
+		}
+	}
+
+	if out, ok := outputs["test_output"].(map[string]any); ok {
+		if out["text"] != "Previous: from_flow" {
+			t.Errorf("outputs scope failed: expected 'Previous: from_flow', got %v", out["text"])
+		}
+	}
+}
+
+// TestPristineConditionsInForeach tests conditions inside foreach loops
+func TestPristineConditionsInForeach(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "foreach_conditions",
+		Vars: map[string]any{
+			"items": []map[string]any{
+				{"name": "Item1", "status": "active"},
+				{"name": "Item2", "status": "inactive"},
+				{"name": "Item3", "status": "active"},
+			},
+		},
+		Steps: []model.Step{
+			{
+				ID:      "process",
+				Foreach: "{{ vars.items }}",
+				As:      "item",
+				Do: []model.Step{
+					{
+						ID:   "active_{{ item_index }}",
+						If:   "{{ item.status == 'active' }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "Active: {{ item.name }}"},
+					},
+					{
+						ID:   "inactive_{{ item_index }}",
+						If:   "{{ item.status != 'active' }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "Inactive: {{ item.name }}"},
+					},
+				},
+			},
+		},
+	}
+
+	event := map[string]any{}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify conditional execution
+	if _, exists := outputs["active_0"]; !exists {
+		t.Error("active_0 should have executed")
+	}
+	if _, exists := outputs["inactive_0"]; exists {
+		t.Error("inactive_0 should NOT have executed")
+	}
+	if _, exists := outputs["active_1"]; exists {
+		t.Error("active_1 should NOT have executed")
+	}
+	if _, exists := outputs["inactive_1"]; !exists {
+		t.Error("inactive_1 should have executed")
+	}
+	if _, exists := outputs["active_2"]; !exists {
+		t.Error("active_2 should have executed")
+	}
+}
+
+// TestPristineComplexNesting tests deeply nested structures
+func TestPristineComplexNesting(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "complex_nesting",
+		Vars: map[string]any{
+			"enabled": true,
+			"items": []map[string]any{
+				{"name": "Low", "priority": 1},
+				{"name": "High", "priority": 3},
+				{"name": "Medium", "priority": 2},
+			},
+		},
+		Steps: []model.Step{
+			{
+				ID: "outer",
+				If: "{{ vars.enabled }}",
+				Steps: []model.Step{
+					{
+						ID:      "foreach_in_block",
+						Foreach: "{{ vars.items }}",
+						As:      "item",
+						Do: []model.Step{
+							{
+								ID:   "nested_condition_{{ item_index }}",
+								If:   "{{ item.priority > 2 }}",
+								Use:  "core.echo",
+								With: map[string]any{"text": "High priority: {{ item.name }}"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	event := map[string]any{}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Only the high priority item should have output
+	if _, exists := outputs["nested_condition_0"]; exists {
+		t.Error("nested_condition_0 should NOT have executed (priority 1)")
+	}
+	if _, exists := outputs["nested_condition_1"]; !exists {
+		t.Error("nested_condition_1 should have executed (priority 3)")
+	}
+	if _, exists := outputs["nested_condition_2"]; exists {
+		t.Error("nested_condition_2 should NOT have executed (priority 2)")
+	}
+}
+
+// TestPristineParallelForeach tests parallel foreach execution
+func TestPristineParallelForeach(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "parallel_foreach",
+		Vars: map[string]any{
+			"items": []string{"alpha", "beta", "gamma"},
+		},
+		Steps: []model.Step{
+			{
+				ID:       "parallel_process",
+				Foreach:  "{{ vars.items }}",
+				As:       "item",
+				Parallel: true,
+				Do: []model.Step{
+					{
+						ID:  "process_{{ item_index }}",
+						Use: "core.echo",
+						With: map[string]any{
+							"text": "Parallel {{ item_row }}: {{ item }}",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	event := map[string]any{}
+
+	outputs, err := engine.Execute(ctx, flow, event)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// All items should have been processed
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("process_%d", i)
+		if _, exists := outputs[key]; !exists {
+			t.Errorf("Missing output for parallel iteration %s", key)
+		}
+	}
+}
+
+// TestPristineErrorHandling tests error cases with pristine syntax
+func TestPristineErrorHandling(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	tests := []struct {
+		name    string
+		flow    *model.Flow
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "invalid_condition_syntax",
+			flow: &model.Flow{
+				Name: "invalid",
+				Steps: []model.Step{
+					{
+						ID:   "bad",
+						If:   "status == 'active'", // Missing {{ }}
+						Use:  "core.echo",
+						With: map[string]any{"text": "bad"},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "condition must use template syntax",
+		},
+		{
+			name: "malformed_template",
+			flow: &model.Flow{
+				Name: "malformed",
+				Steps: []model.Step{
+					{
+						ID:   "bad",
+						If:   "{{ vars.status ==", // Incomplete
+						Use:  "core.echo",
+						With: map[string]any{"text": "bad"},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "template",
+		},
+		{
+			name: "undefined_variable_in_condition",
+			flow: &model.Flow{
+				Name: "undefined",
+				Steps: []model.Step{
+					{
+						ID:   "test",
+						If:   "{{ vars.undefined_var == 'test' }}",
+						Use:  "core.echo",
+						With: map[string]any{"text": "test"},
+					},
+				},
+			},
+			wantErr: false, // Undefined variables evaluate to falsy
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := engine.Execute(ctx, tt.flow, map[string]any{})
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestPristineBooleanEvaluation tests various boolean conditions
+func TestPristineBooleanEvaluation(t *testing.T) {
+	ctx := context.Background()
+	engine := NewDefaultEngine(ctx)
+
+	tests := []struct {
+		name      string
+		condition string
+		vars      map[string]any
+		want      bool
+	}{
+		{
+			name:      "empty_string_is_falsy",
+			condition: "{{ vars.empty }}",
+			vars:      map[string]any{"empty": ""},
+			want:      false,
+		},
+		{
+			name:      "zero_is_falsy",
+			condition: "{{ vars.zero }}",
+			vars:      map[string]any{"zero": 0},
+			want:      false,
+		},
+		{
+			name:      "null_is_falsy",
+			condition: "{{ vars.null }}",
+			vars:      map[string]any{"null": nil},
+			want:      false,
+		},
+		{
+			name:      "undefined_is_falsy",
+			condition: "{{ vars.undefined }}",
+			vars:      map[string]any{},
+			want:      false,
+		},
+		{
+			name:      "non_empty_string_is_truthy",
+			condition: "{{ vars.text }}",
+			vars:      map[string]any{"text": "hello"},
+			want:      true,
+		},
+		{
+			name:      "non_zero_number_is_truthy",
+			condition: "{{ vars.num }}",
+			vars:      map[string]any{"num": 42},
+			want:      true,
+		},
+		{
+			name:      "array_length_check",
+			condition: "{{ vars.items | length > 0 }}",
+			vars:      map[string]any{"items": []string{"a", "b"}},
+			want:      true,
+		},
+		{
+			name:      "complex_boolean_logic",
+			condition: "{{ vars.a and (vars.b or vars.c) }}",
+			vars:      map[string]any{"a": true, "b": false, "c": true},
+			want:      true,
+		},
+		{
+			name:      "negation",
+			condition: "{{ not vars.disabled }}",
+			vars:      map[string]any{"disabled": false},
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flow := &model.Flow{
+				Name: tt.name,
+				Vars: tt.vars,
+				Steps: []model.Step{
+					{
+						ID:   "test",
+						If:   tt.condition,
+						Use:  "core.echo",
+						With: map[string]any{"text": "executed"},
+					},
+				},
+			}
+
+			outputs, err := engine.Execute(ctx, flow, map[string]any{})
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+
+			executed := outputs["test"] != nil
+			if executed != tt.want {
+				t.Errorf("Condition %s: expected execution=%v, got %v",
+					tt.condition, tt.want, executed)
+			}
+		})
 	}
 }

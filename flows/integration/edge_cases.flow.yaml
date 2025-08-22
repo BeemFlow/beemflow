@@ -60,10 +60,10 @@ steps:
     as: "item"
     parallel: false
     do:
-      - id: "mixed_{{loop.index0}}"
+      - id: "mixed_{{item_index}}"
         use: core.echo
         with:
-          text: "Item {{loop.index0}}: {{item}} (type varies)"
+          text: "Item {{item_index}}: {{item}} (type varies)"
 
   # Test parallel with error handling
   - id: test_parallel_robustness

@@ -115,7 +115,7 @@ func EnsureMCPServersWithTimeout(ctx context.Context, flow *model.Flow, cfg *con
 	return nil
 }
 
-// EnsureMCPServers uses a default timeout of 15s for backward compatibility.
+// EnsureMCPServers uses a default timeout of 15s.
 func EnsureMCPServers(ctx context.Context, flow *model.Flow, cfg *config.Config) error {
 	return EnsureMCPServersWithTimeout(ctx, flow, cfg, 15*time.Second)
 }

@@ -22,7 +22,7 @@ catch: [...]                   # optional error handler
 - id: string                   # REQUIRED unique identifier
   use: tool.name               # Tool to execute
   with: {params}               # Tool input parameters
-  if: "{{ expression }}"       # Conditional execution
+  if: "{{ expression }}"       # Conditional execution (GitHub Actions style)
   foreach: "{{ array }}"       # Loop over array
   as: item                     # Loop variable name
   do: [steps]                  # Steps to run in loop
@@ -49,13 +49,18 @@ break, continue, exit   # ❌ NO - No flow control keywords
 
 ### 📝 Template Syntax (Pongo2 - Django-like)
 ```yaml
-# Variables & References
+# Variables & References (Always use explicit scopes!)
 {{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables
+{{ env.USER }}                 # Environment variables  
 {{ secrets.API_KEY }}          # Secrets
 {{ event.field }}              # Event data
 {{ outputs.step_id.field }}    # Step outputs (preferred)
 {{ step_id.field }}            # Step outputs (shorthand)
+
+# Array Access (Pongo2 uses dot notation)
+{{ array.0 }}                  # First element
+{{ array[idx] }}               # Variable index
+{{ data.rows.0.name }}         # Nested access (dot notation throughout)
 
 # Filters & Operations
 {{ text | upper }}             # Uppercase
@@ -65,10 +70,15 @@ break, continue, exit   # ❌ NO - No flow control keywords
 {{ value || 'default' }}       # Default/fallback (NOT |default)
 {{ num + 10 }}                 # Math operations
 
-# In Loops
+# In Loops (BeemFlow provides these automatically)
 {{ item }}                     # Current item (with 'as: item')
-{{ loop.index }}               # 1-based index
-{{ loop.index0 }}              # 0-based index
+{{ item_index }}               # 0-based index (BeemFlow extension)
+{{ item_row }}                 # 1-based index (BeemFlow extension)
+
+# Conditions (MUST use template syntax)
+if: "{{ vars.status == 'active' }}"           # Required format
+if: "{{ vars.count > 5 and env.DEBUG }}"      # Complex conditions
+if: "{{ not (vars.disabled) }}"               # Negation
 ```
 
 ### 🔧 Common Tools
@@ -129,11 +139,26 @@ steps:
 
 ### Conditional Execution
 ```yaml
+# Simple condition
 - id: conditional_step
-  if: "{{ status == 'active' }}"
+  if: "{{ vars.status == 'active' }}"
   use: core.echo
   with:
     text: "Status is active"
+
+# Complex conditions
+- id: complex_check
+  if: "{{ vars.count > 10 and env.NODE_ENV == 'production' }}"
+  use: core.echo
+  with:
+    text: "Multiple conditions"
+
+# Using outputs from previous steps
+- id: check_result
+  if: "{{ outputs.api_call.status_code == 200 }}"
+  use: core.echo
+  with:
+    text: "API call succeeded"
 ```
 
 ### Loops (Foreach)
@@ -142,10 +167,28 @@ steps:
   foreach: "{{ vars.items }}"
   as: item
   do:
-    - id: process_one
+    - id: process_{{ item_index }}
       use: core.echo
       with:
-        text: "Processing {{ item }}"
+        text: "Row {{ item_row }}: Processing {{ item }}"
+    
+    # Conditional processing in loops
+    - id: conditional_{{ item_index }}
+      if: "{{ item.status == 'active' }}"
+      use: core.echo
+      with:
+        text: "Item {{ item.name }} is active"
+
+# Array element access in loops
+- id: process_rows
+  foreach: "{{ sheet_data.values }}"
+  as: row
+  do:
+    - id: check_row_{{ row_index }}
+      if: "{{ row.0 and row.1 == 'approved' }}"
+      use: core.echo
+      with:
+        text: "Processing: {{ row.0 }}"
 ```
 
 ### Parallel Execution
@@ -224,6 +267,8 @@ steps:
 | Wrong | Right | Explanation |
 |-------|-------|-------------|
 | `${ var }` | `{{ var }}` | BeemFlow uses Pongo2 syntax |
+| `if: "status == 'active'"` | `if: "{{ vars.status == 'active' }}"` | Must use template syntax & explicit scopes |
+| `{{ data.rows[0].name }}` | `{{ data.rows.0.name }}` | Pongo2 uses dot notation throughout |
 | `continue_on_error: true` | Use `catch` blocks | Field doesn't exist |
 | `{{ now() }}` | Use a variable | No function calls |
 | `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator |

@@ -254,7 +254,7 @@ func (a *HTTPAdapter) processHTTPResponse(resp *http.Response, method, url strin
 	// Try to parse as JSON first
 	var parsed any
 	if err := json.Unmarshal(data, &parsed); err == nil {
-		// If it's a JSON object, return it directly for backward compatibility
+		// If it's a JSON object, return it directly
 		if obj, ok := parsed.(map[string]any); ok {
 			return obj, nil
 		}
