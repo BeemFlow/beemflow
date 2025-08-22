@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
-	github.com/metoro-io/mcp-golang v0.13.0
+	github.com/metoro-io/mcp-golang v0.16.0
 	github.com/nats-io/stan.go v0.10.4
 	github.com/prometheus/client_golang v1.22.0
 	github.com/robfig/cron/v3 v3.0.1
