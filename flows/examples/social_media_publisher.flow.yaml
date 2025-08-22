@@ -6,40 +6,175 @@ on:
 vars:
   SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"
   SHEET_NAME: "Sheet1"
+  MODEL: "claude-3-7-sonnet-latest"
+  # Column layout: A=Content, B=Status (draft/approved/posted), C=Comment/Feedback
 
 steps:
-  # Read all posts from the sheet
+  # Read current sheet data
   - id: read_sheet
     use: google_sheets.values.get
     with:
       spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-      range: "{{ vars.SHEET_NAME }}!A:B"
+      range: "{{ vars.SHEET_NAME }}!A:C"
   
-  # Process each row using foreach with index
-  - id: process_posts
+  # Analyze sheet status and check for drafts
+  - id: analyze_sheet
+    use: core.echo
+    with:
+      text: |
+        📊 Analyzing sheet...
+        Total rows: {{ read_sheet.values | length | default: 0 }}
+        {% set has_draft = false %}
+        {% for row in read_sheet.values %}
+          {% if row.1 == 'draft' %}
+            {% set has_draft = true %}
+            Found draft in row {{ loop.index }}
+          {% endif %}
+        {% endfor %}
+        Has draft: {{ has_draft }}
+  
+  # Generate a new draft if we don't have any drafts
+  - id: check_need_draft
+    use: core.echo
+    with:
+      text: |
+        {% set needs_draft = true %}
+        {% for row in read_sheet.values %}
+          {% if row.1 == 'draft' %}
+            {% set needs_draft = false %}
+          {% endif %}
+        {% endfor %}
+        {% if needs_draft %}
+        📝 No drafts found, will create one
+        {% else %}
+        ✓ Draft exists, skipping generation
+        {% endif %}
+  
+  # Count drafts in the sheet
+  - id: count_drafts
+    use: core.echo
+    with:
+      text: |
+        {% set draft_count = 0 %}
+        {% for row in read_sheet.values %}
+          {% if row.1 == 'draft' %}
+            {% set draft_count = draft_count + 1 %}
+          {% endif %}
+        {% endfor %}
+        Draft count: {{ draft_count }}
+        NEEDS_DRAFT:{% if draft_count == 0 %}YES{% else %}NO{% endif %}
+  
+  # Generate a new draft if no drafts exist
+  - id: generate_draft
+    if: "{{ not read_sheet.values or 'NEEDS_DRAFT:YES' in count_drafts.text }}"
+    use: anthropic.chat_completion
+    with:
+      model: "{{ vars.MODEL }}"
+      max_tokens: 100
+      messages:
+        - role: "user"
+          content: |
+            Generate ONE short, engaging social media post about workflow automation or developer productivity.
+            Keep it under 280 characters. Be creative and add an emoji.
+            Return ONLY the post text, nothing else.
+  
+  # Add new draft to sheet
+  - id: add_draft
+    if: "{{ generate_draft.content.0.text }}"
+    use: google_sheets.values.append
+    with:
+      spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+      range: "{{ vars.SHEET_NAME }}!A:C"
+      values:
+        - ["{{ generate_draft.content.0.text }}", "draft", ""]
+  
+  - id: notify_draft_created
+    if: "{{ generate_draft.content.0.text }}"
+    use: core.echo
+    with:
+      text: |
+        ✨ NEW DRAFT CREATED:
+        {{ generate_draft.content.0.text }}
+  
+  # Process existing rows
+  - id: process_rows
+    if: "{{ read_sheet.values }}"
     foreach: "{{ read_sheet.values }}"
     as: "row"
     do:
-      # Only process rows that have content and are approved
-      - id: post_row_{{ row_index }}
-        if: "{{ row.0 and row.1 == 'approved' }}"
-        use: core.echo  # Replace with x.post when X_BEARER_TOKEN is set
+      # Show feedback that needs processing
+      - id: check_feedback_{{ row_index }}
+        if: "{{ row.1 == 'draft' and row.2 }}"
+        use: core.echo
         with:
-          text: "📮 Posting from row {{ row_row }}: {{ row.0 }}"
+          text: |
+            💬 Processing feedback for row {{ row_row }}:
+            Original: {{ row.0 }}
+            Feedback: {{ row.2 }}
       
-      # Update the status to posted for this specific row
-      - id: update_row_{{ row_index }}
-        if: "{{ row.0 and row.1 == 'approved' }}"
+      # Apply feedback to improve the post
+      - id: apply_feedback_{{ row_index }}
+        if: "{{ row.1 == 'draft' and row.2 }}"
+        use: anthropic.chat_completion
+        with:
+          model: "{{ vars.MODEL }}"
+          max_tokens: 100
+          messages:
+            - role: "user"
+              content: |
+                Original post: {{ row.0 }}
+                
+                Human feedback: {{ row.2 }}
+                
+                Revise the post based on the feedback. Keep it under 280 characters.
+                Return ONLY the improved post text, nothing else.
+      
+      # Update the sheet with improved content and clear feedback
+      - id: update_improved_{{ row_index }}
+        if: "{{ row.1 == 'draft' and row.2 and outputs.apply_feedback_0.content.0.text }}"
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
+          values:
+            - ["{{ outputs.apply_feedback_0.content.0.text }}", "draft", ""]
+      
+      - id: update_improved_1_{{ row_index }}
+        if: "{{ row.1 == 'draft' and row.2 and row_index == 1 and outputs.apply_feedback_1.content.0.text }}"
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
+          values:
+            - ["{{ outputs.apply_feedback_1.content.0.text }}", "draft", ""]
+      
+      - id: update_improved_2_{{ row_index }}
+        if: "{{ row.1 == 'draft' and row.2 and row_index == 2 and outputs.apply_feedback_2.content.0.text }}"
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
+          values:
+            - ["{{ outputs.apply_feedback_2.content.0.text }}", "draft", ""]
+      
+      # Post approved content
+      - id: post_{{ row_index }}
+        if: "{{ row.1 == 'approved' }}"
+        use: core.echo
+        with:
+          text: |
+            📮 POSTING TO SOCIAL MEDIA:
+            {{ row.0 }}
+      
+      # Mark as posted
+      - id: mark_posted_{{ row_index }}
+        if: "{{ row.1 == 'approved' }}"
         use: google_sheets.values.update
         with:
           spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
           range: "{{ vars.SHEET_NAME }}!B{{ row_row }}"
           values:
             - ["posted"]
-      
-      # Exit after processing first approved post (for rate limiting)
-      # Note: BeemFlow doesn't have a break statement, so we process all
-      # but only the first approved will actually post
   
   # Summary
   - id: summary
@@ -47,11 +182,23 @@ steps:
     with:
       text: |
         ========================================
-        Social Media Publisher
+        🤖 Social Media Marketing Agent
         ========================================
-        Total rows in sheet: {{ read_sheet.values | length | default: 0 }}
         
-        Instructions:
-        1. Add content in column A
-        2. Set column B to "approved" to publish
-        3. The workflow will post and mark as "posted"
+        📊 Sheet Status:
+        - Total posts: {{ read_sheet.values | length | default: 0 }}
+        {% if generate_draft.content.0.text %}
+        - ✨ New draft created!
+        {% endif %}
+        
+        📝 Instructions for Humans:
+        1. Column A: Post content
+        2. Column B: Status (draft/approved/posted)
+        3. Column C: Your feedback for improvements
+        
+        🔄 Workflow:
+        • Add feedback in column C → Agent will revise
+        • Change status to "approved" → Agent will post
+        • Agent creates new drafts automatically
+        
+        💡 This sheet is your interface to the marketing agent!
