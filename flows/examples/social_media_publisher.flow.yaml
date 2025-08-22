@@ -1,204 +1,163 @@
 name: social_media_publisher
 on: 
   - cli.manual
-  - cron.*/5_*_*_*_*  # Run every 5 minutes
+  - cron.*/5_*_*_*_*
 
 vars:
   SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"
   SHEET_NAME: "Sheet1"
   MODEL: "claude-3-7-sonnet-latest"
-  # Column layout: A=Content, B=Status (draft/approved/posted), C=Comment/Feedback
+  # A=Content | B=Status | C=Ready? | D=Approved? | E=Feedback
+  
+  BASE_PROMPT: |
+    You're writing social media for BeemFlow - "GitHub Actions for every business process."
+    
+    Core proposition: While everyone debates AI replacing jobs, we're building the infrastructure for developers to automate, understand, and eventually OWN businesses. BeemFlow turns complex processes into text-first workflows that both humans and AI can read, write, and optimize.
+    
+    Pick ONE story angle that resonates:
+    
+    1. **The Automation Story**: "That 50-step manual process your ops team does? It's 10 lines of YAML now. BeemFlow speaks both human and AI fluently."
+    
+    2. **The Acquisition Flywheel**: "Every workflow you automate teaches you how a business really works. BeemFlow isn't just automation - it's your path to ownership during the $15T wealth transfer."
+    
+    3. **Text > GUI Philosophy**: "Drag-and-drop breaks at scale. BeemFlow workflows are version-controlled, AI-readable, and actually maintainable. Like GitHub Actions for everything."
+    
+    4. **Real Impact**: "Just helped a client turn their 24-hour reporting nightmare into a 2-hour BeemFlow automation. The CFO literally cried (happy tears)."
+    
+    5. **The Builder's Dream**: "MCP servers, 100+ integrations, hot-reloading YAML. BeemFlow is what happens when developers build the automation tool they actually want."
+    
+    6. **AI Co-Workers**: "Your LLM can now read, write, and execute BeemFlow workflows. We're not replacing developers - we're giving them superpowers."
+    
+    Voice: Like texting a developer friend who gets it. Skip the corporate speak.
+    
+    Max 280 chars. No emojis, no hashtags, no marketing bullshit. Return ONLY the post text.
 
 steps:
-  # Read current sheet data
+  # Read sheet
   - id: read_sheet
     use: google_sheets.values.get
     with:
       spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-      range: "{{ vars.SHEET_NAME }}!A:C"
+      range: "{{ vars.SHEET_NAME }}!A:E"
   
-  # Analyze sheet status and check for drafts
-  - id: analyze_sheet
-    use: core.echo
-    with:
-      text: |
-        📊 Analyzing sheet...
-        Total rows: {{ read_sheet.values | length | default: 0 }}
-        {% set has_draft = false %}
-        {% for row in read_sheet.values %}
-          {% if row.1 == 'draft' %}
-            {% set has_draft = true %}
-            Found draft in row {{ loop.index }}
-          {% endif %}
-        {% endfor %}
-        Has draft: {{ has_draft }}
-  
-  # Generate a new draft if we don't have any drafts
-  - id: check_need_draft
-    use: core.echo
-    with:
-      text: |
-        {% set needs_draft = true %}
-        {% for row in read_sheet.values %}
-          {% if row.1 == 'draft' %}
-            {% set needs_draft = false %}
-          {% endif %}
-        {% endfor %}
-        {% if needs_draft %}
-        📝 No drafts found, will create one
-        {% else %}
-        ✓ Draft exists, skipping generation
-        {% endif %}
-  
-  # Count drafts in the sheet
-  - id: count_drafts
-    use: core.echo
-    with:
-      text: |
-        {% set draft_count = 0 %}
-        {% for row in read_sheet.values %}
-          {% if row.1 == 'draft' %}
-            {% set draft_count = draft_count + 1 %}
-          {% endif %}
-        {% endfor %}
-        Draft count: {{ draft_count }}
-        NEEDS_DRAFT:{% if draft_count == 0 %}YES{% else %}NO{% endif %}
-  
-  # Generate a new draft if no drafts exist
-  - id: generate_draft
-    if: "{{ not read_sheet.values or 'NEEDS_DRAFT:YES' in count_drafts.text }}"
-    use: anthropic.chat_completion
-    with:
-      model: "{{ vars.MODEL }}"
-      max_tokens: 100
-      messages:
-        - role: "user"
-          content: |
-            Generate ONE short, engaging social media post about workflow automation or developer productivity.
-            Keep it under 280 characters. Be creative and add an emoji.
-            Return ONLY the post text, nothing else.
-  
-  # Add new draft to sheet
-  - id: add_draft
-    if: "{{ generate_draft.content.0.text }}"
-    use: google_sheets.values.append
-    with:
-      spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-      range: "{{ vars.SHEET_NAME }}!A:C"
-      values:
-        - ["{{ generate_draft.content.0.text }}", "draft", ""]
-  
-  - id: notify_draft_created
-    if: "{{ generate_draft.content.0.text }}"
-    use: core.echo
-    with:
-      text: |
-        ✨ NEW DRAFT CREATED:
-        {{ generate_draft.content.0.text }}
-  
-  # Process existing rows
+  # Process rows
   - id: process_rows
     if: "{{ read_sheet.values }}"
     foreach: "{{ read_sheet.values }}"
     as: "row"
     do:
-      # Show feedback that needs processing
-      - id: check_feedback_{{ row_index }}
-        if: "{{ row.1 == 'draft' and row.2 }}"
-        use: core.echo
-        with:
-          text: |
-            💬 Processing feedback for row {{ row_row }}:
-            Original: {{ row.0 }}
-            Feedback: {{ row.2 }}
-      
-      # Apply feedback to improve the post
-      - id: apply_feedback_{{ row_index }}
-        if: "{{ row.1 == 'draft' and row.2 }}"
+      # Apply feedback when Ready checkbox is TRUE (with conversation continuity)
+      - id: improve_{{ row_index }}
+        if: "{{ row.2 == 'TRUE' and row.4 and row_index > 0 }}"
         use: anthropic.chat_completion
         with:
           model: "{{ vars.MODEL }}"
-          max_tokens: 100
+          system: "{{ vars.BASE_PROMPT }}"
           messages:
             - role: "user"
+              content: "Generate a fresh BeemFlow post. Pick any angle that feels right today."
+            - role: "assistant"
+              content: "{{ runs.Previous.outputs.generate_draft.content.0.text | default: row.0 }}"
+            - role: "user"
               content: |
-                Original post: {{ row.0 }}
+                Good start! Now apply this feedback from our reviewer: "{{ row.4 }}"
                 
-                Human feedback: {{ row.2 }}
-                
-                Revise the post based on the feedback. Keep it under 280 characters.
-                Return ONLY the improved post text, nothing else.
+                Revise the post based on this feedback while staying true to our voice.
       
-      # Update the sheet with improved content and clear feedback
-      - id: update_improved_{{ row_index }}
-        if: "{{ row.1 == 'draft' and row.2 and outputs.apply_feedback_0.content.0.text }}"
+      # Update content, uncheck Ready, and clear feedback
+      - id: update_{{ row_index }}
+        if: "{{ row.2 == 'TRUE' and row.4 and row_index > 0 }}"
         use: google_sheets.values.update
         with:
           spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
+          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:E{{ row_row }}"
           values:
-            - ["{{ outputs.apply_feedback_0.content.0.text }}", "draft", ""]
+            - ["{{ outputs.improve_0.content.0.text | default: outputs.improve_1.content.0.text | default: outputs.improve_2.content.0.text | default: row.0 }}", "draft", "FALSE", "FALSE", ""]
       
-      - id: update_improved_1_{{ row_index }}
-        if: "{{ row.1 == 'draft' and row.2 and row_index == 1 and outputs.apply_feedback_1.content.0.text }}"
-        use: google_sheets.values.update
-        with:
-          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
-          values:
-            - ["{{ outputs.apply_feedback_1.content.0.text }}", "draft", ""]
-      
-      - id: update_improved_2_{{ row_index }}
-        if: "{{ row.1 == 'draft' and row.2 and row_index == 2 and outputs.apply_feedback_2.content.0.text }}"
-        use: google_sheets.values.update
-        with:
-          spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-          range: "{{ vars.SHEET_NAME }}!A{{ row_row }}:C{{ row_row }}"
-          values:
-            - ["{{ outputs.apply_feedback_2.content.0.text }}", "draft", ""]
-      
-      # Post approved content
+      # Post when Approved checkbox is TRUE
       - id: post_{{ row_index }}
-        if: "{{ row.1 == 'approved' }}"
+        if: "{{ row.3 == 'TRUE' and row.1 != 'posted' and row_index > 0 }}"
         use: core.echo
         with:
-          text: |
-            📮 POSTING TO SOCIAL MEDIA:
-            {{ row.0 }}
+          text: "📮 POSTING: {{ row.0 }}"
       
       # Mark as posted
       - id: mark_posted_{{ row_index }}
-        if: "{{ row.1 == 'approved' }}"
+        if: "{{ row.3 == 'TRUE' and row.1 != 'posted' and row_index > 0 }}"
         use: google_sheets.values.update
         with:
           spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
-          range: "{{ vars.SHEET_NAME }}!B{{ row_row }}"
+          range: "{{ vars.SHEET_NAME }}!B{{ row_row }}:D{{ row_row }}"
           values:
-            - ["posted"]
+            - ["posted", "FALSE", "FALSE"]
   
-  # Summary
+  # Check if we need a new draft (only if no unpublished drafts exist)
+  - id: check_drafts
+    use: core.echo
+    with:
+      text: |
+        {% set draft_count = 0 %}
+        {% for row in read_sheet.values %}
+          {% if row.0 and row.0 != "Content" and row.1 == "draft" %}
+            {% set draft_count = draft_count + 1 %}
+          {% endif %}
+        {% endfor %}
+        DRAFT_COUNT:{{ draft_count }}
+        NEEDS_DRAFT:{% if draft_count == 0 %}YES{% endif %}
+  
+  # Generate new draft if needed (with conversation continuity)
+  - id: generate_draft
+    if: '{{ "NEEDS_DRAFT:YES" in check_drafts.text }}'
+    use: anthropic.chat_completion
+    with:
+      model: "{{ vars.MODEL }}"
+      system: "{{ vars.BASE_PROMPT }}"
+      messages:
+        - role: "user"
+          content: |
+            {% if runs.Previous.outputs.generate_draft.content.0.text %}
+            Our last post was: "{{ runs.Previous.outputs.generate_draft.content.0.text }}"
+            
+            Generate a fresh BeemFlow post that explores a different angle or story. Don't repeat the same theme.
+            {% else %}
+            Generate a fresh BeemFlow post. Pick any angle that feels right today.
+            {% endif %}
+  
+  # Add new draft
+  - id: add_draft
+    if: "{{ generate_draft.content.0.text }}"
+    use: google_sheets.values.append
+    with:
+      spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+      range: "{{ vars.SHEET_NAME }}!A:E"
+      values:
+        - ["{{ generate_draft.content.0.text }}", "draft", "FALSE", "FALSE", ""]
+  
+  # Track what we've published this run
+  - id: track_published
+    use: core.echo
+    with:
+      text: |
+        {% for row in read_sheet.values %}
+          {% if row.3 == 'TRUE' and row.1 != 'posted' and loop.index0 > 0 %}
+        PUBLISHED: {{ row.0 }}
+          {% endif %}
+        {% endfor %}
+  
+  # Summary with history
   - id: summary
     use: core.echo
     with:
       text: |
-        ========================================
-        🤖 Social Media Marketing Agent
-        ========================================
-        
-        📊 Sheet Status:
-        - Total posts: {{ read_sheet.values | length | default: 0 }}
-        {% if generate_draft.content.0.text %}
-        - ✨ New draft created!
+        =====================================
+        Social Media Publisher
+        =====================================
+        {% if runs.Previous.outputs.track_published.text %}
+        📚 Previously posted:
+        {{ runs.Previous.outputs.track_published.text }}
         {% endif %}
         
-        📝 Instructions for Humans:
-        1. Column A: Post content
-        2. Column B: Status (draft/approved/posted)
-        3. Column C: Your feedback for improvements
-        
-        🔄 Workflow:
-        • Add feedback in column C → Agent will revise
-        • Change status to "approved" → Agent will post
-        • Agent creates new drafts automatically
-        
-        💡 This sheet is your interface to the marketing agent!
+        ✅ Column C: Check to apply feedback
+        ✅ Column D: Check to post
+        💬 Column E: Add feedback
+        ====================================="

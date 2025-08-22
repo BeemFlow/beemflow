@@ -2414,3 +2414,328 @@ func TestPristineBooleanEvaluation(t *testing.T) {
 		})
 	}
 }
+
+// TestRunsAccess_Previous tests the RunsAccess.Previous() functionality
+func TestRunsAccess_Previous(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStorage()
+
+	// Create test runs for workflow "test-flow"
+	run1ID := uuid.New()
+	run2ID := uuid.New()
+	run3ID := uuid.New()
+	currentRunID := uuid.New()
+
+	// Add runs in chronological order (oldest first)
+	now := time.Now()
+	
+	// Run 1: Successful run from yesterday
+	run1 := &model.Run{
+		ID:        run1ID,
+		FlowName:  "test-flow",
+		Status:    model.RunSucceeded,
+		StartedAt: now.Add(-24 * time.Hour),
+		EndedAt:   ptrTime(now.Add(-24 * time.Hour).Add(5 * time.Minute)),
+	}
+	if err := store.SaveRun(ctx, run1); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Add step outputs for run1
+	step1Run1 := &model.StepRun{
+		ID:       uuid.New(),
+		RunID:    run1ID,
+		StepName: "generate_content",
+		Status:   model.StepSucceeded,
+		Outputs: map[string]any{
+			"text": "First run output",
+		},
+	}
+	if err := store.SaveStep(ctx, step1Run1); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Run 2: Failed run from an hour ago
+	run2 := &model.Run{
+		ID:        run2ID,
+		FlowName:  "test-flow",
+		Status:    model.RunFailed,
+		StartedAt: now.Add(-1 * time.Hour),
+		EndedAt:   ptrTime(now.Add(-1 * time.Hour).Add(2 * time.Minute)),
+	}
+	if err := store.SaveRun(ctx, run2); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Run 3: Successful run from 30 minutes ago
+	run3 := &model.Run{
+		ID:        run3ID,
+		FlowName:  "test-flow",
+		Status:    model.RunSucceeded,
+		StartedAt: now.Add(-30 * time.Minute),
+		EndedAt:   ptrTime(now.Add(-30 * time.Minute).Add(3 * time.Minute)),
+	}
+	if err := store.SaveRun(ctx, run3); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Add step outputs for run3
+	step1Run3 := &model.StepRun{
+		ID:       uuid.New(),
+		RunID:    run3ID,
+		StepName: "generate_content",
+		Status:   model.StepSucceeded,
+		Outputs: map[string]any{
+			"text": "Third run output",
+		},
+	}
+	if err := store.SaveStep(ctx, step1Run3); err != nil {
+		t.Fatal(err)
+	}
+	
+	step2Run3 := &model.StepRun{
+		ID:       uuid.New(),
+		RunID:    run3ID,
+		StepName: "validate",
+		Status:   model.StepSucceeded,
+		Outputs: map[string]any{
+			"valid": true,
+		},
+	}
+	if err := store.SaveStep(ctx, step2Run3); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Current run (now)
+	currentRun := &model.Run{
+		ID:        currentRunID,
+		FlowName:  "test-flow",
+		Status:    model.RunRunning,
+		StartedAt: now,
+	}
+	if err := store.SaveRun(ctx, currentRun); err != nil {
+		t.Fatal(err)
+	}
+	
+	// Run from different workflow
+	otherFlowRun := &model.Run{
+		ID:        uuid.New(),
+		FlowName:  "other-flow",
+		Status:    model.RunSucceeded,
+		StartedAt: now.Add(-10 * time.Minute),
+		EndedAt:   ptrTime(now.Add(-10 * time.Minute).Add(1 * time.Minute)),
+	}
+	if err := store.SaveRun(ctx, otherFlowRun); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("returns most recent successful run from same workflow", func(t *testing.T) {
+		runsAccess := &RunsAccess{
+			storage:      store,
+			ctx:          ctx,
+			currentRunID: currentRunID,
+			flowName:     "test-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		
+		// Should return run3 (most recent successful run)
+		if previous["id"] != run3ID.String() {
+			t.Errorf("Expected run ID %s, got %s", run3ID.String(), previous["id"])
+		}
+		if previous["status"] != "SUCCEEDED" {
+			t.Errorf("Expected status SUCCEEDED, got %s", previous["status"])
+		}
+		if previous["flow"] != "test-flow" {
+			t.Errorf("Expected flow test-flow, got %s", previous["flow"])
+		}
+		
+		// Check outputs
+		outputs, ok := previous["outputs"].(map[string]any)
+		if !ok {
+			t.Fatal("outputs not a map")
+		}
+		if genContent, ok := outputs["generate_content"].(map[string]any); ok {
+			if genContent["text"] != "Third run output" {
+				t.Errorf("Expected 'Third run output', got %s", genContent["text"])
+			}
+		} else {
+			t.Error("generate_content output missing")
+		}
+		if validate, ok := outputs["validate"].(map[string]any); ok {
+			if validate["valid"] != true {
+				t.Error("Expected valid=true")
+			}
+		} else {
+			t.Error("validate output missing")
+		}
+	})
+
+	t.Run("skips current run", func(t *testing.T) {
+		// Make current run successful
+		currentRun.Status = model.RunSucceeded
+		currentRun.EndedAt = ptrTime(now.Add(1 * time.Minute))
+		if err := store.SaveRun(ctx, currentRun); err != nil {
+			t.Fatal(err)
+		}
+		
+		runsAccess := &RunsAccess{
+			storage:      store,
+			ctx:          ctx,
+			currentRunID: currentRunID,
+			flowName:     "test-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		
+		// Should still return run3, not current run
+		if previous["id"] != run3ID.String() {
+			t.Errorf("Expected run ID %s, got %s", run3ID.String(), previous["id"])
+		}
+	})
+
+	t.Run("skips failed runs", func(t *testing.T) {
+		// Make run3 failed
+		run3.Status = model.RunFailed
+		if err := store.SaveRun(ctx, run3); err != nil {
+			t.Fatal(err)
+		}
+		
+		runsAccess := &RunsAccess{
+			storage:      store,
+			ctx:          ctx,
+			currentRunID: currentRunID,
+			flowName:     "test-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		
+		// Should return run1 (older but successful)
+		if previous["id"] != run1ID.String() {
+			t.Errorf("Expected run ID %s, got %s", run1ID.String(), previous["id"])
+		}
+		outputs, ok := previous["outputs"].(map[string]any)
+		if !ok {
+			t.Fatal("outputs not a map")
+		}
+		if genContent, ok := outputs["generate_content"].(map[string]any); ok {
+			if genContent["text"] != "First run output" {
+				t.Errorf("Expected 'First run output', got %s", genContent["text"])
+			}
+		}
+	})
+
+	t.Run("returns empty map when no previous runs", func(t *testing.T) {
+		runsAccess := &RunsAccess{
+			storage:      storage.NewMemoryStorage(), // Empty storage
+			ctx:          ctx,
+			currentRunID: currentRunID,
+			flowName:     "test-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		if len(previous) != 0 {
+			t.Errorf("Expected empty map, got %v", previous)
+		}
+	})
+
+	t.Run("filters by workflow name", func(t *testing.T) {
+		runsAccess := &RunsAccess{
+			storage:      store,
+			ctx:          ctx,
+			currentRunID: uuid.New(),
+			flowName:     "other-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		
+		// Should return the otherFlowRun
+		if previous["flow"] != "other-flow" {
+			t.Errorf("Expected flow other-flow, got %s", previous["flow"])
+		}
+	})
+
+	t.Run("handles first run of workflow", func(t *testing.T) {
+		firstRunID := uuid.New()
+		runsAccess := &RunsAccess{
+			storage:      store,
+			ctx:          ctx,
+			currentRunID: firstRunID,
+			flowName:     "brand-new-flow",
+		}
+		
+		previous := runsAccess.Previous()
+		if len(previous) != 0 {
+			t.Errorf("Expected empty map for first run, got %v", previous)
+		}
+	})
+}
+
+// TestRunsAccess_Integration tests RunsAccess with actual Engine execution
+func TestRunsAccess_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	
+	ctx := context.Background()
+	
+	t.Run("works with Engine execution", func(t *testing.T) {
+		engine := NewDefaultEngine(ctx)
+		defer engine.Close()
+		
+		// First run
+		flow1 := &model.Flow{
+			Name: "integration-test",
+			Steps: []model.Step{
+				{
+					ID:  "echo1",
+					Use: "core.echo",
+					With: map[string]any{
+						"text": "First run",
+					},
+				},
+			},
+		}
+		
+		outputs1, err := engine.Execute(ctx, flow1, map[string]any{})
+		if err != nil {
+			t.Fatalf("First run failed: %v", err)
+		}
+		if echo1, ok := outputs1["echo1"].(map[string]any); ok {
+			if echo1["text"] != "First run" {
+				t.Errorf("Expected 'First run', got %s", echo1["text"])
+			}
+		} else {
+			t.Error("echo1 output missing")
+		}
+		
+		// Wait to avoid deduplication
+		time.Sleep(61 * time.Second)
+		
+		// Second run that can access the first
+		flow2 := &model.Flow{
+			Name: "integration-test",
+			Steps: []model.Step{
+				{
+					ID:  "echo_previous",
+					Use: "core.echo",
+					With: map[string]any{
+						"text": "Previous: {{ runs.Previous.outputs.echo1.text }}",
+					},
+				},
+			},
+		}
+		
+		outputs2, err := engine.Execute(ctx, flow2, map[string]any{})
+		if err != nil {
+			t.Fatalf("Second run failed: %v", err)
+		}
+		if echoPrev, ok := outputs2["echo_previous"].(map[string]any); ok {
+			if echoPrev["text"] != "Previous: First run" {
+				t.Errorf("Expected 'Previous: First run', got %s", echoPrev["text"])
+			}
+		} else {
+			t.Error("echo_previous output missing")
+		}
+	})
+}

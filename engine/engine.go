@@ -92,6 +92,64 @@ type TemplateData struct {
 	Outputs StepOutputs
 	Secrets SecretsData
 	Env     map[string]string
+	Runs    *RunsAccess  // Simple access to run history
+}
+
+// RunsAccess provides template access to previous run outputs
+type RunsAccess struct {
+	storage      storage.Storage
+	ctx          context.Context
+	currentRunID uuid.UUID
+	flowName     string
+}
+
+// Previous returns outputs from the most recent previous run of the same workflow
+func (r *RunsAccess) Previous() map[string]any {
+	runs, err := r.storage.ListRuns(r.ctx)
+	if err != nil || len(runs) == 0 {
+		return map[string]any{}
+	}
+	
+	// Find the most recent successful run from the same workflow
+	for _, run := range runs {
+		// Only consider runs from the same workflow
+		if run.FlowName != r.flowName {
+			continue
+		}
+		
+		// Skip the current run
+		if r.currentRunID != uuid.Nil && run.ID == r.currentRunID {
+			continue
+		}
+		
+		// Only return successful runs
+		if run.Status != model.RunSucceeded {
+			continue
+		}
+		
+		// Get step outputs for this run
+		steps, err := r.storage.GetSteps(r.ctx, run.ID)
+		if err != nil {
+			continue
+		}
+		
+		// Aggregate step outputs
+		outputs := map[string]any{}
+		for _, step := range steps {
+			if step.Outputs != nil {
+				outputs[step.StepName] = step.Outputs
+			}
+		}
+		
+		return map[string]any{
+			"id":      run.ID.String(),
+			"outputs": outputs,
+			"status":  string(run.Status),
+			"flow":    run.FlowName,
+		}
+	}
+	
+	return map[string]any{}
 }
 
 // validIdentifierRegex matches valid Go-style identifiers
@@ -109,6 +167,9 @@ type Engine struct {
 	mu      sync.Mutex
 	// Store completed outputs for resumed runs (token -> outputs)
 	completedOutputs map[string]map[string]any
+	// Current execution context (set during Execute)
+	currentFlow  *model.Flow
+	currentRunID uuid.UUID
 	// NOTE: Storage, blob, eventbus, and cron are pluggable; in-memory is the default for now.
 	// Call Close() to clean up resources (e.g., MCPAdapter subprocesses) when done.
 }
@@ -227,6 +288,12 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 		// Duplicate detected - return empty outputs and no error to signal successful deduplication
 		return map[string]any{}, nil
 	}
+
+	// Set current execution context for template access
+	e.mu.Lock()
+	e.currentFlow = flow
+	e.currentRunID = runID
+	e.mu.Unlock()
 
 	// Execute the flow steps
 	outputs, err := e.executeStepsWithPersistence(ctx, flow, stepCtx, 0, runID)
@@ -999,12 +1066,29 @@ func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 	// We create a proxy map that loads values on demand
 	env := createEnvProxy()
 
+	// Get current execution context
+	e.mu.Lock()
+	currentFlow := e.currentFlow
+	currentRunID := e.currentRunID
+	e.mu.Unlock()
+	
+	flowName := ""
+	if currentFlow != nil {
+		flowName = currentFlow.Name
+	}
+
 	return TemplateData{
 		Event:   snapshot.Event,
 		Vars:    snapshot.Vars,
 		Outputs: snapshot.Outputs,
 		Secrets: snapshot.Secrets,
 		Env:     env,
+		Runs: &RunsAccess{
+			storage:      e.Storage,
+			ctx:          context.Background(),
+			currentRunID: currentRunID,
+			flowName:     flowName,
+		},
 	}
 }
 
@@ -1542,6 +1626,7 @@ func flattenTemplateDataToMap(templateData TemplateData) map[string]any {
 	data[constants.TemplateFieldSecrets] = templateData.Secrets
 	data[constants.TemplateFieldSteps] = templateData.Outputs // Add steps namespace for step output access
 	data[constants.TemplateFieldEnv] = templateData.Env
+	data["runs"] = templateData.Runs // Add runs access for history
 
 	// Flatten vars and event into context for template rendering
 	for k, v := range templateData.Vars {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"maps"
+	"sort"
 	"sync"
 
 	"github.com/awantoch/beemflow/model"
@@ -73,6 +74,10 @@ func (m *MemoryStorage) ListRuns(ctx context.Context) ([]*model.Run, error) {
 	for _, run := range m.runs {
 		out = append(out, run)
 	}
+	// Sort by StartedAt DESC to match SQL implementations
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
 	return out, nil
 }
 

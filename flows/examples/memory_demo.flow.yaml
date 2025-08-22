@@ -1,0 +1,38 @@
+name: memory_demo
+on: cli.manual
+
+# This workflow demonstrates BeemFlow's organizational memory feature
+# Each run can access outputs from the previous run of the same workflow
+
+steps:
+  - id: recall_previous
+    use: core.echo
+    with:
+      text: |
+        {% if runs.Previous.id %}
+        📚 Previous run: {{ runs.Previous.id }}
+        Last message: {{ runs.Previous.outputs.generate_message.text | default: "No message" }}
+        {% else %}
+        🆕 This is the first run of this workflow
+        {% endif %}
+  
+  - id: generate_message
+    use: core.echo
+    with:
+      text: "Run {{ now }} - The time is {{ env.USER }}'s {{ now }}"
+  
+  - id: summary
+    use: core.echo
+    with:
+      text: |
+        =====================================
+        BeemFlow Organizational Memory Demo
+        =====================================
+        Current message: {{ generate_message.text }}
+        
+        This workflow maintains conversation continuity across runs.
+        Each execution can reference outputs from the previous run.
+        No external storage needed - it's all in BeemFlow's runtime!
+        
+        Try running this workflow multiple times to see the memory in action.
+        ====================================="

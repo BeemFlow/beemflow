@@ -113,6 +113,10 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	url := a.ToolManifest.Endpoint
 	for k, v := range enrichedInputs {
 		placeholder := "{" + k + "}"
+		// Only process if this parameter is actually in the URL
+		if !strings.Contains(url, placeholder) {
+			continue
+		}
 		// Handle string values with security validation
 		if str, ok := v.(string); ok {
 			// Validate to prevent path traversal attacks

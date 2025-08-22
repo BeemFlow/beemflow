@@ -77,6 +77,10 @@
           "type": "string",
           "description": "Claude model name (e.g., claude-3-7-sonnet-20250219)"
         },
+        "system": {
+          "type": "string",
+          "description": "System prompt to set context and behavior"
+        },
         "messages": {
           "type": "array",
           "description": "Chat messages following the OpenAI spec.",
@@ -84,7 +88,7 @@
             "type": "object",
             "required": ["role", "content"],
             "properties": {
-              "role": { "type": "string", "enum": ["system", "user", "assistant", "tool"] },
+              "role": { "type": "string", "enum": ["user", "assistant", "tool"] },
               "content": { "type": "string" },
               "name": { "type": "string" },
               "tool_call_id": { "type": "string" }
