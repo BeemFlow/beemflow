@@ -475,12 +475,16 @@ func GetToolManifest(ctx context.Context, name string) (*registry.ToolManifest, 
 
 // ListToolManifests returns all tool manifests from the local registry
 func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
-	// Load tool manifests from the local registry index
-	local := registry.NewLocalRegistry("")
-	entries, err := local.ListServers(ctx, registry.ListOptions{})
+	// Use the standard registry manager to get tools from all registries
+	factory := registry.NewFactory()
+	cfg := GetConfigFromContext(ctx)
+	mgr := factory.CreateStandardManager(ctx, cfg)
+	
+	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	
 	var manifests []registry.ToolManifest
 	for _, entry := range entries {
 		manifests = append(manifests, registry.ToolManifest{
