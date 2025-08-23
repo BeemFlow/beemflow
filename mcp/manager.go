@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/model"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/utils"
 	mcp "github.com/metoro-io/mcp-golang"
 	mcphttp "github.com/metoro-io/mcp-golang/transport/http"
 )

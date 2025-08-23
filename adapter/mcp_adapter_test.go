@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awantoch/beemflow/constants"
+	"github.com/beemflow/beemflow/constants"
 )
 
 // TestMCPAdapter_ID tests the adapter ID

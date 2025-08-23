@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // RegistryEntry is a unified representation of a server/tool in any registry.

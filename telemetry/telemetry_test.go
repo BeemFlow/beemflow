@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
+	"github.com/beemflow/beemflow/config"
 )
 
 func TestInit(t *testing.T) {

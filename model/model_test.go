@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/awantoch/beemflow/model"
+	"github.com/beemflow/beemflow/model"
 )
 
 func TestFlowModel_UnmarshalAllFields(t *testing.T) {

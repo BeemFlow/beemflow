@@ -1,7 +1,7 @@
 name: fetch_and_summarize
 on: cli.manual
 vars:
-  fetch_url: "https://raw.githubusercontent.com/awantoch/beemflow/refs/heads/main/README.md"
+  fetch_url: "https://raw.githubusercontent.com/beemflow/beemflow/refs/heads/main/README.md"
 steps:
   - id: fetch_page
     use: http.fetch

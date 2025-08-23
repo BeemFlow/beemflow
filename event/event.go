@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awantoch/beemflow/config"
+	"github.com/beemflow/beemflow/config"
 )
 
 type EventBus interface {

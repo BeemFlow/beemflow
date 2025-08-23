@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/awantoch/beemflow/model"
+	"github.com/beemflow/beemflow/model"
 	"github.com/google/uuid"
 )
 

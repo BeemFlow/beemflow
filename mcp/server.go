@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/utils"
 	mcp "github.com/metoro-io/mcp-golang"
 	mcphttp "github.com/metoro-io/mcp-golang/transport/http"
 	mcpstdio "github.com/metoro-io/mcp-golang/transport/stdio"

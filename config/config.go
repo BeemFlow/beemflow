@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/awantoch/beemflow/docs"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/docs"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 

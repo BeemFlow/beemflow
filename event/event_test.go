@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awantoch/beemflow/config"
+	"github.com/beemflow/beemflow/config"
 )
 
 func TestNewInProcEventBus(t *testing.T) {

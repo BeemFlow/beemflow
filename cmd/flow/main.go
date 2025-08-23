@@ -11,13 +11,13 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
-	_ "github.com/awantoch/beemflow/adapter"
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
-	api "github.com/awantoch/beemflow/core"
-	"github.com/awantoch/beemflow/dsl"
-	beemhttp "github.com/awantoch/beemflow/http"
-	"github.com/awantoch/beemflow/utils"
+	_ "github.com/beemflow/beemflow/adapter"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
+	api "github.com/beemflow/beemflow/core"
+	"github.com/beemflow/beemflow/dsl"
+	beemhttp "github.com/beemflow/beemflow/http"
+	"github.com/beemflow/beemflow/utils"
 )
 
 var (

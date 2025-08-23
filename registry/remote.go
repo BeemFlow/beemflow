@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // RemoteRegistry fetches tools/servers from a remote HTTP endpoint

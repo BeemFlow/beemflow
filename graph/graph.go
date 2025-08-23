@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/awantoch/beemflow/model"
+	"github.com/beemflow/beemflow/model"
 )
 
 // Node is a vertex in the graph.

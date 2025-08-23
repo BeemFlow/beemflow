@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/awantoch/beemflow/constants"
-	"github.com/awantoch/beemflow/registry"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/registry"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // CoreAdapter handles built-in BeemFlow utilities and debugging tools.

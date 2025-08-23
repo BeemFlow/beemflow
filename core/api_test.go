@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/model"
-	"github.com/awantoch/beemflow/storage"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/storage"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
 

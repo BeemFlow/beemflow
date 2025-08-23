@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/awantoch/beemflow/model"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
 

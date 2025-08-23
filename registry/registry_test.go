@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
+	"github.com/beemflow/beemflow/config"
 )
 
 func writeTestRegistry(path string, entries []RegistryEntry) error {

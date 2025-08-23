@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/model"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/model"
 )
 
 func TestFindMCPServersInFlow(t *testing.T) {

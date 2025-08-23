@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/utils"
 )
 
 func TestMain(m *testing.M) {

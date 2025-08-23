@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
+	"github.com/beemflow/beemflow/config"
 )
 
 func TestInitializeDependencies(t *testing.T) {

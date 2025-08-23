@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // RegistryFactory creates standardized registry managers with consistent configuration

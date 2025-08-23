@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 )
 
 func TestRegistryFactory_CreateStandardManager(t *testing.T) {

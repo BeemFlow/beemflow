@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/awantoch/beemflow/mcp"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/mcp"
+	"github.com/beemflow/beemflow/utils"
 	mcpgolang "github.com/metoro-io/mcp-golang"
 	"github.com/spf13/cobra"
 )

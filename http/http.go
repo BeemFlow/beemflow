@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/awantoch/beemflow/config"
-	api "github.com/awantoch/beemflow/core"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	api "github.com/beemflow/beemflow/core"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"

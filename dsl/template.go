@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/utils"
 	pongo2 "github.com/flosch/pongo2/v6"
 )
 

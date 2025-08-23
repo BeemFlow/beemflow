@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/awantoch/beemflow/registry"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/registry"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // Adapter is the interface for all BeemFlow adapters. Implement this to add new tool integrations.

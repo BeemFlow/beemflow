@@ -3,8 +3,8 @@ package blob
 import (
 	"context"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // BlobStore is the interface for pluggable blob storage backends.

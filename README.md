@@ -1093,8 +1093,8 @@ package main
 import (
   "context"
   "fmt"
-  "github.com/awantoch/beemflow/api"
-  "github.com/awantoch/beemflow/model"
+  "github.com/beemflow/beemflow/api"
+  "github.com/beemflow/beemflow/model"
 )
 
 func main() {

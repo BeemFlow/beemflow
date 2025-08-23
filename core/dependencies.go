@@ -4,12 +4,12 @@ import (
 	"context"
 	"io"
 
-	"github.com/awantoch/beemflow/blob"
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/dsl"
-	beemengine "github.com/awantoch/beemflow/engine"
-	"github.com/awantoch/beemflow/event"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/blob"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/dsl"
+	beemengine "github.com/beemflow/beemflow/engine"
+	"github.com/beemflow/beemflow/event"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // InitializeDependencies sets up all the heavy dependencies (engine, storage, etc.)

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // TestMain ensures the mcp_servers folder is cleaned up before and after tests.

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awantoch/beemflow/constants"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // TestCoreAdapter tests that CoreAdapter prints text and returns inputs.

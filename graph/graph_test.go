@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awantoch/beemflow/model"
+	"github.com/beemflow/beemflow/model"
 )
 
 func TestExportMermaid_EmptyFlow(t *testing.T) {

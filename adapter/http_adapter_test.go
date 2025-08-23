@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awantoch/beemflow/constants"
-	"github.com/awantoch/beemflow/registry"
+	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/registry"
 )
 
 // TestHTTPAdapter_PathParameterSubstitution tests path parameter replacement in manifest URLs

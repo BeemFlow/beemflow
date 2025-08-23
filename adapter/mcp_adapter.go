@@ -11,11 +11,11 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
-	mcpmanager "github.com/awantoch/beemflow/mcp"
-	"github.com/awantoch/beemflow/registry"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
+	mcpmanager "github.com/beemflow/beemflow/mcp"
+	"github.com/beemflow/beemflow/registry"
+	"github.com/beemflow/beemflow/utils"
 	mcp "github.com/metoro-io/mcp-golang"
 	mcpstdio "github.com/metoro-io/mcp-golang/transport/stdio"
 )

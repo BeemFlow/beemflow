@@ -11,13 +11,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/awantoch/beemflow/blob"
-	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/dsl"
-	"github.com/awantoch/beemflow/event"
-	"github.com/awantoch/beemflow/model"
-	"github.com/awantoch/beemflow/storage"
-	"github.com/awantoch/beemflow/utils"
+	"github.com/beemflow/beemflow/blob"
+	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/event"
+	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/storage"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
 

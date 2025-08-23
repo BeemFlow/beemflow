@@ -1,4 +1,4 @@
-module github.com/awantoch/beemflow
+module github.com/beemflow/beemflow
 
 go 1.24.1
 
