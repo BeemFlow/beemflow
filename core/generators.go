@@ -309,6 +309,18 @@ func generateMCPHandler(op *OperationDefinition) any {
 			return convertToMCPResponse(result)
 		}
 
+	case "ConvertN8NArgs":
+		return func(args MCPConvertN8NArgs) (*mcp.ToolResponse, error) {
+			result, err := op.Handler(context.Background(), &ConvertN8NArgs{
+				N8N:      args.N8N,
+				FlowName: args.FlowName,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return convertToMCPResponse(result)
+		}
+
 	case "FlowFileArgs":
 		return func(args MCPFlowFileArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &FlowFileArgs{File: args.Name})

@@ -51,6 +51,12 @@ type MCPConvertOpenAPIExtendedArgs struct {
 	Spec string `json:"spec" jsonschema:"required,description=OpenAPI specification as JSON string"`
 }
 
+// MCPConvertN8NArgs is a simplified version of ConvertN8NArgs for MCP
+type MCPConvertN8NArgs struct {
+	N8N      string `json:"n8n" jsonschema:"required,description=n8n workflow as JSON string"`
+	FlowName string `json:"flow_name" jsonschema:"description=Name for the converted flow"`
+}
+
 // MCPFlowFileArgs is a simplified version of FlowFileArgs for MCP
 type MCPFlowFileArgs struct {
 	Name string `json:"name" jsonschema:"required,description=Name of the flow file"`

@@ -85,6 +85,11 @@ type ConvertOpenAPIArgs struct {
 	BaseURL string `json:"base_url" flag:"base-url" description:"Base URL override"`
 }
 
+type ConvertN8NArgs struct {
+	N8N      string `json:"n8n" flag:"n8n" description:"n8n workflow as JSON string or file path"`
+	FlowName string `json:"flow_name" flag:"flow-name" description:"Name for the converted flow"`
+}
+
 // FlowFileArgs represents arguments for flow file operations
 type FlowFileArgs struct {
 	File string `json:"file" flag:"file,f" description:"Path to flow file"`
@@ -308,6 +313,46 @@ func lintFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("schema validation error: %w", err)
 	}
 	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
+}
+
+func convertN8NCLIHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("exactly one argument required (n8n workflow file)")
+	}
+	
+	// Read the n8n workflow file
+	workflowData, err := os.ReadFile(args[0])
+	if err != nil {
+		return fmt.Errorf("failed to read n8n workflow file: %w", err)
+	}
+	
+	// Parse the workflow as JSON to validate it
+	var workflow map[string]any
+	if err := json.Unmarshal(workflowData, &workflow); err != nil {
+		return fmt.Errorf("invalid n8n workflow JSON: %w", err)
+	}
+	
+	// Get flow name from flag
+	flowName, _ := cmd.Flags().GetString("flow-name")
+	if flowName == "" {
+		flowName = "converted_n8n_workflow"
+	}
+	
+	// Use the core adapter for conversion
+	coreAdapter := &adapter.CoreAdapter{}
+	inputs := map[string]any{
+		"__use":     constants.CoreConvertN8N,
+		"n8n":       string(workflowData),
+		"flow_name": flowName,
+	}
+	
+	result, err := coreAdapter.Execute(cmd.Context(), inputs)
+	if err != nil {
+		return err
+	}
+	
+	// Output the result
+	return outputCLIResult(result)
 }
 
 // init registers all core operations
@@ -556,6 +601,38 @@ func init() {
 			// Set defaults
 			if inputs["api_name"] == "" {
 				inputs["api_name"] = constants.DefaultAPIName
+			}
+
+			return coreAdapter.Execute(ctx, inputs)
+		},
+	})
+
+	// Convert n8n
+	RegisterOperation(&OperationDefinition{
+		ID:          constants.InterfaceIDConvertN8N,
+		Name:        "Convert n8n",
+		Description: constants.InterfaceDescConvertN8N,
+		Group:       "tools",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/tools/convert-n8n",
+		CLIUse:      "convert n8n [n8n_file]",
+		CLIShort:    "Convert n8n workflow to BeemFlow flow",
+		MCPName:     "beemflow_convert_n8n",
+		ArgsType:    reflect.TypeOf(ConvertN8NArgs{}),
+		CLIHandler:  convertN8NCLIHandler,
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*ConvertN8NArgs)
+			// Use the core adapter for conversion
+			coreAdapter := &adapter.CoreAdapter{}
+			inputs := map[string]any{
+				"__use":     constants.CoreConvertN8N,
+				"n8n":       a.N8N,
+				"flow_name": a.FlowName,
+			}
+
+			// Set defaults
+			if inputs["flow_name"] == "" {
+				inputs["flow_name"] = "converted_n8n_workflow"
 			}
 
 			return coreAdapter.Execute(ctx, inputs)

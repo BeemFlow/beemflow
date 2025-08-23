@@ -1,0 +1,71 @@
+{
+  "name": "Sample n8n Workflow",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "url": "https://api.example.com/data",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer {{ $env.API_KEY }}"
+        }
+      }
+    },
+    {
+      "id": "2", 
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.openAi",
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4",
+        "messages": {
+          "messageValues": [
+            {
+              "role": "system",
+              "content": "You are a helpful assistant."
+            },
+            {
+              "role": "user", 
+              "content": "{{ $json.response }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      }
+    }
+  ],
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -677,3 +677,573 @@ func TestCoreAdapter_ExtractParameters_Comprehensive(t *testing.T) {
 		t.Errorf("expected empty properties for malformed parameters, got %v", properties)
 	}
 }
+
+// ========== N8N Conversion Tests ==========
+
+// TestCoreAdapter_ConvertN8N_JSONString tests n8n conversion with JSON string
+func TestCoreAdapter_ConvertN8N_JSONString(t *testing.T) {
+	a := &CoreAdapter{}
+
+	simpleN8N := `{
+		"name": "Simple HTTP Workflow",
+		"nodes": [
+			{
+				"id": "http_request_1",
+				"type": "n8n-nodes-base.httpRequest",
+				"parameters": {
+					"method": "GET",
+					"url": "https://api.example.com/data"
+				}
+			},
+			{
+				"id": "openai_1",
+				"type": "n8n-nodes-base.openAi",
+				"parameters": {
+					"model": "gpt-4o",
+					"prompt": "Summarize this data: {{ $json.body }}"
+				}
+			}
+		],
+		"connections": {
+			"http_request_1": {
+				"main": [
+					[{"node": "openai_1", "type": "main", "index": 0}]
+				]
+			}
+		}
+	}`
+
+	inputs := map[string]any{
+		"__use":     "core.convert_n8n",
+		"n8n":       simpleN8N,
+		"flow_name": "test_workflow",
+	}
+
+	result, err := a.Execute(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	flow, ok := result["flow"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected flow to be map[string]any, got %T", result["flow"])
+	}
+
+	// Check flow structure
+	if flow["name"] != "test_workflow" {
+		t.Errorf("expected flow name 'test_workflow', got %v", flow["name"])
+	}
+
+	if flow["on"] != "cli.manual" {
+		t.Errorf("expected trigger 'cli.manual', got %v", flow["on"])
+	}
+
+	steps, ok := flow["steps"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected steps to be []map[string]any, got %T", flow["steps"])
+	}
+
+	if len(steps) != 2 {
+		t.Errorf("expected 2 steps, got %d", len(steps))
+	}
+
+	// Check HTTP step
+	httpStep := steps[0]
+	if httpStep["id"] != "http_request_1" {
+		t.Errorf("expected step ID 'http_request_1', got %v", httpStep["id"])
+	}
+	if httpStep["use"] != "http" {
+		t.Errorf("expected use 'http', got %v", httpStep["use"])
+	}
+
+	// Check OpenAI step
+	openaiStep := steps[1]
+	if openaiStep["id"] != "openai_1" {
+		t.Errorf("expected step ID 'openai_1', got %v", openaiStep["id"])
+	}
+	if openaiStep["use"] != "openai.chat_completion" {
+		t.Errorf("expected use 'openai.chat_completion', got %v", openaiStep["use"])
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_JSONObject tests n8n conversion with JSON object
+func TestCoreAdapter_ConvertN8N_JSONObject(t *testing.T) {
+	a := &CoreAdapter{}
+
+	simpleN8N := map[string]any{
+		"name": "Simple Workflow",
+		"nodes": []any{
+			map[string]any{
+				"id": "wait_1",
+				"type": "n8n-nodes-base.wait",
+				"parameters": map[string]any{
+					"waitType": "seconds",
+					"seconds":  5.0,
+				},
+			},
+		},
+	}
+
+	inputs := map[string]any{
+		"__use": "core.convert_n8n",
+		"n8n":   simpleN8N,
+	}
+
+	result, err := a.Execute(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	flow, ok := result["flow"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected flow to be map[string]any, got %T", result["flow"])
+	}
+
+	steps, ok := flow["steps"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected steps to be []map[string]any, got %T", flow["steps"])
+	}
+
+	if len(steps) != 1 {
+		t.Errorf("expected 1 step, got %d", len(steps))
+	}
+
+	// Check wait step
+	waitStep := steps[0]
+	if waitStep["id"] != "wait_1" {
+		t.Errorf("expected step ID 'wait_1', got %v", waitStep["id"])
+	}
+
+	wait, ok := waitStep["wait"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected wait to be map[string]any, got %T", waitStep["wait"])
+	}
+
+	if wait["seconds"] != 5 {
+		t.Errorf("expected wait seconds 5, got %v", wait["seconds"])
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_MissingN8N tests error when n8n field is missing
+func TestCoreAdapter_ConvertN8N_MissingN8N(t *testing.T) {
+	a := &CoreAdapter{}
+
+	inputs := map[string]any{
+		"__use": "core.convert_n8n",
+		// Missing n8n field
+	}
+
+	_, err := a.Execute(context.Background(), inputs)
+	if err == nil {
+		t.Fatal("expected error for missing n8n field")
+	}
+
+	if !strings.Contains(err.Error(), "missing required field: n8n") {
+		t.Errorf("expected error about missing n8n field, got: %v", err)
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_InvalidJSON tests error with invalid JSON
+func TestCoreAdapter_ConvertN8N_InvalidJSON(t *testing.T) {
+	a := &CoreAdapter{}
+
+	inputs := map[string]any{
+		"__use": "core.convert_n8n",
+		"n8n":   "invalid json {",
+	}
+
+	_, err := a.Execute(context.Background(), inputs)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+
+	if !strings.Contains(err.Error(), "invalid n8n JSON") {
+		t.Errorf("expected error about invalid JSON, got: %v", err)
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_NoNodes tests error when no nodes in workflow
+func TestCoreAdapter_ConvertN8N_NoNodes(t *testing.T) {
+	a := &CoreAdapter{}
+
+	invalidN8N := `{
+		"name": "Invalid Workflow",
+		"connections": {}
+	}`
+
+	inputs := map[string]any{
+		"__use": "core.convert_n8n",
+		"n8n":   invalidN8N,
+	}
+
+	_, err := a.Execute(context.Background(), inputs)
+	if err == nil {
+		t.Fatal("expected error for missing nodes")
+	}
+
+	if !strings.Contains(err.Error(), "no nodes found in n8n workflow") {
+		t.Errorf("expected error about missing nodes, got: %v", err)
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_ComplexWorkflow tests conversion with complex n8n workflow
+func TestCoreAdapter_ConvertN8N_ComplexWorkflow(t *testing.T) {
+	a := &CoreAdapter{}
+
+	complexN8N := `{
+		"name": "Complex Workflow",
+		"nodes": [
+			{
+				"id": "http_get",
+				"type": "n8n-nodes-base.httpRequest",
+				"parameters": {
+					"method": "GET",
+					"url": "https://api.example.com/users",
+					"headers": {
+						"Authorization": "Bearer {{ $env.API_KEY }}"
+					}
+				}
+			},
+			{
+				"id": "if_check",
+				"type": "n8n-nodes-base.if",
+				"parameters": {
+					"conditions": {
+						"conditions": [
+							{
+								"leftValue": "{{ $json.length }}",
+								"operator": ">",
+								"rightValue": "0"
+							}
+						]
+					}
+				}
+			},
+			{
+				"id": "set_vars",
+				"type": "n8n-nodes-base.set",
+				"parameters": {
+					"values": {
+						"user_count": "{{ $json.length }}",
+						"timestamp": "{{ $now }}"
+					}
+				}
+			},
+			{
+				"id": "code_node",
+				"type": "n8n-nodes-base.code",
+				"parameters": {
+					"code": "return { json: { processed: true, data: $input.all()[0].json } };"
+				}
+			}
+		],
+		"connections": {
+			"http_get": {
+				"main": [
+					[{"node": "if_check", "type": "main", "index": 0}]
+				]
+			},
+			"if_check": {
+				"main": [
+					[{"node": "set_vars", "type": "main", "index": 0}]
+				]
+			},
+			"set_vars": {
+				"main": [
+					[{"node": "code_node", "type": "main", "index": 0}]
+				]
+			}
+		},
+		"settings": {
+			"variables": {
+				"API_BASE_URL": "https://api.example.com",
+				"DEFAULT_TIMEOUT": "30"
+			}
+		}
+	}`
+
+	inputs := map[string]any{
+		"__use":     "core.convert_n8n",
+		"n8n":       complexN8N,
+		"flow_name": "complex_workflow",
+	}
+
+	result, err := a.Execute(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	flow, ok := result["flow"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected flow to be map[string]any, got %T", result["flow"])
+	}
+
+	// Check flow structure
+	if flow["name"] != "complex_workflow" {
+		t.Errorf("expected flow name 'complex_workflow', got %v", flow["name"])
+	}
+
+	// Check variables
+	vars, ok := flow["vars"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected vars to be map[string]any, got %T", flow["vars"])
+	}
+
+	if vars["API_BASE_URL"] != "https://api.example.com" {
+		t.Errorf("expected API_BASE_URL variable, got %v", vars["API_BASE_URL"])
+	}
+
+	steps, ok := flow["steps"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected steps to be []map[string]any, got %T", flow["steps"])
+	}
+
+	if len(steps) != 4 {
+		t.Errorf("expected 4 steps, got %d", len(steps))
+	}
+
+	// Check HTTP step
+	httpStep := steps[0]
+	if httpStep["id"] != "http_get" {
+		t.Errorf("expected step ID 'http_get', got %v", httpStep["id"])
+	}
+	if httpStep["use"] != "http" {
+		t.Errorf("expected use 'http', got %v", httpStep["use"])
+	}
+
+	// Check IF step
+	ifStep := steps[1]
+	if ifStep["id"] != "if_check" {
+		t.Errorf("expected step ID 'if_check', got %v", ifStep["id"])
+	}
+	if ifStep["if"] == "" {
+		t.Error("expected if condition to be set")
+	}
+
+	// Check SET step
+	setStep := steps[2]
+	if setStep["id"] != "set_vars" {
+		t.Errorf("expected step ID 'set_vars', got %v", setStep["id"])
+	}
+	if setStep["use"] != "core.echo" {
+		t.Errorf("expected use 'core.echo', got %v", setStep["use"])
+	}
+
+	// Check CODE step
+	codeStep := steps[3]
+	if codeStep["id"] != "code_node" {
+		t.Errorf("expected step ID 'code_node', got %v", codeStep["id"])
+	}
+	if codeStep["use"] != "core.echo" {
+		t.Errorf("expected use 'core.echo', got %v", codeStep["use"])
+	}
+}
+
+// TestCoreAdapter_ConvertN8N_HelperFunctions tests the individual helper functions
+func TestCoreAdapter_ConvertN8N_HelperFunctions(t *testing.T) {
+	a := &CoreAdapter{}
+
+	// Test convertHTTPRequestNode
+	t.Run("convertHTTPRequestNode", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			"method":  "POST",
+			"url":     "https://api.example.com",
+			"headers": map[string]any{"Content-Type": "application/json"},
+			"body":    "{\"test\": true}",
+		}
+
+		result, err := a.convertHTTPRequestNode(step, parameters)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result["use"] != "http" {
+			t.Errorf("expected use 'http', got %v", result["use"])
+		}
+
+		with, ok := result["with"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected with to be map[string]any, got %T", result["with"])
+		}
+
+		if with["url"] != "https://api.example.com" {
+			t.Errorf("expected url 'https://api.example.com', got %v", with["url"])
+		}
+
+		if with["method"] != "POST" {
+			t.Errorf("expected method 'POST', got %v", with["method"])
+		}
+	})
+
+	// Test convertOpenAINode
+	t.Run("convertOpenAINode", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			"model":  "gpt-4o",
+			"prompt": "Test prompt",
+		}
+
+		result, err := a.convertOpenAINode(step, parameters)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result["use"] != "openai.chat_completion" {
+			t.Errorf("expected use 'openai.chat_completion', got %v", result["use"])
+		}
+
+		with, ok := result["with"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected with to be map[string]any, got %T", result["with"])
+		}
+
+		if with["model"] != "gpt-4o" {
+			t.Errorf("expected model 'gpt-4o', got %v", with["model"])
+		}
+	})
+
+	// Test convertWaitNode
+	t.Run("convertWaitNode", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			"waitType": "seconds",
+			"seconds":  10.0,
+		}
+
+		result, err := a.convertWaitNode(step, parameters)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wait, ok := result["wait"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected wait to be map[string]any, got %T", result["wait"])
+		}
+
+		if wait["seconds"] != 10 {
+			t.Errorf("expected seconds 10, got %v", wait["seconds"])
+		}
+	})
+
+	// Test buildConditionExpression
+	t.Run("buildConditionExpression", func(t *testing.T) {
+		condition := map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"leftValue": "count",
+					"operator":  ">",
+					"rightValue": "0",
+				},
+			},
+		}
+
+		result := a.buildConditionExpression(condition)
+		expected := "{{ count > 0 }}"
+		if result != expected {
+			t.Errorf("expected condition '%s', got '%s'", expected, result)
+		}
+	})
+
+	// Test extractN8NVariables
+	t.Run("extractN8NVariables", func(t *testing.T) {
+		workflow := map[string]any{
+			"settings": map[string]any{
+				"variables": map[string]any{
+					"API_KEY": "secret123",
+					"BASE_URL": "https://api.example.com",
+				},
+			},
+		}
+
+		result := a.extractN8NVariables(workflow)
+		if len(result) != 2 {
+			t.Errorf("expected 2 variables, got %d", len(result))
+		}
+
+		if result["API_KEY"] != "secret123" {
+			t.Errorf("expected API_KEY 'secret123', got %v", result["API_KEY"])
+		}
+	})
+}
+
+// TestCoreAdapter_ConvertN8N_EdgeCases tests various edge cases
+func TestCoreAdapter_ConvertN8N_EdgeCases(t *testing.T) {
+	a := &CoreAdapter{}
+
+	t.Run("missing node id", func(t *testing.T) {
+		nodes := []any{
+			map[string]any{
+				"type": "n8n-nodes-base.httpRequest",
+				// Missing id
+			},
+		}
+
+		_, err := a.convertN8NNodesToSteps(nodes, nil)
+		if err == nil {
+			t.Fatal("expected error for missing node id")
+		}
+	})
+
+	t.Run("missing URL in HTTP request", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			"method": "GET",
+			// Missing url
+		}
+
+		_, err := a.convertHTTPRequestNode(step, parameters)
+		if err == nil {
+			t.Fatal("expected error for missing URL")
+		}
+	})
+
+	t.Run("missing prompt in OpenAI", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			"model": "gpt-4o",
+			// Missing prompt
+		}
+
+		_, err := a.convertOpenAINode(step, parameters)
+		if err == nil {
+			t.Fatal("expected error for missing prompt")
+		}
+	})
+
+	t.Run("missing conditions in IF", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			// Missing conditions
+		}
+
+		_, err := a.convertIfNode(step, parameters, nil, nil)
+		if err == nil {
+			t.Fatal("expected error for missing conditions")
+		}
+	})
+
+	t.Run("missing values in SET", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			// Missing values
+		}
+
+		_, err := a.convertSetNode(step, parameters)
+		if err == nil {
+			t.Fatal("expected error for missing values")
+		}
+	})
+
+	t.Run("missing code in CODE", func(t *testing.T) {
+		step := map[string]any{"id": "test"}
+		parameters := map[string]any{
+			// Missing code
+		}
+
+		_, err := a.convertCodeNode(step, parameters)
+		if err == nil {
+			t.Fatal("expected error for missing code")
+		}
+	})
+}

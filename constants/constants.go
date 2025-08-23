@@ -66,6 +66,7 @@ const (
 const (
 	CoreEcho           = "core.echo"
 	CoreConvertOpenAPI = "core.convert_openapi"
+	CoreConvertN8N     = "core.convert_n8n"
 )
 
 // ============================================================================
@@ -297,6 +298,7 @@ const (
 	InterfaceDescListTools       = "List all available tools"
 	InterfaceDescGetToolManifest = "Get tool manifest information"
 	InterfaceDescConvertOpenAPI  = "Convert OpenAPI spec to BeemFlow tools"
+	InterfaceDescConvertN8N      = "Convert n8n workflow to BeemFlow flow"
 	InterfaceDescLintFlow        = "Lint and validate flow syntax"
 	InterfaceDescTestFlow        = "Test flow execution"
 )
@@ -318,6 +320,7 @@ const (
 	InterfaceIDGetFlow         = "getFlow"
 	InterfaceIDSpec            = "spec"
 	InterfaceIDConvertOpenAPI  = "convertOpenAPI"
+	InterfaceIDConvertN8N      = "convertN8N"
 	InterfaceIDLintFlow        = "lintFlow"
 )
 
