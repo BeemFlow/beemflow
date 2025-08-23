@@ -20,7 +20,6 @@ import (
 	"github.com/google/uuid"
 )
 
-
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
 func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
@@ -56,6 +55,9 @@ func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
 // flowsDir is the base directory for flow definitions; can be overridden via CLI or config.
 var flowsDir = config.DefaultFlowsDir
 
+// cachedConfig stores the loaded configuration to avoid repeated file reads
+var cachedConfig *config.Config
+
 // SetFlowsDir allows overriding the base directory for flow definitions.
 func SetFlowsDir(dir string) {
 	if dir != "" {
@@ -63,26 +65,92 @@ func SetFlowsDir(dir string) {
 	}
 }
 
-// ListFlows returns the names of all available flows.
-func ListFlows(ctx context.Context) ([]string, error) {
-	entries, err := os.ReadDir(flowsDir)
+// InitializeConfig loads configuration and sets up global state.
+func InitializeConfig(configPath string, flowsDirOverride string) (*config.Config, error) {
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []string{}, nil
+			cfg = &config.Config{}
+		} else {
+			return nil, err
 		}
+	}
+
+	// CLI flag takes precedence over config file
+	if flowsDirOverride != "" {
+		SetFlowsDir(flowsDirOverride)
+	} else if cfg.FlowsDir != "" {
+		SetFlowsDir(cfg.FlowsDir)
+	}
+
+	if cfg.Storage.Driver == "" {
+		cfg.Storage.Driver = "sqlite"
+		cfg.Storage.DSN = config.DefaultSQLiteDSN
+	}
+
+	cachedConfig = cfg
+	return cfg, nil
+}
+
+// GetConfig returns the cached config or loads it if not cached.
+func GetConfig() (*config.Config, error) {
+	if cachedConfig != nil {
+		return cachedConfig, nil
+	}
+	return InitializeConfig(constants.ConfigFileName, "")
+}
+
+// ResetConfigCache clears the cached config - for testing only
+func ResetConfigCache() {
+	cachedConfig = nil
+}
+
+// ListFlows returns the names of all available flows.
+func ListFlows(ctx context.Context) ([]string, error) {
+	utils.Debug("ListFlows: Reading from flowsDir: %s", flowsDir)
+
+	// Check if directory exists
+	if _, err := os.Stat(flowsDir); os.IsNotExist(err) {
+		utils.Debug("ListFlows: Directory does not exist: %s", flowsDir)
+		return []string{}, nil
+	}
+
+	flows := []string{} // Initialize as empty slice instead of nil
+
+	// Walk the directory tree to find all flow files
+	err := filepath.Walk(flowsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check if it's a flow file
+		if strings.HasSuffix(info.Name(), constants.FlowFileExtension) {
+			// Get relative path from flowsDir
+			relPath, err := filepath.Rel(flowsDir, path)
+			if err != nil {
+				return err
+			}
+
+			// Remove the extension to get the flow name
+			// Keep the directory structure in the name (e.g., "examples/hello_world")
+			flowName := strings.TrimSuffix(relPath, constants.FlowFileExtension)
+			flows = append(flows, flowName)
+			utils.Debug("ListFlows: Found flow: %s", flowName)
+		}
+
+		return nil
+	})
+
+	if err != nil {
 		return nil, err
 	}
-	flows := []string{} // Initialize as empty slice instead of nil
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasSuffix(name, constants.FlowFileExtension) {
-			base := strings.TrimSuffix(name, constants.FlowFileExtension)
-			flows = append(flows, base)
-		}
-	}
+
+	utils.Debug("ListFlows: Total flows found: %d", len(flows))
 	return flows, nil
 }
 
@@ -138,8 +206,8 @@ func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 		), nil
 	}
 
-	cfg, err := config.LoadConfig(constants.ConfigFileName)
-	if err != nil && !os.IsNotExist(err) {
+	cfg, err := GetConfig()
+	if err != nil {
 		return nil, err
 	}
 
@@ -275,7 +343,7 @@ func ListRuns(ctx context.Context) ([]*model.Run, error) {
 
 // PublishEvent publishes an event to a topic.
 func PublishEvent(ctx context.Context, topic string, payload map[string]any) error {
-	cfg, _ := config.LoadConfig(constants.ConfigFileName)
+	cfg, _ := GetConfig()
 	if cfg == nil || cfg.Event == nil {
 		return fmt.Errorf("event bus not configured: missing config or event section")
 	}
@@ -480,12 +548,12 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
-	
+
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	manifests := []registry.ToolManifest{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
 		// Only include tools, not MCP servers
@@ -503,18 +571,17 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 	return manifests, nil
 }
 
-
 // SearchMCPServers searches for MCP servers in registries
 func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
-	
+
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	servers := []registry.RegistryEntry{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
 		if entry.Type == "mcp_server" {
@@ -529,12 +596,12 @@ func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, e
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
-	
+
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	tools := []registry.RegistryEntry{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
 		if entry.Type == "tool" {
@@ -550,21 +617,21 @@ func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, e
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
-	
+
 	server, err := mgr.GetServer(ctx, serverName)
 	if err != nil || server == nil {
 		return nil, fmt.Errorf("server '%s' not found in registry", serverName)
 	}
-	
+
 	if server.Type != "mcp_server" {
 		return nil, fmt.Errorf("'%s' is not an MCP server", serverName)
 	}
-	
+
 	// TODO: Actually install to config file
 	// For now, just return success
 	return map[string]any{
-		"status": "installed",
-		"server": serverName,
+		"status":  "installed",
+		"server":  serverName,
 		"message": fmt.Sprintf("MCP server '%s' installed successfully", serverName),
 	}, nil
 }
@@ -575,21 +642,21 @@ func InstallTool(ctx context.Context, toolName string) (map[string]any, error) {
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
-	
+
 	tool, err := mgr.GetServer(ctx, toolName)
 	if err != nil || tool == nil {
 		return nil, fmt.Errorf("tool '%s' not found in registry", toolName)
 	}
-	
+
 	if tool.Type != "tool" {
 		return nil, fmt.Errorf("'%s' is not a tool", toolName)
 	}
-	
+
 	// TODO: Actually install to local registry
 	// For now, just return success
 	return map[string]any{
-		"status": "installed",
-		"tool": toolName,
+		"status":  "installed",
+		"tool":    toolName,
 		"message": fmt.Sprintf("Tool '%s' installed successfully", toolName),
 	}, nil
 }

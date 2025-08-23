@@ -192,15 +192,15 @@ func TestServeCommand_Help(t *testing.T) {
 	// Test that serve --help works without starting the server
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{"serve", "--help"})
-	
+
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
-	
+
 	err := cmd.Execute()
 	if err != nil {
 		t.Errorf("serve --help failed: %v", err)
 	}
-	
+
 	output := stdout.String()
 	if !strings.Contains(output, "Start the BeemFlow") {
 		t.Error("Expected help text to contain server description")

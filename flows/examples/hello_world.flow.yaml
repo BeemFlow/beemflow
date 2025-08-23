@@ -8,4 +8,4 @@ steps:
   - id: greet_again
     use: core.echo
     with:
-      text: "Aaand once more: {{ .greet.text }}" 
+      text: "Aaand once more: {{ greet.text }}" 

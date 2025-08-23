@@ -32,7 +32,7 @@ steps:
   # - id: post_tweet
   #   use: twitter.post
   #   with:
-  #     text: "{{ (index .outputs.generate_copy.choices 0).message.content }}"
+  #     text: "{{ generate_copy.choices.0.message.content }}"
 
   - id: mark_posted
     use: mcp://airtable/update_records

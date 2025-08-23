@@ -4,10 +4,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	"github.com/awantoch/beemflow/config"
 	"github.com/awantoch/beemflow/utils"
 	mcp "github.com/metoro-io/mcp-golang"
 	mcphttp "github.com/metoro-io/mcp-golang/transport/http"
@@ -22,16 +20,9 @@ type ToolRegistration struct {
 }
 
 // Serve starts an MCP server with the given configuration.
-func Serve(configPath string, debug, stdio bool, addr string, tools []ToolRegistration) error {
-	// If using stdio transport and debug is disabled, silence user-facing logs on stdout; keep internal logs on stderr
+func Serve(debug, stdio bool, addr string, tools []ToolRegistration) error {
 	if stdio && !debug {
 		utils.SetUserOutput(io.Discard)
-	}
-
-	// Load runtime config
-	_, err := config.LoadConfig(configPath)
-	if err != nil && !strings.Contains(err.Error(), "no such file") {
-		return utils.Errorf("failed to load config %s: %w", configPath, err)
 	}
 
 	// Create MCP server transport

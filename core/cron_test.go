@@ -64,7 +64,7 @@ on: schedule.cron
 steps:
   - id: test
     use: core.echo`
-	
+
 	flowPath := filepath.Join(tmpDir, "test_workflow.flow.yaml")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
@@ -102,10 +102,10 @@ steps:
 // TestCronURLEncoding tests that flow names are properly URL encoded
 func TestCronURLEncoding(t *testing.T) {
 	manager := NewCronManager("http://localhost:8080", "test-secret")
-	
+
 	// We'll verify URL encoding directly without mocking exec.Command
 	_ = manager // manager would be used in real cron entry generation
-	
+
 	testCases := []struct {
 		flowName    string
 		expectedURL string
@@ -117,7 +117,7 @@ func TestCronURLEncoding(t *testing.T) {
 		{"path/to/flow", "http://localhost:8080/cron/path%2Fto%2Fflow", "slash in name"},
 		{"unicode-日本語", "http://localhost:8080/cron/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E", "unicode characters"},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
 			// This would be called internally when building cron entries
@@ -162,18 +162,18 @@ func TestCronCommandInjection(t *testing.T) {
 			desc:       "single quote injection in secret",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
 			// Test that dangerous characters are safely escaped
 			quotedSecret := ShellQuote("Authorization: Bearer " + tt.cronSecret)
 			quotedURL := ShellQuote(tt.serverURL + "/cron/" + url.PathEscape(tt.flowName))
-			
+
 			// Verify that the quoted strings are safe
 			// The single quote escaping should handle all dangerous input
 			assert.Contains(t, quotedSecret, "'")
 			assert.Contains(t, quotedURL, "'")
-			
+
 			// Specifically test the single quote injection case
 			if tt.desc == "single quote injection in secret" {
 				// The dangerous payload should be safely escaped
@@ -488,7 +488,7 @@ on: schedule.cron
 steps:
   - id: test
     use: core.echo`
-	
+
 	flowPath := filepath.Join(tmpDir, "secure_workflow.flow.yaml")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)

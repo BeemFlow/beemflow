@@ -2,5 +2,16 @@
   "storage": {
     "driver": "sqlite",
     "dsn": ".beemflow/flow.db"
-  }
+  },
+  "blob": {
+    "driver": "filesystem",
+    "bucket": ".beemflow/files"
+  },
+  "registries": [
+    {
+      "type": "local",
+      "path": ".beemflow/registry.json"
+    }
+  ],
+  "flowsDir": "flows"
 }

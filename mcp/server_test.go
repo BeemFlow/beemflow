@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,8 +47,8 @@ func TestServe_Basic(t *testing.T) {
 	}
 }
 
-func TestServe_ConfigLoading(t *testing.T) {
-	// Test with non-existent config file (should not fail)
+func TestServe_BasicStdio(t *testing.T) {
+	// Test basic stdio server startup
 	tools := []ToolRegistration{
 		{
 			Name:        "test_tool",
@@ -65,10 +63,10 @@ func TestServe_ConfigLoading(t *testing.T) {
 	done := make(chan bool, 1)
 
 	go func() {
-		// Test with non-existent config
-		err := Serve("/non/existent/config.json", false, true, "", tools)
+		// Test should work without config
+		err := Serve(false, true, "", tools)
 		if err != nil {
-			t.Logf("Expected error with non-existent config: %v", err)
+			t.Logf("Server exited with error: %v", err)
 		}
 		done <- true
 	}()
@@ -78,44 +76,6 @@ func TestServe_ConfigLoading(t *testing.T) {
 	select {
 	case <-done:
 		// Server completed
-	case <-time.After(2 * time.Second):
-		t.Log("Server test timed out (expected for stdio mode)")
-	}
-}
-
-func TestServe_InvalidConfig(t *testing.T) {
-	// Create a temporary invalid config file
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "invalid_config.json")
-
-	// Write invalid JSON
-	err := os.WriteFile(configPath, []byte("invalid json content"), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test config file: %v", err)
-	}
-
-	tools := []ToolRegistration{
-		{
-			Name:        "test_tool",
-			Description: "A test tool",
-			Handler: func(ctx context.Context, args EmptyArgs) (*mcp.ToolResponse, error) {
-				return mcp.NewToolResponse(mcp.NewTextContent("test")), nil
-			},
-		},
-	}
-
-	// Test should handle invalid config gracefully
-	done := make(chan error, 1)
-	go func() {
-		err := Serve(configPath, false, true, "", tools)
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Logf("Expected error with invalid config: %v", err)
-		}
 	case <-time.After(2 * time.Second):
 		t.Log("Server test timed out (expected for stdio mode)")
 	}
@@ -135,7 +95,7 @@ func TestServe_HTTPMode(t *testing.T) {
 	// Test HTTP mode with a random port
 	done := make(chan error, 1)
 	go func() {
-		err := Serve("", false, false, "localhost:0", tools)
+		err := Serve(false, false, "localhost:0", tools)
 		done <- err
 	}()
 
@@ -166,7 +126,7 @@ func TestServe_DebugMode(t *testing.T) {
 	// Test stdio mode with debug enabled
 	done := make(chan error, 1)
 	go func() {
-		err := Serve("", true, true, "", tools)
+		err := Serve(true, true, "", tools)
 		done <- err
 	}()
 

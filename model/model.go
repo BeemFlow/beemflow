@@ -10,7 +10,7 @@ type Flow struct {
 	Name    string         `yaml:"name" json:"name"`
 	Version string         `yaml:"version,omitempty" json:"version,omitempty"`
 	On      any            `yaml:"on" json:"on,omitempty"`
-	Cron    string         `yaml:"cron,omitempty" json:"cron,omitempty"`   // Cron expression for schedule.cron
+	Cron    string         `yaml:"cron,omitempty" json:"cron,omitempty"` // Cron expression for schedule.cron
 	Vars    map[string]any `yaml:"vars,omitempty" json:"vars,omitempty"`
 	Steps   []Step         `yaml:"steps" json:"steps"`
 	Catch   []Step         `yaml:"catch,omitempty" json:"catch,omitempty"`
@@ -88,4 +88,3 @@ const (
 	StepFailed    StepStatus = "FAILED"
 	StepWaiting   StepStatus = "WAITING"
 )
-

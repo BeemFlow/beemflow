@@ -27,7 +27,6 @@ func NewWatermillInMemBus() *WatermillEventBus {
 	return &WatermillEventBus{publisher: ps, subscriber: ps}
 }
 
-
 // NewWatermillNATSBUS returns a NATS-backed bus or error if setup fails.
 func NewWatermillNATSBUS(clusterID, clientID, url string) (*WatermillEventBus, error) {
 	logger := watermill.NewStdLogger(false, false)
@@ -81,7 +80,7 @@ func (b *WatermillEventBus) Publish(topic string, payload any) error {
 }
 
 func (b *WatermillEventBus) Subscribe(ctx context.Context, topic string, handler func(payload any)) {
-	
+
 	ch, err := b.subscriber.Subscribe(ctx, topic)
 	if err != nil {
 		return

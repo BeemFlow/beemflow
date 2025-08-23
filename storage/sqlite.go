@@ -375,7 +375,6 @@ func (s *SqliteStorage) DeleteRun(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-
 // Close closes the underlying SQL database connection.
 func (s *SqliteStorage) Close() error {
 	return s.db.Close()

@@ -92,7 +92,7 @@ type TemplateData struct {
 	Outputs StepOutputs
 	Secrets SecretsData
 	Env     map[string]string
-	Runs    *RunsAccess  // Simple access to run history
+	Runs    *RunsAccess // Simple access to run history
 }
 
 // RunsAccess provides template access to previous run outputs
@@ -109,30 +109,30 @@ func (r *RunsAccess) Previous() map[string]any {
 	if err != nil || len(runs) == 0 {
 		return map[string]any{}
 	}
-	
+
 	// Find the most recent successful run from the same workflow
 	for _, run := range runs {
 		// Only consider runs from the same workflow
 		if run.FlowName != r.flowName {
 			continue
 		}
-		
+
 		// Skip the current run
 		if r.currentRunID != uuid.Nil && run.ID == r.currentRunID {
 			continue
 		}
-		
+
 		// Only return successful runs
 		if run.Status != model.RunSucceeded {
 			continue
 		}
-		
+
 		// Get step outputs for this run
 		steps, err := r.storage.GetSteps(r.ctx, run.ID)
 		if err != nil {
 			continue
 		}
-		
+
 		// Aggregate step outputs
 		outputs := map[string]any{}
 		for _, step := range steps {
@@ -140,7 +140,7 @@ func (r *RunsAccess) Previous() map[string]any {
 				outputs[step.StepName] = step.Outputs
 			}
 		}
-		
+
 		return map[string]any{
 			"id":      run.ID.String(),
 			"outputs": outputs,
@@ -148,7 +148,7 @@ func (r *RunsAccess) Previous() map[string]any {
 			"flow":    run.FlowName,
 		}
 	}
-	
+
 	return map[string]any{}
 }
 
@@ -1071,7 +1071,7 @@ func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 	currentFlow := e.currentFlow
 	currentRunID := e.currentRunID
 	e.mu.Unlock()
-	
+
 	flowName := ""
 	if currentFlow != nil {
 		flowName = currentFlow.Name
@@ -1139,22 +1139,22 @@ func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool
 	if !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
 		return false, utils.Errorf("condition must use template syntax: {{ expression }}, got: %s", condition)
 	}
-	
+
 	// Extract the inner expression
 	innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
-	
+
 	// Prepare template data
 	data := e.prepareTemplateDataAsMap(stepCtx)
-	
+
 	// Use {% if %} to evaluate as boolean
 	wrappedCondition := fmt.Sprintf("{%% if %s %%}true{%% else %%}false{%% endif %%}", innerExpr)
-	
+
 	// Render and return result
 	rendered, err := e.Templater.Render(wrappedCondition, data)
 	if err != nil {
 		return false, err
 	}
-	
+
 	return strings.TrimSpace(rendered) == "true", nil
 }
 

@@ -66,21 +66,21 @@ func (c *CronManager) SyncCronEntries(ctx context.Context) error {
 			// Build curl command with proper escaping to prevent injection
 			var curlCmd strings.Builder
 			curlCmd.WriteString("curl -sS -X POST")
-			
+
 			// Add authorization header if CRON_SECRET is set
 			if c.cronSecret != "" {
 				// Properly escape the secret in the header
 				curlCmd.WriteString(" -H ")
 				curlCmd.WriteString(shellQuote("Authorization: Bearer " + c.cronSecret))
 			}
-			
+
 			// Build URL with proper escaping and URL encoding
 			encodedFlowName := url.PathEscape(flowName)
 			fullURL := fmt.Sprintf("%s/cron/%s", c.serverURL, encodedFlowName)
 			curlCmd.WriteString(" ")
 			curlCmd.WriteString(shellQuote(fullURL))
 			curlCmd.WriteString(" >/dev/null 2>&1")
-			
+
 			// Create cron entry with proper spacing
 			entry := fmt.Sprintf("%s %s %s", cronExpr, curlCmd.String(), cronMarker)
 			entries = append(entries, entry)
@@ -112,12 +112,12 @@ func (c *CronManager) updateSystemCron(newEntries []string) error {
 
 	// Add new entries
 	allLines := append(preservedLines, newEntries...)
-	
+
 	// Write back to crontab
 	newCron := strings.Join(allLines, "\n") + "\n"
 	cmd = exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(newCron)
-	
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to update crontab: %w", err)
 	}
@@ -149,7 +149,7 @@ func (c *CronManager) RemoveAllEntries() error {
 	newCron := strings.Join(preservedLines, "\n") + "\n"
 	cmd = exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(newCron)
-	
+
 	return cmd.Run()
 }
 
@@ -169,43 +169,43 @@ func CheckAndExecuteCronFlows(ctx context.Context) (map[string]interface{}, erro
 	if err != nil {
 		return nil, err
 	}
-	
+
 	triggered := []string{}
 	errors := []string{}
 	checked := 0
-	
+
 	// Get current time
 	now := time.Now().UTC()
-	
+
 	// Create cron parser - using standard cron format (5 fields)
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	
+
 	for _, flowName := range flows {
 		flow, err := GetFlow(ctx, flowName)
 		if err != nil {
-			errors = append(errors, flowName + ": " + err.Error())
+			errors = append(errors, flowName+": "+err.Error())
 			continue
 		}
-		
+
 		// Check if flow has schedule.cron trigger
 		if !hasScheduleCronTrigger(&flow) {
 			continue
 		}
-		
+
 		checked++
-		
+
 		// Parse cron expression
 		if flow.Cron == "" {
-			errors = append(errors, flowName + ": missing cron expression")
+			errors = append(errors, flowName+": missing cron expression")
 			continue
 		}
-		
+
 		schedule, err := parser.Parse(flow.Cron)
 		if err != nil {
-			errors = append(errors, flowName + ": invalid cron: " + err.Error())
+			errors = append(errors, flowName+": invalid cron: "+err.Error())
 			continue
 		}
-		
+
 		// Check if we should run now
 		// We check if the schedule matches within our check window
 		// System cron typically runs every 5 minutes, so we check a 5-minute window
@@ -218,16 +218,16 @@ func CheckAndExecuteCronFlows(ctx context.Context) (map[string]interface{}, erro
 				"timestamp":     now.Format(time.RFC3339),
 				"scheduled_for": scheduledTime.Format(time.RFC3339), // Actual cron time
 			}
-			
+
 			if _, err := StartRun(ctx, flowName, event); err != nil {
-				errors = append(errors, flowName + ": failed to start: " + err.Error())
+				errors = append(errors, flowName+": failed to start: "+err.Error())
 			} else {
 				triggered = append(triggered, flowName)
 				utils.Info("Triggered cron workflow: %s for scheduled time: %s", flowName, scheduledTime.Format(time.RFC3339))
 			}
 		}
 	}
-	
+
 	return map[string]interface{}{
 		"status":    "completed",
 		"timestamp": now.Format(time.RFC3339),
@@ -246,10 +246,10 @@ func shouldRunNowWithTime(schedule cron.Schedule, now time.Time, window time.Dur
 	// Get the previous scheduled time by looking back from now
 	// We need to find the most recent scheduled time that should have run
 	checkFrom := now.Add(-window)
-	
+
 	// Get when it should next run after our check start time
 	nextRun := schedule.Next(checkFrom)
-	
+
 	// Check if this scheduled time falls within our window
 	// The scheduled time must be:
 	// 1. After our check start time (checkFrom)
@@ -258,7 +258,7 @@ func shouldRunNowWithTime(schedule cron.Schedule, now time.Time, window time.Dur
 		// Return the actual scheduled time for deduplication
 		return nextRun
 	}
-	
+
 	return time.Time{} // Zero time means don't run
 }
 

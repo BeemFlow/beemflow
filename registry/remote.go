@@ -35,7 +35,7 @@ func (r *RemoteRegistry) ListServers(ctx context.Context, opts ListOptions) ([]R
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 	}
-	
+
 	// Use http.DefaultClient which respects context deadlines
 	client := &http.Client{
 		// Don't set a client timeout - let the context handle it

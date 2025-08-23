@@ -25,14 +25,14 @@ func TestMain(m *testing.M) {
 	// Set test environment variables
 	os.Setenv("TEST_ENV_VAR", "test_value_123")
 	os.Setenv("BEEMFLOW_TEST_TOKEN", "secret_token_456")
-	
+
 	utils.WithCleanDirs(m, ".beemflow", config.DefaultConfigDir, config.DefaultFlowsDir)
 }
 
 // TestEnvironmentVariablesInTemplates tests that environment variables are accessible in templates
 func TestEnvironmentVariablesInTemplates(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
-	
+
 	// Create a flow that uses environment variables
 	flow := &model.Flow{
 		Name: "env-test",
@@ -46,23 +46,23 @@ func TestEnvironmentVariablesInTemplates(t *testing.T) {
 			},
 		},
 	}
-	
+
 	outputs, err := e.Execute(context.Background(), flow, map[string]any{})
 	if err != nil {
 		t.Fatalf("failed to execute flow: %v", err)
 	}
-	
+
 	// Check that environment variables were properly substituted
 	echoOutput, ok := outputs["test_env"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected map output from echo step, got %T", outputs["test_env"])
 	}
-	
+
 	text, ok := echoOutput["text"].(string)
 	if !ok {
 		t.Fatalf("expected string text in echo output, got %T", echoOutput["text"])
 	}
-	
+
 	expectedText := "Env var: test_value_123, Token: secret_token_456"
 	if text != expectedText {
 		t.Errorf("expected text '%s', got '%s'", expectedText, text)
@@ -72,7 +72,7 @@ func TestEnvironmentVariablesInTemplates(t *testing.T) {
 // TestTemplateDataPrepare tests that template data is properly prepared with all fields
 func TestTemplateDataPrepare(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
-	
+
 	// Create a step context with test data
 	stepCtx := NewStepContext(
 		map[string]any{"event_key": "event_value"},
@@ -82,31 +82,31 @@ func TestTemplateDataPrepare(t *testing.T) {
 	stepCtx.Outputs = map[string]any{
 		"prev_step": map[string]any{"result": "success"},
 	}
-	
+
 	templateData := e.prepareTemplateData(stepCtx)
-	
+
 	// Verify all fields are populated
 	if templateData.Event["event_key"] != "event_value" {
 		t.Errorf("Event data not properly set")
 	}
-	
+
 	if templateData.Vars["var_key"] != "var_value" {
 		t.Errorf("Vars data not properly set")
 	}
-	
+
 	if templateData.Outputs["prev_step"].(map[string]any)["result"] != "success" {
 		t.Errorf("Outputs data not properly set")
 	}
-	
+
 	if templateData.Secrets["secret_key"] != "secret_value" {
 		t.Errorf("Secrets data not properly set")
 	}
-	
+
 	// Check that environment variables are included
 	if len(templateData.Env) == 0 {
 		t.Errorf("Environment variables not included in template data")
 	}
-	
+
 	// Check specific test env vars
 	if templateData.Env["TEST_ENV_VAR"] != "test_value_123" {
 		t.Errorf("TEST_ENV_VAR not properly included in env map")
@@ -117,15 +117,15 @@ func TestTemplateDataPrepare(t *testing.T) {
 func TestSecretMasking(t *testing.T) {
 	// Test input with various sensitive fields
 	input := map[string]any{
-		"url": "https://api.example.com",
+		"url":    "https://api.example.com",
 		"method": "POST",
 		"headers": map[string]any{
 			"Authorization": "Bearer secret-token-12345",
-			"Content-Type": "application/json",
-			"X-API-Key": "api-key-67890",
+			"Content-Type":  "application/json",
+			"X-API-Key":     "api-key-67890",
 		},
 		"body": map[string]any{
-			"data": "normal data",
+			"data":     "normal data",
 			"password": "super-secret-password",
 			"nested": map[string]any{
 				"access_token": "nested-token-abc",
@@ -133,10 +133,10 @@ func TestSecretMasking(t *testing.T) {
 			},
 		},
 	}
-	
+
 	// Mask the sensitive fields
 	masked := maskSensitiveFields(input)
-	
+
 	// Check that sensitive fields are masked
 	headers := masked["headers"].(map[string]any)
 	if headers["Authorization"] != "***MASKED***" {
@@ -148,7 +148,7 @@ func TestSecretMasking(t *testing.T) {
 	if headers["Content-Type"] != "application/json" {
 		t.Errorf("Content-Type should not be masked: %v", headers["Content-Type"])
 	}
-	
+
 	// Check body masking
 	body := masked["body"].(map[string]any)
 	if body["password"] != "***MASKED***" {
@@ -157,7 +157,7 @@ func TestSecretMasking(t *testing.T) {
 	if body["data"] != "normal data" {
 		t.Errorf("Normal data should not be masked: %v", body["data"])
 	}
-	
+
 	// Check nested masking
 	nested := body["nested"].(map[string]any)
 	if nested["access_token"] != "***MASKED***" {
@@ -166,7 +166,7 @@ func TestSecretMasking(t *testing.T) {
 	if nested["normal_field"] != "visible" {
 		t.Errorf("Normal nested field should not be masked: %v", nested["normal_field"])
 	}
-	
+
 	// Check that non-sensitive fields remain unchanged
 	if masked["url"] != "https://api.example.com" {
 		t.Errorf("URL should not be masked: %v", masked["url"])
@@ -184,57 +184,57 @@ func TestGenerateDeterministicRunID(t *testing.T) {
 		"key2": 42,
 		"key3": true,
 	}
-	
+
 	// Generate UUID multiple times with same inputs
 	id1 := generateDeterministicRunID(flowName, event)
 	id2 := generateDeterministicRunID(flowName, event)
-	
+
 	// They should be identical
 	if id1 != id2 {
 		t.Errorf("Same inputs generated different UUIDs: %s != %s", id1, id2)
 	}
-	
+
 	// Test that different inputs generate different UUIDs
 	event2 := map[string]any{
 		"key1": "value1",
 		"key2": 43, // Changed value
 		"key3": true,
 	}
-	
+
 	id3 := generateDeterministicRunID(flowName, event2)
 	if id1 == id3 {
 		t.Error("Different inputs generated the same UUID")
 	}
-	
+
 	// Test that different flow names generate different UUIDs
 	id4 := generateDeterministicRunID("different-flow", event)
 	if id1 == id4 {
 		t.Error("Different flow names generated the same UUID")
 	}
-	
+
 	// Test that order doesn't matter (map keys are sorted)
 	eventReordered := map[string]any{
 		"key3": true,
-		"key1": "value1", 
+		"key1": "value1",
 		"key2": 42,
 	}
-	
+
 	id5 := generateDeterministicRunID(flowName, eventReordered)
 	if id1 != id5 {
 		t.Error("Same event with different key order generated different UUIDs")
 	}
-	
+
 	// Verify it's a valid UUID v5 (has correct version and variant bits)
 	if id1.Version() != 5 {
 		t.Errorf("Expected UUID version 5, got %d", id1.Version())
 	}
-	
+
 	// Test with empty event
 	idEmpty := generateDeterministicRunID(flowName, map[string]any{})
 	if idEmpty == uuid.Nil {
 		t.Error("Empty event generated nil UUID")
 	}
-	
+
 	// Test with complex nested structures
 	complexEvent := map[string]any{
 		"nested": map[string]any{
@@ -242,10 +242,10 @@ func TestGenerateDeterministicRunID(t *testing.T) {
 		},
 		"array": []any{1, 2, 3},
 	}
-	
+
 	idComplex1 := generateDeterministicRunID(flowName, complexEvent)
 	idComplex2 := generateDeterministicRunID(flowName, complexEvent)
-	
+
 	if idComplex1 != idComplex2 {
 		t.Error("Complex event generated different UUIDs on repeated calls")
 	}
@@ -255,29 +255,29 @@ func TestGenerateDeterministicRunID_TimeWindow(t *testing.T) {
 	// This test verifies that UUIDs change after the 1-minute time window
 	// We can't easily test this without mocking time, but we can verify
 	// that UUIDs generated at different times are different
-	
+
 	flowName := "test-flow"
 	event := map[string]any{"key": "value"}
-	
+
 	// Generate first UUID
 	id1 := generateDeterministicRunID(flowName, event)
-	
+
 	// Sleep a tiny bit to ensure time has changed
 	time.Sleep(time.Millisecond)
-	
+
 	// Generate second UUID - should still be the same (within 1 min window)
 	id2 := generateDeterministicRunID(flowName, event)
-	
+
 	// Within the same 1-minute window, UUIDs should be identical
 	if id1 != id2 {
 		t.Log("Note: UUIDs differ within time window, this might happen if test runs across minute boundary")
 		// This is not necessarily an error - it depends on when the test runs
 	}
-	
+
 	// Verify the UUID is deterministic by regenerating with exact same inputs
 	id3 := generateDeterministicRunID(flowName, event)
 	id4 := generateDeterministicRunID(flowName, event)
-	
+
 	if id3 != id4 {
 		t.Error("Immediate regeneration produced different UUIDs")
 	}
@@ -1635,7 +1635,7 @@ func TestEvaluateCondition(t *testing.T) {
 			for k, v := range tt.stepCtx.Vars {
 				tt.stepCtx.SetVar(k, v)
 			}
-			
+
 			got, err := engine.evaluateCondition(tt.condition, tt.stepCtx)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("evaluateCondition() error = %v, wantErr %v", err, tt.wantErr)
@@ -2428,7 +2428,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 
 	// Add runs in chronological order (oldest first)
 	now := time.Now()
-	
+
 	// Run 1: Successful run from yesterday
 	run1 := &model.Run{
 		ID:        run1ID,
@@ -2440,7 +2440,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveRun(ctx, run1); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Add step outputs for run1
 	step1Run1 := &model.StepRun{
 		ID:       uuid.New(),
@@ -2454,7 +2454,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveStep(ctx, step1Run1); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Run 2: Failed run from an hour ago
 	run2 := &model.Run{
 		ID:        run2ID,
@@ -2466,7 +2466,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveRun(ctx, run2); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Run 3: Successful run from 30 minutes ago
 	run3 := &model.Run{
 		ID:        run3ID,
@@ -2478,7 +2478,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveRun(ctx, run3); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Add step outputs for run3
 	step1Run3 := &model.StepRun{
 		ID:       uuid.New(),
@@ -2492,7 +2492,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveStep(ctx, step1Run3); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	step2Run3 := &model.StepRun{
 		ID:       uuid.New(),
 		RunID:    run3ID,
@@ -2505,7 +2505,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveStep(ctx, step2Run3); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Current run (now)
 	currentRun := &model.Run{
 		ID:        currentRunID,
@@ -2516,7 +2516,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 	if err := store.SaveRun(ctx, currentRun); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Run from different workflow
 	otherFlowRun := &model.Run{
 		ID:        uuid.New(),
@@ -2536,9 +2536,9 @@ func TestRunsAccess_Previous(t *testing.T) {
 			currentRunID: currentRunID,
 			flowName:     "test-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
-		
+
 		// Should return run3 (most recent successful run)
 		if previous["id"] != run3ID.String() {
 			t.Errorf("Expected run ID %s, got %s", run3ID.String(), previous["id"])
@@ -2549,7 +2549,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 		if previous["flow"] != "test-flow" {
 			t.Errorf("Expected flow test-flow, got %s", previous["flow"])
 		}
-		
+
 		// Check outputs
 		outputs, ok := previous["outputs"].(map[string]any)
 		if !ok {
@@ -2578,16 +2578,16 @@ func TestRunsAccess_Previous(t *testing.T) {
 		if err := store.SaveRun(ctx, currentRun); err != nil {
 			t.Fatal(err)
 		}
-		
+
 		runsAccess := &RunsAccess{
 			storage:      store,
 			ctx:          ctx,
 			currentRunID: currentRunID,
 			flowName:     "test-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
-		
+
 		// Should still return run3, not current run
 		if previous["id"] != run3ID.String() {
 			t.Errorf("Expected run ID %s, got %s", run3ID.String(), previous["id"])
@@ -2600,16 +2600,16 @@ func TestRunsAccess_Previous(t *testing.T) {
 		if err := store.SaveRun(ctx, run3); err != nil {
 			t.Fatal(err)
 		}
-		
+
 		runsAccess := &RunsAccess{
 			storage:      store,
 			ctx:          ctx,
 			currentRunID: currentRunID,
 			flowName:     "test-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
-		
+
 		// Should return run1 (older but successful)
 		if previous["id"] != run1ID.String() {
 			t.Errorf("Expected run ID %s, got %s", run1ID.String(), previous["id"])
@@ -2632,7 +2632,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 			currentRunID: currentRunID,
 			flowName:     "test-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
 		if len(previous) != 0 {
 			t.Errorf("Expected empty map, got %v", previous)
@@ -2646,9 +2646,9 @@ func TestRunsAccess_Previous(t *testing.T) {
 			currentRunID: uuid.New(),
 			flowName:     "other-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
-		
+
 		// Should return the otherFlowRun
 		if previous["flow"] != "other-flow" {
 			t.Errorf("Expected flow other-flow, got %s", previous["flow"])
@@ -2663,7 +2663,7 @@ func TestRunsAccess_Previous(t *testing.T) {
 			currentRunID: firstRunID,
 			flowName:     "brand-new-flow",
 		}
-		
+
 		previous := runsAccess.Previous()
 		if len(previous) != 0 {
 			t.Errorf("Expected empty map for first run, got %v", previous)
@@ -2676,13 +2676,13 @@ func TestRunsAccess_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	
+
 	ctx := context.Background()
-	
+
 	t.Run("works with Engine execution", func(t *testing.T) {
 		engine := NewDefaultEngine(ctx)
 		defer engine.Close()
-		
+
 		// First run
 		flow1 := &model.Flow{
 			Name: "integration-test",
@@ -2696,7 +2696,7 @@ func TestRunsAccess_Integration(t *testing.T) {
 				},
 			},
 		}
-		
+
 		outputs1, err := engine.Execute(ctx, flow1, map[string]any{})
 		if err != nil {
 			t.Fatalf("First run failed: %v", err)
@@ -2708,10 +2708,10 @@ func TestRunsAccess_Integration(t *testing.T) {
 		} else {
 			t.Error("echo1 output missing")
 		}
-		
+
 		// Wait to avoid deduplication
 		time.Sleep(61 * time.Second)
-		
+
 		// Second run that can access the first
 		flow2 := &model.Flow{
 			Name: "integration-test",
@@ -2725,7 +2725,7 @@ func TestRunsAccess_Integration(t *testing.T) {
 				},
 			},
 		}
-		
+
 		outputs2, err := engine.Execute(ctx, flow2, map[string]any{})
 		if err != nil {
 			t.Fatalf("Second run failed: %v", err)

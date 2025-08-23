@@ -49,15 +49,11 @@ func NewRootCmd() *cobra.Command {
 		// Load environment variables from .env file, if present
 		_ = godotenv.Load()
 
-		// Load config JSON to pick up default flowsDir
-		cfg, err := config.LoadConfig(configPath)
-		if err == nil && cfg.FlowsDir != "" {
-			api.SetFlowsDir(cfg.FlowsDir)
-		}
-
-		// CLI flag overrides config file
-		if flowsDir != "" {
-			api.SetFlowsDir(flowsDir)
+		// Initialize config and set global state
+		_, err := api.InitializeConfig(configPath, flowsDir)
+		if err != nil {
+			utils.Error("Failed to initialize config: %v", err)
+			os.Exit(1)
 		}
 	}
 
@@ -89,21 +85,12 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start the BeemFlow runtime HTTP server",
 		Run: func(cmd *cobra.Command, args []string) {
-
-			cfg, err := config.LoadConfig(constants.ConfigFileName)
+			cfg, err := api.GetConfig()
 			if err != nil {
-				if os.IsNotExist(err) {
-					cfg = &config.Config{}
-				} else {
-					utils.Error("Failed to load config: %v", err)
-					exit(1)
-				}
+				utils.Error("Failed to get config: %v", err)
+				exit(1)
 			}
-			// Set default storage if not configured
-			if cfg.Storage.Driver == "" {
-				cfg.Storage.Driver = "sqlite"
-				cfg.Storage.DSN = config.DefaultSQLiteDSN
-			}
+
 			if err := cfg.Validate(); err != nil {
 				utils.Error("Config validation failed: %v", err)
 				exit(1)

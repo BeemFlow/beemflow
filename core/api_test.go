@@ -281,6 +281,8 @@ func TestValidateFlow_ParseError(t *testing.T) {
 }
 
 func TestStartRun_InvalidStorageDriver(t *testing.T) {
+	ResetConfigCache()
+	defer ResetConfigCache()
 	cfg := `{"storage":{"driver":"bogus","dsn":""}}`
 	if err := os.WriteFile("flow.config.json", []byte(cfg), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
@@ -293,6 +295,8 @@ func TestStartRun_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestGetRun_InvalidStorageDriver(t *testing.T) {
+	ResetConfigCache()
+	defer ResetConfigCache()
 	cfg := `{"storage":{"driver":"bogus","dsn":""}}`
 	if err := os.WriteFile("flow.config.json", []byte(cfg), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
@@ -305,6 +309,8 @@ func TestGetRun_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestListRuns_InvalidStorageDriver(t *testing.T) {
+	ResetConfigCache()
+	defer ResetConfigCache()
 	cfg := `{"storage":{"driver":"bogus","dsn":""}}`
 	if err := os.WriteFile("flow.config.json", []byte(cfg), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
@@ -317,6 +323,8 @@ func TestListRuns_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestResumeRun_InvalidStorageDriver(t *testing.T) {
+	ResetConfigCache()
+	defer ResetConfigCache()
 	cfg := `{"storage":{"driver":"bogus","dsn":""}}`
 	if err := os.WriteFile("flow.config.json", []byte(cfg), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)

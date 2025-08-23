@@ -342,7 +342,6 @@ LIMIT 1`, flowName)
 	return &run, nil
 }
 
-
 // Close closes the underlying PostgreSQL database connection.
 func (s *PostgresStorage) Close() error {
 	return s.db.Close()

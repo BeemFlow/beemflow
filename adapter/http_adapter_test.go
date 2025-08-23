@@ -24,36 +24,36 @@ func TestHTTPAdapter_PathParameterSubstitution(t *testing.T) {
 			w.WriteHeader(404)
 			return
 		}
-		
+
 		// Check that path parameters are NOT in the body
 		body, _ := io.ReadAll(r.Body)
 		var bodyData map[string]any
 		json.Unmarshal(body, &bodyData)
-		
+
 		if _, exists := bodyData["spreadsheetId"]; exists {
 			t.Errorf("spreadsheetId should not be in request body")
 			w.WriteHeader(400)
 			return
 		}
-		
+
 		if _, exists := bodyData["range"]; exists {
 			t.Errorf("range should not be in request body")
 			w.WriteHeader(400)
 			return
 		}
-		
+
 		// Check that only non-path parameters are in body
 		if bodyData["values"] == nil {
 			t.Errorf("values should be in request body")
 			w.WriteHeader(400)
 			return
 		}
-		
+
 		w.WriteHeader(200)
 		w.Write([]byte(`{"success": true}`))
 	}))
 	defer server.Close()
-	
+
 	// Create manifest with path parameters
 	manifest := &registry.ToolManifest{
 		Name:        "test.sheets.append",
@@ -64,12 +64,12 @@ func TestHTTPAdapter_PathParameterSubstitution(t *testing.T) {
 			"Content-Type": "application/json",
 		},
 	}
-	
+
 	adapter := &HTTPAdapter{
 		AdapterID:    "http",
 		ToolManifest: manifest,
 	}
-	
+
 	// Execute with path parameters and body data
 	result, err := adapter.Execute(context.Background(), map[string]any{
 		"spreadsheetId": "test-sheet-id",
@@ -78,11 +78,11 @@ func TestHTTPAdapter_PathParameterSubstitution(t *testing.T) {
 			{"2025-08-21", "Test Title", "Test Content", "pending"},
 		},
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
-	
+
 	if result["success"] != true {
 		t.Errorf("Expected success=true, got %v", result)
 	}
@@ -95,18 +95,18 @@ func TestHTTPAdapter_SecurityValidation(t *testing.T) {
 		w.Write([]byte(`{"ok": true}`))
 	}))
 	defer server.Close()
-	
+
 	manifest := &registry.ToolManifest{
 		Name:     "test.security",
 		Endpoint: server.URL + "/api/{resource}/{id}",
 		Method:   "GET",
 	}
-	
+
 	adapter := &HTTPAdapter{
 		AdapterID:    "http",
 		ToolManifest: manifest,
 	}
-	
+
 	// Test path traversal attempts
 	testCases := []struct {
 		name      string
@@ -159,11 +159,11 @@ func TestHTTPAdapter_SecurityValidation(t *testing.T) {
 			errMsg:    "too long",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := adapter.Execute(context.Background(), tc.params)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error for %s, got none", tc.name)
@@ -184,7 +184,7 @@ func TestHTTPAdapter_EnvironmentVariableExpansion(t *testing.T) {
 	// Set test environment variable
 	os.Setenv("TEST_API_TOKEN", "secret-token-123")
 	defer os.Unsetenv("TEST_API_TOKEN")
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check that Authorization header was expanded from environment
 		authHeader := r.Header.Get("Authorization")
@@ -194,12 +194,12 @@ func TestHTTPAdapter_EnvironmentVariableExpansion(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		
+
 		w.WriteHeader(200)
 		w.Write([]byte(`{"authenticated": true}`))
 	}))
 	defer server.Close()
-	
+
 	manifest := &registry.ToolManifest{
 		Name:     "test.auth",
 		Endpoint: server.URL + "/api/test",
@@ -208,17 +208,17 @@ func TestHTTPAdapter_EnvironmentVariableExpansion(t *testing.T) {
 			"Authorization": "Bearer $env:TEST_API_TOKEN",
 		},
 	}
-	
+
 	adapter := &HTTPAdapter{
 		AdapterID:    "http",
 		ToolManifest: manifest,
 	}
-	
+
 	result, err := adapter.Execute(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
-	
+
 	if result["authenticated"] != true {
 		t.Errorf("Expected authenticated=true, got %v", result)
 	}

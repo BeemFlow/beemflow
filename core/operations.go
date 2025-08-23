@@ -581,39 +581,39 @@ func init() {
 		},
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			
+
 			// Use registry manager to get full registry entry info
 			factory := registry.NewFactory()
 			cfg := GetConfigFromContext(ctx)
 			mgr := factory.CreateStandardManager(ctx, cfg)
-			
+
 			entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 			if err != nil {
 				return err
 			}
-			
+
 			// Print table header
 			utils.User(constants.HeaderToolsList, "Source", "Name", "Description", "Kind", "Endpoint")
-			
+
 			// Print each tool in table format
 			for _, entry := range entries {
 				// Only show tools, not MCP servers
 				if entry.Type != "tool" {
 					continue
 				}
-				
+
 				// Truncate description for readability
 				desc := entry.Description
 				if len(desc) > 50 {
 					desc = desc[:47] + "..."
 				}
-				
+
 				// Use the registry field from the entry
 				source := entry.Registry
 				if source == "" {
 					source = "default"
 				}
-				
+
 				utils.User(constants.FormatFiveColumns, source, entry.Name, desc, entry.Kind, entry.Endpoint)
 			}
 			return nil
@@ -656,10 +656,10 @@ func init() {
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			cfg := GetConfigFromContext(ctx)
-			
+
 			// Print table header
 			utils.User(constants.HeaderMCPList, "Source", "Name", "Description", "Type", "Endpoint")
-			
+
 			// List servers from config first
 			if cfg != nil && cfg.MCPServers != nil {
 				for name, spec := range cfg.MCPServers {
@@ -670,7 +670,7 @@ func init() {
 					utils.User(constants.FormatFiveColumns, "config", name, "", transport, spec.Endpoint)
 				}
 			}
-			
+
 			// List servers from all registries
 			factory := registry.NewFactory()
 			manager := factory.CreateStandardManager(ctx, cfg)
@@ -715,13 +715,13 @@ func init() {
 			if len(args) > 0 {
 				query = args[0]
 			}
-			
+
 			ctx := context.Background()
 			servers, err := SearchMCPServers(ctx, query)
 			if err != nil {
 				return err
 			}
-			
+
 			utils.User(constants.HeaderServers, "Name", "Description", "Endpoint")
 			for _, s := range servers {
 				desc := s.Description
@@ -766,18 +766,15 @@ func init() {
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
 			stdio, _ := cmd.Flags().GetBool("stdio")
 			addr, _ := cmd.Flags().GetString("addr")
-			
+
 			// Default to stdio mode if no addr is provided and stdio not explicitly set
 			if !stdio && addr == "" {
 				stdio = true
 			}
-			
-			// Get config path from global flag
-			configPath := cmd.Flag("config").Value.String()
+
 			debug, _ := cmd.Flags().GetBool("debug")
-			
 			tools := GenerateMCPTools()
-			return mcp.Serve(configPath, debug, stdio, addr, tools)
+			return mcp.Serve(debug, stdio, addr, tools)
 		},
 	})
 
@@ -802,13 +799,13 @@ func init() {
 			if len(args) > 0 {
 				query = args[0]
 			}
-			
+
 			ctx := context.Background()
 			tools, err := SearchTools(ctx, query)
 			if err != nil {
 				return err
 			}
-			
+
 			utils.User(constants.HeaderTools, "Name", "Description", "Endpoint")
 			for _, t := range tools {
 				desc := t.Description
@@ -876,9 +873,9 @@ func init() {
 					return
 				}
 			}
-			
+
 			ctx := r.Context()
-			
+
 			// Use the optimized cron checker that respects cron expressions
 			result, err := CheckAndExecuteCronFlows(ctx)
 			if err != nil {
@@ -886,7 +883,7 @@ func init() {
 				http.Error(w, "Failed to check workflows", http.StatusInternalServerError)
 				return
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(result)
 		},
@@ -912,41 +909,41 @@ func init() {
 					return
 				}
 			}
-			
+
 			ctx := r.Context()
-			
+
 			// Extract workflow name from path safely
 			// First check for any path traversal attempts in the original path
 			if strings.Contains(r.URL.Path, "..") {
 				http.Error(w, "Invalid workflow name", http.StatusBadRequest)
 				return
 			}
-			
+
 			cleanPath := path.Clean(r.URL.Path)
-			
+
 			// Ensure the path starts with /cron/
 			if !strings.HasPrefix(cleanPath, "/cron/") {
 				http.Error(w, "Invalid path", http.StatusBadRequest)
 				return
 			}
-			
+
 			// Extract workflow name - everything after /cron/
 			workflowName := strings.TrimPrefix(cleanPath, "/cron/")
-			
+
 			// Additional validation
-			if workflowName == "" || workflowName == "." || workflowName == "/" || 
-			   strings.ContainsAny(workflowName, "/\\") {
+			if workflowName == "" || workflowName == "." || workflowName == "/" ||
+				strings.ContainsAny(workflowName, "/\\") {
 				http.Error(w, "Invalid workflow name", http.StatusBadRequest)
 				return
 			}
-			
+
 			// Verify workflow exists
 			flow, err := GetFlow(ctx, workflowName)
 			if err != nil {
 				http.Error(w, "Workflow not found", http.StatusNotFound)
 				return
 			}
-			
+
 			// Check if it has schedule.cron trigger
 			hasCron := false
 			switch on := flow.On.(type) {
@@ -960,32 +957,32 @@ func init() {
 					}
 				}
 			}
-			
+
 			if !hasCron {
 				http.Error(w, "Workflow does not have schedule.cron trigger", http.StatusBadRequest)
 				return
 			}
-			
+
 			// Trigger the workflow
 			event := map[string]interface{}{
 				"trigger":   "schedule.cron",
 				"workflow":  workflowName,
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			}
-			
+
 			runID, err := StartRun(ctx, workflowName, event)
 			if err != nil {
 				utils.Error("Failed to trigger %s: %v", workflowName, err)
 				http.Error(w, "Failed to trigger workflow", http.StatusInternalServerError)
 				return
 			}
-			
+
 			response := map[string]interface{}{
 				"status":   "triggered",
 				"workflow": workflowName,
 				"run_id":   runID.String(),
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(response)
 		},

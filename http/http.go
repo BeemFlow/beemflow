@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/awantoch/beemflow/config"
-	"github.com/awantoch/beemflow/constants"
 	api "github.com/awantoch/beemflow/core"
 	"github.com/awantoch/beemflow/utils"
 	"github.com/google/uuid"
@@ -284,7 +283,7 @@ func cleanupSystemCron() {
 
 func UpdateRunEvent(id uuid.UUID, newEvent map[string]any) error {
 	// Get storage from config
-	cfg, err := config.LoadConfig(constants.ConfigFileName)
+	cfg, err := api.GetConfig()
 	if err != nil {
 		return utils.Errorf("failed to load config: %v", err)
 	}

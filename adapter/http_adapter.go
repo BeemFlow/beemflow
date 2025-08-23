@@ -34,23 +34,23 @@ func validatePathParameter(name, value string) error {
 	if strings.Contains(value, "..") {
 		return fmt.Errorf("path traversal attempt detected")
 	}
-	
+
 	// Check for null bytes
 	if strings.Contains(value, "\x00") {
 		return fmt.Errorf("null byte injection detected")
 	}
-	
+
 	// Check for URL encoding attacks
 	if strings.Contains(value, "%2e%2e") || strings.Contains(value, "%252e") {
 		return fmt.Errorf("encoded path traversal detected")
 	}
-	
+
 	// Limit length to prevent buffer overflow attacks
 	const maxParamLength = 1024
 	if len(value) > maxParamLength {
 		return fmt.Errorf("parameter too long (max %d chars)", maxParamLength)
 	}
-	
+
 	return nil
 }
 
@@ -158,7 +158,7 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 				bodyInputs[k] = v
 			}
 		}
-		
+
 		body, err := json.Marshal(bodyInputs)
 		if err != nil {
 			return nil, utils.Errorf("failed to marshal request body: %w", err)
