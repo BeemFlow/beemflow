@@ -77,9 +77,9 @@ steps:
       # Post when Approved checkbox is TRUE
       - id: post_{{ row_index }}
         if: "{{ row.3 == 'TRUE' and row.1 != 'posted' and row_index > 0 }}"
-        use: core.echo
+        use: x.post
         with:
-          text: "📮 POSTING: {{ row.0 }}"
+          text: "{{ row.0 }}"
       
       # Mark as posted
       - id: mark_posted_{{ row_index }}

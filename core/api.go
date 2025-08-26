@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -636,9 +637,8 @@ func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, e
 	}, nil
 }
 
-// InstallTool installs a tool to the local registry
-func InstallTool(ctx context.Context, toolName string) (map[string]any, error) {
-	// Get the tool spec from registry
+// InstallToolFromRegistry installs a tool from the registry by name
+func InstallToolFromRegistry(ctx context.Context, toolName string) (map[string]any, error) {
 	factory := registry.NewFactory()
 	cfg := GetConfigFromContext(ctx)
 	mgr := factory.CreateStandardManager(ctx, cfg)
@@ -652,13 +652,140 @@ func InstallTool(ctx context.Context, toolName string) (map[string]any, error) {
 		return nil, fmt.Errorf("'%s' is not a tool", toolName)
 	}
 
-	// TODO: Actually install to local registry
-	// For now, just return success
+	return installToolsToLocalRegistry(ctx, []registry.RegistryEntry{*tool})
+}
+
+// InstallToolFromManifest installs tools from a manifest (JSON string or file path)
+func InstallToolFromManifest(ctx context.Context, manifest string) (map[string]any, error) {
+	var manifestData []byte
+	var err error
+
+	// Check if it's a file path
+	if _, statErr := os.Stat(manifest); statErr == nil {
+		// It's a file, read it
+		manifestData, err = os.ReadFile(manifest)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read manifest file: %w", err)
+		}
+	} else {
+		// Treat as JSON string
+		manifestData = []byte(manifest)
+	}
+
+	// Parse the manifest
+	var tools []map[string]any
+	if err := json.Unmarshal(manifestData, &tools); err != nil {
+		// Try as single tool
+		var tool map[string]any
+		if err := json.Unmarshal(manifestData, &tool); err != nil {
+			return nil, fmt.Errorf("invalid tool manifest format: %w", err)
+		}
+		tools = []map[string]any{tool}
+	}
+
+	// Convert to RegistryEntry format
+	var toolsToInstall []registry.RegistryEntry
+	for _, tool := range tools {
+		entry := registry.RegistryEntry{
+			Registry:    "local",
+			Type:        "tool",
+			Name:        getString(tool, "name"),
+			Description: getString(tool, "description"),
+			Kind:        getString(tool, "kind"),
+			Endpoint:    getString(tool, "endpoint"),
+			Method:      getString(tool, "method"),
+		}
+
+		if params, ok := tool["parameters"].(map[string]any); ok {
+			entry.Parameters = params
+		}
+		// Handle headers which might be map[string]any
+		if headersAny, ok := tool["headers"].(map[string]any); ok {
+			headers := make(map[string]string)
+			for k, v := range headersAny {
+				if str, ok := v.(string); ok {
+					headers[k] = str
+				}
+			}
+			entry.Headers = headers
+		} else if headers, ok := tool["headers"].(map[string]string); ok {
+			entry.Headers = headers
+		}
+
+		toolsToInstall = append(toolsToInstall, entry)
+	}
+
+	return installToolsToLocalRegistry(ctx, toolsToInstall)
+}
+
+// installToolsToLocalRegistry installs tools to the local registry
+func installToolsToLocalRegistry(ctx context.Context, tools []registry.RegistryEntry) (map[string]any, error) {
+	cfg := GetConfigFromContext(ctx)
+	localPath := ".beemflow/registry.json"
+	if cfg != nil && len(cfg.Registries) > 0 {
+		for _, reg := range cfg.Registries {
+			if reg.Type == "local" && reg.Path != "" {
+				localPath = reg.Path
+				break
+			}
+		}
+	}
+
+	// Read existing registry
+	var existingRegistry struct {
+		Tools      []registry.RegistryEntry `json:"tools"`
+		MCPServers []registry.RegistryEntry `json:"mcpServers"`
+	}
+
+	if data, err := os.ReadFile(localPath); err == nil {
+		_ = json.Unmarshal(data, &existingRegistry)
+	}
+
+	// Merge tools (replace if name exists)
+	installedCount := 0
+	for _, newTool := range tools {
+		found := false
+		for i, existing := range existingRegistry.Tools {
+			if existing.Name == newTool.Name {
+				existingRegistry.Tools[i] = newTool
+				found = true
+				break
+			}
+		}
+		if !found {
+			existingRegistry.Tools = append(existingRegistry.Tools, newTool)
+		}
+		installedCount++
+	}
+
+	// Write back to registry
+	data, err := json.MarshalIndent(existingRegistry, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal registry: %w", err)
+	}
+
+	// Ensure directory exists
+	if dir := filepath.Dir(localPath); dir != "" && dir != "." {
+		os.MkdirAll(dir, 0755)
+	}
+
+	if err := os.WriteFile(localPath, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write registry: %w", err)
+	}
+
 	return map[string]any{
 		"status":  "installed",
-		"tool":    toolName,
-		"message": fmt.Sprintf("Tool '%s' installed successfully", toolName),
+		"count":   installedCount,
+		"message": fmt.Sprintf("Installed %d tools successfully", installedCount),
 	}, nil
+}
+
+// getString is a helper to safely get string values from map
+func getString(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // Context keys for storing dependencies

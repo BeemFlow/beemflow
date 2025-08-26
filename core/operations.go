@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -52,12 +52,20 @@ type GetFlowArgs struct {
 	Name string `json:"name" flag:"name" description:"Flow name"`
 }
 
+type InstallToolArgs struct {
+	Name     string `json:"name" flag:"name" description:"Tool name from registry"`
+	File     string `json:"file" flag:"file" description:"Path to tool manifest file"`
+	Manifest string `json:"manifest" flag:"manifest" description:"Tool manifest as JSON string"`
+}
+
 type ValidateFlowArgs struct {
-	Name string `json:"name" flag:"name" description:"Flow name or file path to validate"`
+	Name string `json:"name" flag:"name" description:"Name of the flow to validate"`
+	File string `json:"file" flag:"file" description:"Path to flow file to validate"`
 }
 
 type GraphFlowArgs struct {
-	Name string `json:"name" flag:"name" description:"Flow name or file path to graph"`
+	Name string `json:"name" flag:"name" description:"Name of the flow to graph"`
+	File string `json:"file" flag:"file" description:"Path to flow file to graph"`
 }
 
 type StartRunArgs struct {
@@ -168,34 +176,23 @@ func GetOperationsMapByGroups(groups []string) map[string]*OperationDefinition {
 	return filtered
 }
 
-// looksLikeFilePath determines if a string looks like a file path vs a flow name
-func looksLikeFilePath(nameOrFile string) bool {
-	// Check if it has a common file extension
-	ext := filepath.Ext(nameOrFile)
-	if ext == ".yaml" || ext == ".yml" || ext == ".json" {
-		return true
-	}
-
-	// Check if it exists as a file
-	if _, err := os.Stat(nameOrFile); err == nil {
-		return true
-	}
-
-	// Check if it contains path separators
-	return strings.Contains(nameOrFile, "/") || strings.Contains(nameOrFile, "\\")
-}
-
 // Handler functions to reduce cyclomatic complexity of init()
 func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("exactly one argument required (flow name or file path)")
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("file")
+
+	// Check that exactly one input method is specified
+	if name == "" && file == "" {
+		return fmt.Errorf("either --name or --file must be specified")
 	}
-	nameOrFile := args[0]
+	if name != "" && file != "" {
+		return fmt.Errorf("only one of --name or --file can be specified")
+	}
 
 	var err error
-	if looksLikeFilePath(nameOrFile) {
+	if file != "" {
 		// Parse and validate file directly
-		flow, parseErr := dsl.Parse(nameOrFile)
+		flow, parseErr := dsl.Parse(file)
 		if parseErr != nil {
 			utils.Error("YAML parse error: %v\n", parseErr)
 			return fmt.Errorf("YAML parse error: %w", parseErr)
@@ -207,7 +204,7 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// Use flow name service
-		err = ValidateFlow(cmd.Context(), nameOrFile)
+		err = ValidateFlow(cmd.Context(), name)
 		if err != nil {
 			utils.Error("Validation error: %v\n", err)
 			return fmt.Errorf("validation error: %w", err)
@@ -220,28 +217,55 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 
 func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*ValidateFlowArgs)
-	err := ValidateFlow(ctx, a.Name)
-	if err != nil {
-		return nil, err
+
+	// Check that exactly one input method is specified
+	if a.Name == "" && a.File == "" {
+		return nil, fmt.Errorf("either name or file must be specified")
 	}
+	if a.Name != "" && a.File != "" {
+		return nil, fmt.Errorf("only one of name or file can be specified")
+	}
+
+	var err error
+	if a.File != "" {
+		// Parse and validate file directly
+		flow, parseErr := dsl.Parse(a.File)
+		if parseErr != nil {
+			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
+		}
+		err = dsl.Validate(flow)
+		if err != nil {
+			return nil, fmt.Errorf("schema validation error: %w", err)
+		}
+	} else {
+		err = ValidateFlow(ctx, a.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return map[string]any{"status": "valid", "message": "Validation OK: flow is valid!"}, nil
 }
 
 func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("exactly one argument required (flow name or file path)")
-	}
-	nameOrFile := args[0]
-
-	// Get output flag
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("file")
 	outPath, _ := cmd.Flags().GetString("output")
+
+	// Check that exactly one input method is specified
+	if name == "" && file == "" {
+		return fmt.Errorf("either --name or --file must be specified")
+	}
+	if name != "" && file != "" {
+		return fmt.Errorf("only one of --name or --file can be specified")
+	}
 
 	var diagram string
 	var err error
 
-	if looksLikeFilePath(nameOrFile) {
+	if file != "" {
 		// Parse file directly and generate diagram
-		flow, parseErr := dsl.Parse(nameOrFile)
+		flow, parseErr := dsl.Parse(file)
 		if parseErr != nil {
 			utils.Error("YAML parse error: %v\n", parseErr)
 			return fmt.Errorf("YAML parse error: %w", parseErr)
@@ -249,7 +273,7 @@ func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		diagram, err = graph.ExportMermaid(flow)
 	} else {
 		// Use flow name service
-		diagram, err = GraphFlow(cmd.Context(), nameOrFile)
+		diagram, err = GraphFlow(cmd.Context(), name)
 	}
 
 	if err != nil {
@@ -271,10 +295,35 @@ func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
 
 func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*GraphFlowArgs)
-	diagram, err := GraphFlow(ctx, a.Name)
-	if err != nil {
-		return nil, err
+
+	// Check that exactly one input method is specified
+	if a.Name == "" && a.File == "" {
+		return nil, fmt.Errorf("either name or file must be specified")
 	}
+	if a.Name != "" && a.File != "" {
+		return nil, fmt.Errorf("only one of name or file can be specified")
+	}
+
+	var diagram string
+	var err error
+
+	if a.File != "" {
+		// Parse file directly and generate diagram
+		flow, parseErr := dsl.Parse(a.File)
+		if parseErr != nil {
+			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
+		}
+		diagram, err = graph.ExportMermaid(flow)
+		if err != nil {
+			return nil, fmt.Errorf("graph export error: %w", err)
+		}
+	} else {
+		diagram, err = GraphFlow(ctx, a.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return map[string]any{"diagram": diagram}, nil
 }
 
@@ -308,6 +357,163 @@ func lintFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("schema validation error: %w", err)
 	}
 	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
+}
+
+// handleInstallToolCLI handles the CLI command for tool installation
+// Supports: --name for registry, --file for manifest file, stdin, or positional arg
+func handleInstallToolCLI(cmd *cobra.Command, args []string) error {
+	// Get flags
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("file")
+	manifestFlag, _ := cmd.Flags().GetString("manifest")
+
+	var result map[string]any
+	var err error
+
+	// Prioritize explicit flags over stdin
+	if manifestFlag != "" {
+		// Direct manifest JSON provided
+		result, err = InstallToolFromManifest(context.Background(), manifestFlag)
+	} else if file != "" {
+		// File path provided
+		result, err = InstallToolFromManifest(context.Background(), file)
+	} else if name != "" {
+		// Registry name provided
+		result, err = InstallToolFromRegistry(context.Background(), name)
+	} else if len(args) > 0 {
+		// Positional argument - determine if it's a file or registry name
+		arg := args[0]
+		if arg == "-" {
+			// Explicit stdin
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("failed to read from stdin: %w", err)
+			}
+			result, err = InstallToolFromManifest(context.Background(), string(data))
+		} else if _, statErr := os.Stat(arg); statErr == nil {
+			// It's a file
+			result, err = InstallToolFromManifest(context.Background(), arg)
+		} else {
+			// Assume it's a registry name
+			result, err = InstallToolFromRegistry(context.Background(), arg)
+		}
+	} else {
+		// Check for stdin data
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			// Data is being piped to stdin
+			data, readErr := io.ReadAll(os.Stdin)
+			if readErr != nil {
+				return fmt.Errorf("failed to read from stdin: %w", readErr)
+			}
+			result, err = InstallToolFromManifest(context.Background(), string(data))
+		} else {
+			return fmt.Errorf("provide tool name, --file for manifest, or pipe to stdin")
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Output result
+	if jsonData, err := json.MarshalIndent(result, "", "  "); err == nil {
+		fmt.Println(string(jsonData))
+	}
+
+	return nil
+}
+
+// handleConvertOpenAPICLI handles the CLI command for OpenAPI conversion
+// Supports: file path, stdin (-), or direct JSON via --openapi flag
+func handleConvertOpenAPICLI(cmd *cobra.Command, args []string) error {
+	var openapiContent string
+
+	// Get flags
+	apiName, _ := cmd.Flags().GetString("api-name")
+	baseURL, _ := cmd.Flags().GetString("base-url")
+	outputPath, _ := cmd.Flags().GetString("output")
+	openapiFlag, _ := cmd.Flags().GetString("openapi")
+
+	// Determine input source
+	if len(args) > 0 && args[0] != "" {
+		if args[0] == "-" {
+			// Read from stdin
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("failed to read from stdin: %w", err)
+			}
+			openapiContent = string(data)
+		} else {
+			// Use positional argument as file path or content
+			openapiContent = args[0]
+		}
+	} else if openapiFlag != "" {
+		// Use --openapi flag value
+		openapiContent = openapiFlag
+	} else {
+		// No input provided, try stdin
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			// Data is being piped to stdin
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("failed to read from stdin: %w", err)
+			}
+			openapiContent = string(data)
+		} else {
+			return fmt.Errorf("OpenAPI spec required: provide file path, use stdin, or --openapi flag")
+		}
+	}
+
+	// Create the args struct
+	convArgs := &ConvertOpenAPIExtendedArgs{
+		OpenAPI: openapiContent,
+		APIName: apiName,
+		BaseURL: baseURL,
+		Output:  outputPath,
+	}
+
+	// Get the operation and execute
+	op, exists := GetOperation(constants.InterfaceIDConvertOpenAPI)
+	if !exists || op == nil {
+		return fmt.Errorf("convert operation not found")
+	}
+
+	result, err := op.Handler(context.Background(), convArgs)
+	if err != nil {
+		return err
+	}
+
+	// Format the output
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
+	}
+
+	// Extract manifests array
+	manifests, ok := resultMap["manifests"].([]map[string]any)
+	if !ok {
+		return fmt.Errorf("no manifests found in result")
+	}
+
+	// Convert to proper JSON array
+	jsonOutput, err := json.MarshalIndent(manifests, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to format manifests as JSON: %w", err)
+	}
+
+	// Write to output file or stdout
+	if outputPath != "" {
+		if err := os.WriteFile(outputPath, jsonOutput, 0644); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		utils.Info("Generated %d tools and saved to %s", resultMap["count"], outputPath)
+	} else {
+		fmt.Print(string(jsonOutput))
+	}
+
+	return nil
 }
 
 // init registers all core operations
@@ -355,7 +561,7 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodPost,
 		HTTPPath:    "/validate",
-		CLIUse:      "flows validate <name_or_file>",
+		CLIUse:      "flows validate",
 		CLIShort:    "Validate a flow (from name or file)",
 		MCPName:     "beemflow_validate_flow",
 		ArgsType:    reflect.TypeOf(ValidateFlowArgs{}),
@@ -371,7 +577,7 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodPost,
 		HTTPPath:    "/flows/graph",
-		CLIUse:      "flows graph <name_or_file>",
+		CLIUse:      "flows graph",
 		CLIShort:    "Generate a Mermaid diagram for a flow",
 		MCPName:     "beemflow_graph_flow",
 		ArgsType:    reflect.TypeOf(GraphFlowArgs{}),
@@ -542,13 +748,34 @@ func init() {
 		CLIShort:    "Convert OpenAPI spec to BeemFlow tool manifests",
 		MCPName:     "beemflow_convert_openapi",
 		ArgsType:    reflect.TypeOf(ConvertOpenAPIExtendedArgs{}),
+		CLIHandler:  handleConvertOpenAPICLI,
 		Handler: func(ctx context.Context, args any) (any, error) {
 			a := args.(*ConvertOpenAPIExtendedArgs)
+
+			// Process OpenAPI input - can be JSON string or file path
+			openapiContent := a.OpenAPI
+			if openapiContent == "" {
+				return nil, fmt.Errorf("OpenAPI spec is required")
+			}
+
+			// Check if it's a file path by trying to stat it
+			if _, err := os.Stat(openapiContent); err == nil {
+				// It's a valid file path, read the contents
+				data, err := os.ReadFile(openapiContent)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read OpenAPI file: %w", err)
+				}
+				openapiContent = string(data)
+			} else if !strings.HasPrefix(openapiContent, "{") && !strings.HasPrefix(openapiContent, "[") {
+				// Not a file and doesn't look like JSON
+				return nil, fmt.Errorf("OpenAPI must be a valid file path or JSON string")
+			}
+
 			// Use the core adapter for conversion
 			coreAdapter := &adapter.CoreAdapter{}
 			inputs := map[string]any{
 				"__use":    constants.CoreConvertOpenAPI,
-				"openapi":  a.OpenAPI,
+				"openapi":  openapiContent,
 				"api_name": a.APIName,
 				"base_url": a.BaseURL,
 			}
@@ -822,17 +1049,28 @@ func init() {
 	RegisterOperation(&OperationDefinition{
 		ID:          "install_tool",
 		Name:        "Install Tool",
-		Description: "Install a tool from the registry",
+		Description: "Install a tool from the registry or local manifest file",
 		Group:       "tools",
 		HTTPMethod:  http.MethodPost,
-		HTTPPath:    "/tools/install/{name}",
-		CLIUse:      "tools install <toolName>",
-		CLIShort:    "Install a tool from the registry",
+		HTTPPath:    "/tools/install",
+		CLIUse:      "tools install <name>",
+		CLIShort:    "Install tools from registry, file, or stdin",
 		MCPName:     "beemflow_install_tool",
-		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
+		ArgsType:    reflect.TypeOf(InstallToolArgs{}),
+		CLIHandler:  handleInstallToolCLI,
 		Handler: func(ctx context.Context, args any) (any, error) {
-			a := args.(*GetFlowArgs)
-			return InstallTool(ctx, a.Name)
+			a := args.(*InstallToolArgs)
+
+			// Priority: manifest JSON > file > registry name
+			if a.Manifest != "" {
+				return InstallToolFromManifest(ctx, a.Manifest)
+			} else if a.File != "" {
+				return InstallToolFromManifest(ctx, a.File)
+			} else if a.Name != "" {
+				return InstallToolFromRegistry(ctx, a.Name)
+			}
+
+			return nil, fmt.Errorf("provide --name for registry tool, --file for manifest file, or pipe to stdin")
 		},
 	})
 
@@ -1026,7 +1264,7 @@ type ConvertOpenAPIExtendedArgs struct {
 	OpenAPI string `json:"openapi" flag:"openapi" description:"OpenAPI spec as JSON string or file path"`
 	APIName string `json:"api_name" flag:"api-name" description:"Name prefix for generated tools"`
 	BaseURL string `json:"base_url" flag:"base-url" description:"Base URL override"`
-	Output  string `json:"-" flag:"output,o" description:"Output file path (default: stdout)"`
+	Output  string `json:"-" flag:"output" description:"Output file path (default: stdout)"`
 }
 
 // ============================================================================
