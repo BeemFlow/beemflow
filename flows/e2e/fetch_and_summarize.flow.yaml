@@ -1,4 +1,8 @@
 name: fetch_and_summarize
+description: |
+  Fetch content from a web URL using HTTP, summarize it with OpenAI into 3 bullet points,
+  and display the summary. Demonstrates HTTP fetching, AI processing, and step chaining
+  in a simple end-to-end workflow pattern.
 on: cli.manual
 vars:
   fetch_url: "https://raw.githubusercontent.com/beemflow/beemflow/refs/heads/main/README.md"

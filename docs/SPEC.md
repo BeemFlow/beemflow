@@ -9,6 +9,7 @@
 ### ✅ Valid YAML Structure
 ```yaml
 name: string                    # REQUIRED
+description: string             # optional - precise natural language representation of workflow logic
 version: string                 # optional
 on: trigger                     # REQUIRED (cli.manual, schedule.cron, event:topic, http.request)
 cron: "0 9 * * 1-5"            # if on: schedule.cron
@@ -283,13 +284,14 @@ This is the EXACT model BeemFlow supports (from Go source):
 
 ```go
 type Flow struct {
-    Name    string         `yaml:"name"`       // REQUIRED
-    Version string         `yaml:"version"`    // optional
-    On      any            `yaml:"on"`         // REQUIRED
-    Cron    string         `yaml:"cron"`       // for schedule.cron
-    Vars    map[string]any `yaml:"vars"`       // optional
-    Steps   []Step         `yaml:"steps"`      // REQUIRED
-    Catch   []Step         `yaml:"catch"`      // optional
+    Name        string         `yaml:"name"`        // REQUIRED
+    Description string         `yaml:"description"` // optional
+    Version     string         `yaml:"version"`     // optional
+    On          any            `yaml:"on"`          // REQUIRED
+    Cron        string         `yaml:"cron"`        // for schedule.cron
+    Vars        map[string]any `yaml:"vars"`        // optional
+    Steps       []Step         `yaml:"steps"`       // REQUIRED
+    Catch       []Step         `yaml:"catch"`       // optional
 }
 
 type Step struct {
@@ -342,6 +344,49 @@ Before generating any BeemFlow workflow:
 - [ ] Confirm foreach has both `as` and `do`
 - [ ] No date filters or now() function
 - [ ] No timeout except in await_event
+
+---
+
+## 📝 Description Field Guidelines
+
+The optional `description` field provides a precise natural language representation of the workflow logic. This is not just documentation—it's an exact specification that mirrors the workflow implementation.
+
+### Purpose
+- **Executable Documentation**: Someone should be able to implement the workflow from the description alone
+- **AI Integration**: Enables AI agents (like BeemBeem) to understand and maintain workflows
+- **Human Interface**: Provides clear business logic for non-technical stakeholders
+- **Sync Validation**: Future tooling will verify description matches implementation
+
+### Writing Guidelines
+
+**✅ Good Description:**
+```yaml
+name: social_media_approval
+description: |
+  Generate social media content using AI, store it in Airtable for human review, 
+  wait for approval status change, then post to Twitter and mark as completed.
+  Handle timeout by notifying team via Slack.
+```
+
+**❌ Poor Description:**
+```yaml
+description: "This workflow handles social media posting"  # Too vague
+description: "Uses OpenAI and Airtable"                    # Lists tools, not logic
+```
+
+### Best Practices
+1. **Be Precise**: Describe the exact sequence and conditions
+2. **Include Error Handling**: Mention catch blocks and timeouts
+3. **Explain Business Logic**: Why steps happen, not just what happens
+4. **Use Active Voice**: "Generate content" not "Content is generated"
+5. **Mention Key Integrations**: Important external systems and their role
+
+### Future Evolution
+The BeemBeem AI agent will eventually:
+- Validate description matches implementation
+- Suggest updates when logic changes
+- Generate workflows from descriptions
+- Maintain sync between description and steps
 
 ---
 

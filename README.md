@@ -123,6 +123,9 @@ We're building the infrastructure for the largest generational wealth transfer i
 ```yaml
 # hello.flow.yaml
 name: hello
+description: |
+  Display a greeting message, then echo that same message again with additional text.
+  Demonstrates basic step chaining and template variable usage.
 on: cli.manual
 steps:
   - id: greet
@@ -153,6 +156,10 @@ flow run hello.flow.yaml
 ```yaml
 # summarize.flow.yaml
 name: fetch_and_summarize
+description: |
+  Fetch content from a web URL using HTTP, summarize it with OpenAI into 3 bullet points,
+  and display the summary. Demonstrates HTTP fetching, AI processing, and step chaining
+  in a simple end-to-end workflow pattern.
 on: cli.manual
 vars:
   fetch_url: "https://en.wikipedia.org/wiki/Artificial_intelligence"
@@ -208,6 +215,10 @@ Explore real-world automations, from parallel LLMs to human-in-the-loop and mult
 ```yaml
 # parallel.flow.yaml
 name: parallel_facts
+description: |
+  Execute two OpenAI chat completions in parallel to generate different fun facts about
+  the Moon and Ocean, then combine results into a single output. Demonstrates parallel
+  execution with AI services and step dependency management.
 on: cli.manual
 vars:
   prompt1: "Give me a fun fact about the Moon."
@@ -590,6 +601,10 @@ flow run invoice_chaser.flow.yaml
 
 ```yaml
 name: fetch_and_summarize
+description: |
+  Fetch content from a web URL, summarize it with OpenAI into 3 bullet points,
+  and post the summary to Slack. Demonstrates HTTP fetching, AI processing, 
+  and Slack integration in a complete workflow.
 on: cli.manual
 vars:
   TOPIC: "Artificial_intelligence"

@@ -1,4 +1,7 @@
 name: hello
+description: |
+  Display a greeting message, then echo that same message again with additional text.
+  Demonstrates basic step chaining and template variable usage.
 on: cli.manual
 steps:
   - id: greet

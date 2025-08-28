@@ -1,4 +1,8 @@
 name: http_patterns_test
+description: |
+  Test different HTTP integration patterns: registry tools (http.fetch), generic HTTP adapter,
+  OpenAI/Anthropic manifest tools, and POST requests. Demonstrates tool resolution hierarchy
+  and various approaches to HTTP-based integrations with their trade-offs.
 on: cli.manual
 vars:
   test_url: "https://postman-echo.com/get"

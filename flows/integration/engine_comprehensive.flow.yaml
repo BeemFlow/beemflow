@@ -18,7 +18,7 @@ steps:
 
   # Test parallel execution with HTTP calls
   - id: parallel_http_test
-    type: parallel
+    parallel: true
     steps:
       - id: http_test_1
         use: http
@@ -38,27 +38,32 @@ steps:
 
   # Test sequential execution for comparison
   - id: sequential_test
-    type: sequential
-    steps:
-      - id: seq_step_1
-        use: core.echo
-        with:
-          text: "Sequential step 1: {{base_number}}"
-      - id: seq_step_2
-        use: core.echo
-        with:
-          text: "Sequential step 2: {{base_number * 2}}"
-      - id: seq_step_3
-        use: core.echo
-        with:
-          text: "Sequential step 3: {{steps.seq_step_1.text}}"
+    use: core.echo
+    with:
+      text: "Sequential test placeholder"
+
+  # Individual sequential steps
+  - id: seq_step_1
+    depends_on: [sequential_test]
+    use: core.echo
+    with:
+      text: "Sequential step 1: {{base_number}}"
+  - id: seq_step_2
+    depends_on: [seq_step_1]
+    use: core.echo
+    with:
+      text: "Sequential step 2: {{base_number * 2}}"
+  - id: seq_step_3
+    depends_on: [seq_step_2]
+    use: core.echo
+    with:
+      text: "Sequential step 3: {{seq_step_1.text}}"
 
   # Test foreach with parallel execution
   - id: foreach_parallel_test
-    type: foreach
+    depends_on: [seq_step_3]
     foreach: "{{test_items}}"
     as: "item"
-    parallel: true
     do:
       - id: "process_{{item}}"
         use: core.echo
@@ -67,10 +72,9 @@ steps:
 
   # Test foreach with sequential execution
   - id: foreach_sequential_test
-    type: foreach
+    depends_on: [foreach_parallel_test]
     foreach: "{{test_items}}"
     as: "item"
-    parallel: false
     do:
       - id: "seq_process_{{item}}"
         use: core.echo
@@ -79,13 +83,12 @@ steps:
 
   # Test nested parallel within foreach
   - id: nested_parallel_test
-    type: foreach
+    depends_on: [foreach_sequential_test]
     foreach: "{{test_items}}"
     as: "item"
-    parallel: false
     do:
       - id: "nested_ops_{{item}}"
-        type: parallel
+        parallel: true
         steps:
           - id: "upper_{{item}}"
             use: core.echo

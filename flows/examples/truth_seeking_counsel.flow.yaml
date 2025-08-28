@@ -1,4 +1,9 @@
 name: truth_seeking_counsel
+description: |
+  Analyze a claim from multiple perspectives using parallel AI analysis. Generate skeptic,
+  optimist, and analyst viewpoints simultaneously, then synthesize all perspectives into
+  a balanced, evidence-based conclusion. Demonstrates parallel foreach execution and
+  complex template variable resolution.
 on: cli.manual
 vars:
   claim: "The world is a simulation."

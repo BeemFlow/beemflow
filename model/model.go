@@ -7,13 +7,14 @@ import (
 )
 
 type Flow struct {
-	Name    string         `yaml:"name" json:"name"`
-	Version string         `yaml:"version,omitempty" json:"version,omitempty"`
-	On      any            `yaml:"on" json:"on,omitempty"`
-	Cron    string         `yaml:"cron,omitempty" json:"cron,omitempty"` // Cron expression for schedule.cron
-	Vars    map[string]any `yaml:"vars,omitempty" json:"vars,omitempty"`
-	Steps   []Step         `yaml:"steps" json:"steps"`
-	Catch   []Step         `yaml:"catch,omitempty" json:"catch,omitempty"`
+	Name        string         `yaml:"name" json:"name"`
+	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
+	Version     string         `yaml:"version,omitempty" json:"version,omitempty"`
+	On          any            `yaml:"on" json:"on,omitempty"`
+	Cron        string         `yaml:"cron,omitempty" json:"cron,omitempty"` // Cron expression for schedule.cron
+	Vars        map[string]any `yaml:"vars,omitempty" json:"vars,omitempty"`
+	Steps       []Step         `yaml:"steps" json:"steps"`
+	Catch       []Step         `yaml:"catch,omitempty" json:"catch,omitempty"`
 }
 
 type Step struct {

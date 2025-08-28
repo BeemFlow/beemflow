@@ -75,10 +75,8 @@ steps:
 
   # Test foreach with templated IDs
   - id: templated_foreach
-    type: foreach
     foreach: "{{test_object.values}}"
     as: "num"
-    parallel: false
     do:
       - id: "process_number_{{num}}"
         use: core.echo

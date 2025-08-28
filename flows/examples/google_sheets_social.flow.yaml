@@ -1,4 +1,8 @@
 name: google_sheets_social_post
+description: |
+  Generate AI-powered social media content about workflow automation and append to Google Sheets
+  for review. Uses OpenAI to create Twitter-friendly posts under 280 characters without hashtags,
+  then stores in spreadsheet with pending status for approval workflow.
 on: cli.manual
 
 vars:

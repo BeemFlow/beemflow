@@ -1,4 +1,7 @@
 name: list_airtable_tables
+description: |
+  List available Airtable bases using MCP server integration. Demonstrates MCP server
+  connectivity and external service integration patterns for database operations.
 on:
   - cli.manual
 steps:

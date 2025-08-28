@@ -1,4 +1,8 @@
 name: parallel_anthropic
+description: |
+  Execute two AI chat completions in parallel to generate different fun facts,
+  then combine the results into a single output. Demonstrates parallel execution
+  patterns and dependency management between sequential and parallel steps.
 on: cli.manual
 vars:
   prompt1: "Generate a fun fact about cats"

@@ -1,4 +1,8 @@
 name: memory_demo
+description: |
+  Demonstrate BeemFlow's organizational memory by accessing outputs from previous workflow runs.
+  Display previous run information if available, generate a new timestamped message, 
+  and show how workflow state persists across executions without external storage.
 on: cli.manual
 
 # This workflow demonstrates BeemFlow's organizational memory feature

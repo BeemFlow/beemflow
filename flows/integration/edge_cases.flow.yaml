@@ -43,10 +43,8 @@ steps:
 
   # Test foreach with empty list (should not fail)
   - id: test_empty_foreach
-    type: foreach
     foreach: "{{empty_list}}"
     as: "item"
-    parallel: false
     do:
       - id: "process_{{item}}"
         use: core.echo
@@ -55,10 +53,8 @@ steps:
 
   # Test foreach with mixed data types
   - id: test_mixed_foreach
-    type: foreach
     foreach: "{{nested_data.level1.level2.array}}"
     as: "item"
-    parallel: false
     do:
       - id: "mixed_{{item_index}}"
         use: core.echo
@@ -67,7 +63,7 @@ steps:
 
   # Test parallel with error handling
   - id: test_parallel_robustness
-    type: parallel
+    parallel: true
     steps:
       - id: success_step
         use: core.echo

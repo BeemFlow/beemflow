@@ -7,13 +7,11 @@ vars:
 steps:
   # Test nested parallel within foreach
   - id: nested_test
-    type: foreach
     foreach: "{{items}}"
     as: "item"
-    parallel: false
     do:
       - id: "ops_{{item}}"
-        type: parallel
+        parallel: true
         steps:
           - id: "upper_{{item}}"
             use: core.echo

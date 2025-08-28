@@ -1,4 +1,9 @@
 name: social_media_publisher
+description: |
+  Read Google Sheets for social media content, process feedback by regenerating content with AI,
+  post approved content to Twitter, and generate new drafts when queue is empty.
+  Runs every 5 minutes via cron or manually. Handles feedback loops, approval workflows,
+  and maintains conversation continuity across AI generations.
 on: 
   - cli.manual
   - cron.*/5_*_*_*_*

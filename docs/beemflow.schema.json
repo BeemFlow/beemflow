@@ -5,6 +5,7 @@
   "required": ["name", "on", "steps"],
   "properties": {
     "name": { "type": "string" },
+    "description": { "type": "string" },
     "version": { "type": "string" },
     "on": {},
     "vars": { "type": "object" },

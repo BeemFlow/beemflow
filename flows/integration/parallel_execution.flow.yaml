@@ -8,7 +8,7 @@ vars:
 steps:
   # Test parallel HTTP requests
   - id: parallel_http_requests
-    type: parallel
+    parallel: true
     steps:
       - id: get_ip
         use: http
@@ -28,10 +28,8 @@ steps:
 
   # Test foreach with parallel processing
   - id: process_data_parallel
-    type: foreach
     foreach: "{{test_data}}"
     as: "item"
-    parallel: true
     do:
       - id: "echo_{{item}}"
         use: core.echo
@@ -40,10 +38,8 @@ steps:
 
   # Test foreach with sequential processing for comparison
   - id: process_data_sequential
-    type: foreach
     foreach: "{{test_data}}"
     as: "item"
-    parallel: false
     do:
       - id: "echo_seq_{{item}}"
         use: core.echo
@@ -52,13 +48,11 @@ steps:
 
   # Test nested parallel within foreach
   - id: nested_parallel_test
-    type: foreach
     foreach: "{{test_data}}"
     as: "fruit"
-    parallel: false
     do:
       - id: "parallel_ops_{{fruit}}"
-        type: parallel
+        parallel: true
         steps:
           - id: "uppercase_{{fruit}}"
             use: core.echo

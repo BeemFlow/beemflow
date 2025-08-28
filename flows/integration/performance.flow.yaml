@@ -9,10 +9,8 @@ vars:
 steps:
   # Test large parallel processing
   - id: large_parallel_test
-    type: foreach
     foreach: "{{large_dataset}}"
     as: "item"
-    parallel: true
     do:
       - id: "parallel_work_{{item}}"
         use: core.echo
@@ -21,13 +19,11 @@ steps:
 
   # Test nested parallel operations
   - id: nested_parallel_stress
-    type: foreach
     foreach: "{{stress_iterations}}"
     as: "iteration"
-    parallel: false
     do:
       - id: "stress_iteration_{{iteration}}"
-        type: parallel
+        parallel: true
         steps:
           - id: "task_a_{{iteration}}"
             use: core.echo
@@ -44,10 +40,8 @@ steps:
 
   # Test template rendering performance
   - id: template_stress_test
-    type: foreach
     foreach: "{{large_dataset}}"
     as: "num"
-    parallel: true
     do:
       - id: "template_{{num}}"
         use: core.echo

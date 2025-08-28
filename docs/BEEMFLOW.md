@@ -201,14 +201,15 @@ This is the EXACT model BeemFlow implements:
 
 ```go
 type Flow struct {
-    Name       string                  `yaml:"name"`       // REQUIRED
-    Version    string                  `yaml:"version"`    
-    On         any                     `yaml:"on"`         // REQUIRED
-    Cron       string                  `yaml:"cron"`       
-    Vars       map[string]any          `yaml:"vars"`       
-    Steps      []Step                  `yaml:"steps"`      // REQUIRED
-    Catch      []Step                  `yaml:"catch"`      
-    MCPServers map[string]MCPServerCfg `yaml:"mcpServers"` 
+    Name        string                  `yaml:"name"`        // REQUIRED
+    Description string                  `yaml:"description"` // optional
+    Version     string                  `yaml:"version"`     
+    On          any                     `yaml:"on"`          // REQUIRED
+    Cron        string                  `yaml:"cron"`        
+    Vars        map[string]any          `yaml:"vars"`        
+    Steps       []Step                  `yaml:"steps"`       // REQUIRED
+    Catch       []Step                  `yaml:"catch"`       
+    MCPServers  map[string]MCPServerCfg `yaml:"mcpServers"`  
 }
 
 type Step struct {

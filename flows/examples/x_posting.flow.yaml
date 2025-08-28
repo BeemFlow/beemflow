@@ -1,4 +1,8 @@
 name: x_posting
+description: |
+  Daily automated X (Twitter) posting workflow that fetches files from Google Drive,
+  generates AI-powered tweet content for each file, stores in Google Sheets for approval,
+  then posts approved tweets to X and marks them as completed. Runs daily at 9 AM.
 on: schedule.cron
 cron: "0 9 * * *"  # Run daily at 9 AM
 

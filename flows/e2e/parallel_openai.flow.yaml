@@ -1,4 +1,8 @@
 name: parallel_openai_nested
+description: |
+  Execute two OpenAI chat completions in parallel to generate different fun facts about
+  space and oceans, then combine results into a single output. Demonstrates parallel
+  execution with AI services and step dependency management.
 on: cli.manual
 vars:
   prompt1: "Generate a fun fact about space"
