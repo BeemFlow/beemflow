@@ -70,6 +70,9 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		}
 	})
 
+	// Register Slack events route (conversational BeemBeem)
+	mux.HandleFunc("/slack/events", SlackEventsHandler())
+
 	// Generate and register all operation handlers
 	api.GenerateHTTPHandlers(mux)
 

@@ -197,6 +197,7 @@ func NewDefaultAdapterRegistry(ctx context.Context) *adapter.Registry {
 	reg.Register(&adapter.CoreAdapter{})
 	reg.Register(adapter.NewMCPAdapter())
 	reg.Register(&adapter.HTTPAdapter{AdapterID: constants.HTTPAdapterID}) // Unified HTTP adapter
+	reg.Register(&adapter.BeemBeemAdapter{}) // BeemBeem conversational adapter
 
 	// Load and merge registry tools
 	loadRegistryTools(ctx, reg)

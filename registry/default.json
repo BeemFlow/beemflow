@@ -322,5 +322,30 @@
       "AIRTABLE_API_KEY": "$env:AIRTABLE_API_KEY"
     },
     "transport": "stdio"
+  },
+  {
+    "type": "tool",
+    "name": "slack.chat.postMessage",
+    "description": "Post a message to a Slack channel (bot token required).",
+    "kind": "communication",
+    "version": "1.0.0",
+    "registry": "default",
+    "endpoint": "https://slack.com/api/chat.postMessage",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Bearer $env:SLACK_BOT_TOKEN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "text"],
+      "properties": {
+        "channel": { "type": "string", "description": "Channel ID (e.g. C123) or name (#general)" },
+        "text":    { "type": "string", "description": "Message text" },
+        "thread_ts": { "type": "string", "description": "Thread timestamp if replying" }
+      }
+    }
   }
 ] 

@@ -1,0 +1,32 @@
+name: beembeem_conversation
+on:
+  - event: slack.message
+steps:
+  - id: check_mention
+    if: "{{ 'beembeem' in event.text|lower }}"
+    use: openai.chat_completion
+    with:
+      model: "gpt-4o"
+      messages:
+        - role: system
+          content: |
+            You are BeemBeem, a helpful AI assistant that creates BeemFlow workflows.
+            
+            If the user wants to create a workflow, ask clarifying questions and then generate a complete YAML workflow.
+            If they want to run an existing workflow, help them with that.
+            If they're just chatting, be helpful and friendly.
+            
+            When generating workflows, always include:
+            - name: descriptive_name
+            - on: cli.manual (or appropriate trigger)
+            - steps: with proper BeemFlow syntax
+            
+            Keep responses under 2000 characters for Slack.
+        - role: user
+          content: "{{ event.text }}"
+  - id: reply
+    use: slack.chat.postMessage
+    with:
+      channel: "{{ event.channel }}"
+      text: "{{ check_mention.choices.0.message.content }}"
+      thread_ts: "{{ event.thread_ts or event.timestamp }}"

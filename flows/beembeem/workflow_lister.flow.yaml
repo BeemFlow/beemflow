@@ -1,0 +1,22 @@
+name: beembeem_workflow_lister
+on:
+  - event: slack.message
+steps:
+  - id: check_list_request
+    if: "{{ 'list workflows' in event.text|lower or 'show workflows' in event.text|lower or 'what workflows' in event.text|lower }}"
+    use: beembeem.list_workflows
+  - id: reply_list
+    use: slack.chat.postMessage
+    with:
+      channel: "{{ event.channel }}"
+      text: |
+        📋 **Available workflows:**
+        {% if check_list_request.workflows %}
+        {% for workflow in check_list_request.workflows %}• {{ workflow }}
+        {% endfor %}
+        
+        To run a workflow, use: `flow start <workflow_name>`
+        {% else %}
+        No workflows found. Create one by saying "create workflow for..."
+        {% endif %}
+      thread_ts: "{{ event.thread_ts or event.timestamp }}"

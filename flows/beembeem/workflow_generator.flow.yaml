@@ -1,0 +1,71 @@
+name: beembeem_workflow_generator
+on:
+  - event: slack.message
+steps:
+  - id: check_workflow_request
+    if: "{{ 'create workflow' in event.text|lower or 'generate workflow' in event.text|lower }}"
+    use: openai.chat_completion
+    with:
+      model: "gpt-4o"
+      messages:
+        - role: system
+          content: |
+            You are BeemBeem, a BeemFlow workflow generator. The user wants to create a workflow.
+            
+            Extract the workflow requirements and generate a complete BeemFlow YAML.
+            
+            Always respond with ONLY the YAML workflow, starting with 'name:' and including:
+            - name: descriptive_snake_case_name
+            - on: cli.manual (or appropriate trigger)
+            - steps: array with proper BeemFlow syntax
+            
+            Use these common tools:
+            - core.echo (for simple output)
+            - openai.chat_completion (for AI tasks)
+            - slack.chat.postMessage (for Slack messages)
+            - Any HTTP endpoints with proper syntax
+            
+            Example:
+            name: daily_standup_reminder
+            on: 
+              - schedule.cron
+            cron: "0 9 * * 1-5"
+            steps:
+              - id: send_reminder
+                use: slack.chat.postMessage
+                with:
+                  channel: "#general"
+                  text: "Daily standup in 15 minutes!"
+        - role: user
+          content: "{{ event.text }}"
+  - id: validate_workflow
+    use: beembeem.validate_workflow
+    with:
+      workflow_yaml: "{{ check_workflow_request.choices.0.message.content }}"
+  - id: save_workflow
+    if: "{{ validate_workflow.valid }}"
+    use: beembeem.save_workflow
+    with:
+      name: "{{ validate_workflow.name }}"
+      workflow_yaml: "{{ check_workflow_request.choices.0.message.content }}"
+  - id: reply_success
+    if: "{{ validate_workflow.valid and save_workflow.success }}"
+    use: slack.chat.postMessage
+    with:
+      channel: "{{ event.channel }}"
+      text: "✅ Workflow '{{ save_workflow.name }}' created successfully! You can run it with `flow start {{ save_workflow.name }}`"
+      thread_ts: "{{ event.thread_ts or event.timestamp }}"
+  - id: reply_validation_error
+    if: "{{ not validate_workflow.valid }}"
+    use: slack.chat.postMessage
+    with:
+      channel: "{{ event.channel }}"
+      text: "❌ Generated workflow is invalid: {{ validate_workflow.error }}"
+      thread_ts: "{{ event.thread_ts or event.timestamp }}"
+  - id: reply_save_error
+    if: "{{ validate_workflow.valid and not save_workflow.success }}"
+    use: slack.chat.postMessage
+    with:
+      channel: "{{ event.channel }}"
+      text: "❌ Error saving workflow: {{ save_workflow.error }}"
+      thread_ts: "{{ event.thread_ts or event.timestamp }}"

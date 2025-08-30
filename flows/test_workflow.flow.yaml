@@ -1,0 +1,7 @@
+name: test_workflow
+on: cli.manual
+steps:
+  - id: greet
+    use: core.echo
+    with:
+      text: "Hello from test workflow!"
