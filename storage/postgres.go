@@ -342,6 +342,28 @@ LIMIT 1`, flowName)
 	return &run, nil
 }
 
+// OAuth credential methods (stubs - not implemented for PostgreSQL yet)
+
+func (s *PostgresStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error) {
+	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
+	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthCredential(ctx context.Context, id string) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
 // Close closes the underlying PostgreSQL database connection.
 func (s *PostgresStorage) Close() error {
 	return s.db.Close()

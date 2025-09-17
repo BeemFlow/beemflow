@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/beemflow/beemflow/model"
 	"github.com/google/uuid"
@@ -20,4 +21,11 @@ type Storage interface {
 	LoadPausedRuns(ctx context.Context) (map[string]any, error)
 	DeletePausedRun(ctx context.Context, token string) error
 	DeleteRun(ctx context.Context, id uuid.UUID) error
+
+	// OAuth credential methods
+	SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error
+	GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error)
+	ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error)
+	DeleteOAuthCredential(ctx context.Context, id string) error
+	RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error
 }

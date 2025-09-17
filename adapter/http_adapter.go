@@ -11,9 +11,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
+	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
 )
 
@@ -25,8 +28,16 @@ func getHTTPClient() *http.Client {
 	}
 }
 
-// Environment variable pattern for safe parsing
-var envVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+// Environment variable and OAuth patterns for safe parsing
+var (
+	envVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+	oauthPattern  = regexp.MustCompile(`\$oauth:([a-z_]+):([a-z_]+)`)
+)
+
+// storageContextKey is used to inject storage into context
+type contextKeyType string
+
+const storageContextKey contextKeyType = "storage"
 
 // validatePathParameter validates a path parameter to prevent security issues
 func validatePathParameter(name, value string) error {
@@ -107,7 +118,7 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	enrichedInputs := a.enrichInputsWithDefaults(inputs)
 
 	// Prepare headers
-	headers := a.prepareManifestHeaders(enrichedInputs)
+	headers := a.prepareManifestHeaders(ctx, enrichedInputs)
 
 	// Replace path parameters in URL with validation
 	url := a.ToolManifest.Endpoint
@@ -308,13 +319,13 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 }
 
 // prepareManifestHeaders prepares headers for manifest-based requests
-func (a *HTTPAdapter) prepareManifestHeaders(inputs map[string]any) map[string]string {
+func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) map[string]string {
 	headers := make(map[string]string)
 
-	// Add manifest headers with environment variable expansion
+	// Add manifest headers with OAuth and environment variable expansion
 	if a.ToolManifest.Headers != nil {
 		for k, v := range a.ToolManifest.Headers {
-			headers[k] = expandEnvValue(v)
+			headers[k] = a.expandValue(ctx, v)
 		}
 	}
 
@@ -349,6 +360,68 @@ func (a *HTTPAdapter) extractHeaders(inputs map[string]any) map[string]string {
 		}
 	}
 	return headers
+}
+
+// expandValue expands both OAuth tokens and environment variables in a value string
+func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
+	// First handle OAuth patterns
+	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
+		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
+		if len(parts) != 2 {
+			return match
+		}
+		provider, integration := parts[0], parts[1]
+
+		if token, err := a.getOAuthToken(ctx, provider, integration); err == nil {
+			return "Bearer " + token
+		}
+		utils.Debug("OAuth token not found for %s:%s, keeping original", provider, integration)
+		return match // Keep original if OAuth token not found
+	})
+
+	// Then handle environment variables (existing logic)
+	return envVarPattern.ReplaceAllStringFunc(expanded, func(match string) string {
+		varName := match[5:] // Remove "$env:" prefix
+		if envVal := os.Getenv(varName); envVal != "" {
+			return envVal
+		}
+		return match
+	})
+}
+
+// getOAuthToken retrieves a valid OAuth token for the given provider and integration
+func (a *HTTPAdapter) getOAuthToken(ctx context.Context, provider, integration string) (string, error) {
+	// Get storage from context
+	storage, ok := ctx.Value(storageContextKey).(storage.Storage)
+	if !ok {
+		return "", utils.Errorf("storage not available in context")
+	}
+
+	cred, err := storage.GetOAuthCredential(ctx, provider, integration)
+	if err != nil {
+		return "", utils.Errorf("failed to get OAuth credential for %s:%s: %w", provider, integration, err)
+	}
+
+	// Check if token needs refresh
+	if cred.ExpiresAt != nil && time.Now().After(*cred.ExpiresAt) {
+		if err := a.refreshOAuthToken(ctx, storage, cred); err != nil {
+			return "", utils.Errorf("failed to refresh OAuth token: %w", err)
+		}
+		// Re-get the credential after refresh
+		cred, err = storage.GetOAuthCredential(ctx, provider, integration)
+		if err != nil {
+			return "", utils.Errorf("failed to get refreshed OAuth credential: %w", err)
+		}
+	}
+
+	return cred.AccessToken, nil
+}
+
+// refreshOAuthToken refreshes an expired OAuth token (placeholder implementation)
+func (a *HTTPAdapter) refreshOAuthToken(ctx context.Context, storage storage.Storage, cred *model.OAuthCredential) error {
+	// TODO: Implement OAuth token refresh flow
+	// For now, return an error indicating refresh is not implemented
+	return utils.Errorf("OAuth token refresh not implemented yet")
 }
 
 // expandEnvValue expands environment variables in a value string using regex for safety

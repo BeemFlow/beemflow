@@ -10,7 +10,9 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["url"],
+      "required": [
+        "url"
+      ],
       "properties": {
         "url": {
           "type": "string",
@@ -30,7 +32,10 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["model", "messages"],
+      "required": [
+        "model",
+        "messages"
+      ],
       "properties": {
         "model": {
           "type": "string",
@@ -41,18 +46,43 @@
           "description": "Chat messages following the OpenAI spec.",
           "items": {
             "type": "object",
-            "required": ["role", "content"],
+            "required": [
+              "role",
+              "content"
+            ],
             "properties": {
-              "role": { "type": "string", "enum": ["system", "user", "assistant", "tool"] },
-              "content": { "type": "string" },
-              "name": { "type": "string" },
-              "tool_call_id": { "type": "string" }
+              "role": {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "user",
+                  "assistant",
+                  "tool"
+                ]
+              },
+              "content": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tool_call_id": {
+                "type": "string"
+              }
             },
             "additionalProperties": false
           }
         },
-        "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 1 },
-        "stream": { "type": "boolean", "default": false }
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1
+        },
+        "stream": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "endpoint": "https://api.openai.com/v1/chat/completions",
@@ -71,7 +101,10 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["model", "messages"],
+      "required": [
+        "model",
+        "messages"
+      ],
       "properties": {
         "model": {
           "type": "string",
@@ -86,12 +119,28 @@
           "description": "Chat messages following the OpenAI spec.",
           "items": {
             "type": "object",
-            "required": ["role", "content"],
+            "required": [
+              "role",
+              "content"
+            ],
             "properties": {
-              "role": { "type": "string", "enum": ["user", "assistant", "tool"] },
-              "content": { "type": "string" },
-              "name": { "type": "string" },
-              "tool_call_id": { "type": "string" }
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant",
+                  "tool"
+                ]
+              },
+              "content": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tool_call_id": {
+                "type": "string"
+              }
             },
             "additionalProperties": false
           }
@@ -101,8 +150,18 @@
           "description": "Maximum number of tokens to generate.",
           "default": 1024
         },
-        "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 1 },
-        "top_p": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 }
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        }
       }
     },
     "endpoint": "https://api.anthropic.com/v1/messages",
@@ -153,7 +212,7 @@
     "endpoint": "https://www.googleapis.com/drive/v3/files",
     "method": "GET",
     "headers": {
-      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",
+      "Authorization": "$oauth:google:sheets_default",
       "Content-Type": "application/json"
     }
   },
@@ -168,7 +227,10 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["spreadsheetId", "range"],
+      "required": [
+        "spreadsheetId",
+        "range"
+      ],
       "properties": {
         "spreadsheetId": {
           "type": "string",
@@ -181,13 +243,20 @@
         "majorDimension": {
           "type": "string",
           "description": "Major dimension for returned values",
-          "enum": ["ROWS", "COLUMNS"],
+          "enum": [
+            "ROWS",
+            "COLUMNS"
+          ],
           "default": "ROWS"
         },
         "valueRenderOption": {
           "type": "string",
           "description": "How values should be represented",
-          "enum": ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
+          "enum": [
+            "FORMATTED_VALUE",
+            "UNFORMATTED_VALUE",
+            "FORMULA"
+          ],
           "default": "FORMATTED_VALUE"
         }
       }
@@ -195,7 +264,7 @@
     "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
     "method": "GET",
     "headers": {
-      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",
+      "Authorization": "$oauth:google:sheets_default",
       "Content-Type": "application/json"
     }
   },
@@ -210,7 +279,11 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["spreadsheetId", "range", "values"],
+      "required": [
+        "spreadsheetId",
+        "range",
+        "values"
+      ],
       "properties": {
         "spreadsheetId": {
           "type": "string",
@@ -235,7 +308,7 @@
     "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}?valueInputOption=USER_ENTERED",
     "method": "PUT",
     "headers": {
-      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",
+      "Authorization": "$oauth:google:sheets_default",
       "Content-Type": "application/json"
     }
   },
@@ -250,7 +323,11 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["spreadsheetId", "range", "values"],
+      "required": [
+        "spreadsheetId",
+        "range",
+        "values"
+      ],
       "properties": {
         "spreadsheetId": {
           "type": "string",
@@ -272,7 +349,7 @@
     "endpoint": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:append?valueInputOption=USER_ENTERED",
     "method": "POST",
     "headers": {
-      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN",
+      "Authorization": "$oauth:google:sheets_default",
       "Content-Type": "application/json"
     }
   },
@@ -287,7 +364,9 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "type": "object",
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "properties": {
         "text": {
           "type": "string",
@@ -315,7 +394,10 @@
     "name": "airtable",
     "description": "Airtable integration via MCP protocol for database operations.",
     "command": "npx",
-    "args": ["-y", "airtable-mcp-server"],
+    "args": [
+      "-y",
+      "airtable-mcp-server"
+    ],
     "version": "0.1.0",
     "registry": "default",
     "env": {
@@ -323,4 +405,4 @@
     },
     "transport": "stdio"
   }
-] 
+]

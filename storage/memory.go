@@ -6,26 +6,30 @@ import (
 	"maps"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
 
 // MemoryStorage implements Storage in-memory (for fallback/dev mode).
 type MemoryStorage struct {
-	runs   map[uuid.UUID]*model.Run
-	steps  map[uuid.UUID][]*model.StepRun // runID -> steps
-	mu     sync.RWMutex                   // RWMutex is sufficient for most use cases; consider context-aware primitives if high concurrency or cancellation is needed.
-	paused map[string]any                 // token -> paused run
+	runs       map[uuid.UUID]*model.Run
+	steps      map[uuid.UUID][]*model.StepRun    // runID -> steps
+	mu         sync.RWMutex                      // RWMutex is sufficient for most use cases; consider context-aware primitives if high concurrency or cancellation is needed.
+	paused     map[string]any                    // token -> paused run
+	oauthCreds map[string]*model.OAuthCredential // provider:integration -> credential
 }
 
 var _ Storage = (*MemoryStorage)(nil)
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		runs:   make(map[uuid.UUID]*model.Run),
-		steps:  make(map[uuid.UUID][]*model.StepRun),
-		paused: make(map[string]any),
+		runs:       make(map[uuid.UUID]*model.Run),
+		steps:      make(map[uuid.UUID][]*model.StepRun),
+		paused:     make(map[string]any),
+		oauthCreds: make(map[string]*model.OAuthCredential),
 	}
 }
 
@@ -129,4 +133,82 @@ func (m *MemoryStorage) GetLatestRunByFlowName(ctx context.Context, flowName str
 		return nil, sql.ErrNoRows
 	}
 	return latest, nil
+}
+
+// OAuth credential methods
+
+func (m *MemoryStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error {
+	if err := cred.Validate(); err != nil {
+		return utils.Errorf("invalid credential: %w", err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := cred.UniqueKey()
+	m.oauthCreds[key] = cred
+	return nil
+}
+
+func (m *MemoryStorage) GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	key := provider + ":" + integration
+	cred, ok := m.oauthCreds[key]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return cred, nil
+}
+
+func (m *MemoryStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]*model.OAuthCredential, 0, len(m.oauthCreds))
+	for _, cred := range m.oauthCreds {
+		out = append(out, cred)
+	}
+
+	// Sort by CreatedAt DESC to match SQL implementations
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+
+	return out, nil
+}
+
+func (m *MemoryStorage) DeleteOAuthCredential(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find and delete by ID
+	for key, cred := range m.oauthCreds {
+		if cred.ID == id {
+			delete(m.oauthCreds, key)
+			return nil
+		}
+	}
+
+	return sql.ErrNoRows
+}
+
+func (m *MemoryStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find credential by ID
+	for key, cred := range m.oauthCreds {
+		if cred.ID == id {
+			// Update the credential in place
+			cred.AccessToken = newToken
+			cred.ExpiresAt = expiresAt
+			cred.UpdatedAt = time.Now()
+			m.oauthCreds[key] = cred
+			return nil
+		}
+	}
+
+	return sql.ErrNoRows
 }

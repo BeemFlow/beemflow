@@ -593,7 +593,7 @@ func TestHTTPAdapter_ManifestHeaders(t *testing.T) {
 	}
 
 	adapter := &HTTPAdapter{AdapterID: "test", ToolManifest: manifest}
-	headers := adapter.prepareManifestHeaders(map[string]any{})
+	headers := adapter.prepareManifestHeaders(context.Background(), map[string]any{})
 
 	if headers["Authorization"] != "Bearer secret-token" {
 		t.Errorf("expected Authorization=Bearer secret-token, got %s", headers["Authorization"])
@@ -782,7 +782,7 @@ func TestHTTPAdapter_PrepareManifestHeaders_ErrorPaths(t *testing.T) {
 		},
 	}
 
-	headers := adapter.prepareManifestHeaders(inputs)
+	headers := adapter.prepareManifestHeaders(context.Background(), inputs)
 
 	if headers["Authorization"] != "Bearer token" {
 		t.Errorf("expected Authorization header from manifest, got %v", headers["Authorization"])
@@ -793,7 +793,7 @@ func TestHTTPAdapter_PrepareManifestHeaders_ErrorPaths(t *testing.T) {
 
 	// Test with nil manifest headers
 	adapter.ToolManifest.Headers = nil
-	headers = adapter.prepareManifestHeaders(inputs)
+	headers = adapter.prepareManifestHeaders(context.Background(), inputs)
 	if headers["X-Custom"] != "custom-value" {
 		t.Errorf("expected X-Custom header from inputs, got %v", headers["X-Custom"])
 	}
