@@ -111,10 +111,10 @@ func (c *CronManager) updateSystemCron(newEntries []string) error {
 	}
 
 	// Add new entries
-	allLines := append(preservedLines, newEntries...)
+	preservedLines = append(preservedLines, newEntries...)
 
 	// Write back to crontab
-	newCron := strings.Join(allLines, "\n") + "\n"
+	newCron := strings.Join(preservedLines, "\n") + "\n"
 	cmd = exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(newCron)
 

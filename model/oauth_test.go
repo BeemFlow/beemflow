@@ -99,10 +99,8 @@ func TestOAuthCredential_Validate(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("Expected error containing %q, got %v", tt.errorMsg, err)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, got %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("Expected no error, got %v", err)
 			}
 		})
 	}
@@ -255,10 +253,8 @@ func TestOAuthProvider_Validate(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("Expected error containing %q, got %v", tt.errorMsg, err)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error, got %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("Expected no error, got %v", err)
 			}
 		})
 	}

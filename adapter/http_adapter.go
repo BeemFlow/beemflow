@@ -40,7 +40,7 @@ type contextKeyType string
 const storageContextKey contextKeyType = "storage"
 
 // validatePathParameter validates a path parameter to prevent security issues
-func validatePathParameter(name, value string) error {
+func validatePathParameter(_, value string) error {
 	// Check for path traversal attempts
 	if strings.Contains(value, "..") {
 		return fmt.Errorf("path traversal attempt detected")

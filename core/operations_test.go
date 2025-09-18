@@ -119,7 +119,7 @@ func TestGetOperationsMapByGroups(t *testing.T) {
 	}
 
 	// Verify we get different results for different groups
-	if len(flowsOps) == len(runsOps) && len(flowsOps) == len(allOps) {
+	if len(flowsOps) == len(runsOps) || len(flowsOps) == len(allOps) {
 		t.Error("Groups should filter to different subsets")
 	}
 
@@ -181,6 +181,7 @@ func TestOperationGroups(t *testing.T) {
 		"tools":  true,
 		"mcp":    true,
 		"system": true,
+		"oauth":  true,
 	}
 
 	for id, op := range allOps {
