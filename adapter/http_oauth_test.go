@@ -14,7 +14,7 @@ import (
 	"github.com/beemflow/beemflow/storage"
 )
 
-// storageContextKey is already defined in http_adapter.go
+// Use the same context key as production code to avoid compatibility issues
 
 func TestHTTPAdapter_ExpandValue_EnvironmentVariables(t *testing.T) {
 	tests := []struct {

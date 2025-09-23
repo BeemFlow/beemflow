@@ -371,23 +371,24 @@ func handleInstallToolCLI(cmd *cobra.Command, args []string) error {
 	var err error
 
 	// Prioritize explicit flags over stdin
-	if manifestFlag != "" {
+	switch {
+	case manifestFlag != "":
 		// Direct manifest JSON provided
 		result, err = InstallToolFromManifest(context.Background(), manifestFlag)
-	} else if file != "" {
+	case file != "":
 		// File path provided
 		result, err = InstallToolFromManifest(context.Background(), file)
-	} else if name != "" {
+	case name != "":
 		// Registry name provided
 		result, err = InstallToolFromRegistry(context.Background(), name)
-	} else if len(args) > 0 {
+	case len(args) > 0:
 		// Positional argument - determine if it's a file or registry name
 		arg := args[0]
 		if arg == "-" {
 			// Explicit stdin
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return fmt.Errorf("failed to read from stdin: %w", err)
+			data, readErr := io.ReadAll(os.Stdin)
+			if readErr != nil {
+				return fmt.Errorf("failed to read from stdin: %w", readErr)
 			}
 			result, err = InstallToolFromManifest(context.Background(), string(data))
 		} else if _, statErr := os.Stat(arg); statErr == nil {
@@ -397,7 +398,7 @@ func handleInstallToolCLI(cmd *cobra.Command, args []string) error {
 			// Assume it's a registry name
 			result, err = InstallToolFromRegistry(context.Background(), arg)
 		}
-	} else {
+	default:
 		// Check for stdin data
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
@@ -436,7 +437,8 @@ func handleConvertOpenAPICLI(cmd *cobra.Command, args []string) error {
 	openapiFlag, _ := cmd.Flags().GetString("openapi")
 
 	// Determine input source
-	if len(args) > 0 && args[0] != "" {
+	switch {
+	case len(args) > 0 && args[0] != "":
 		if args[0] == "-" {
 			// Read from stdin
 			data, err := io.ReadAll(os.Stdin)
@@ -448,10 +450,10 @@ func handleConvertOpenAPICLI(cmd *cobra.Command, args []string) error {
 			// Use positional argument as file path or content
 			openapiContent = args[0]
 		}
-	} else if openapiFlag != "" {
+	case openapiFlag != "":
 		// Use --openapi flag value
 		openapiContent = openapiFlag
-	} else {
+	default:
 		// No input provided, try stdin
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
@@ -1062,11 +1064,12 @@ func init() {
 			a := args.(*InstallToolArgs)
 
 			// Priority: manifest JSON > file > registry name
-			if a.Manifest != "" {
+			switch {
+			case a.Manifest != "":
 				return InstallToolFromManifest(ctx, a.Manifest)
-			} else if a.File != "" {
+			case a.File != "":
 				return InstallToolFromManifest(ctx, a.File)
-			} else if a.Name != "" {
+			case a.Name != "":
 				return InstallToolFromRegistry(ctx, a.Name)
 			}
 

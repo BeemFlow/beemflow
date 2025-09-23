@@ -15,21 +15,23 @@ import (
 
 // MemoryStorage implements Storage in-memory (for fallback/dev mode).
 type MemoryStorage struct {
-	runs       map[uuid.UUID]*model.Run
-	steps      map[uuid.UUID][]*model.StepRun    // runID -> steps
-	mu         sync.RWMutex                      // RWMutex is sufficient for most use cases; consider context-aware primitives if high concurrency or cancellation is needed.
-	paused     map[string]any                    // token -> paused run
-	oauthCreds map[string]*model.OAuthCredential // provider:integration -> credential
+	runs           map[uuid.UUID]*model.Run
+	steps          map[uuid.UUID][]*model.StepRun    // runID -> steps
+	mu             sync.RWMutex                      // RWMutex is sufficient for most use cases; consider context-aware primitives if high concurrency or cancellation is needed.
+	paused         map[string]any                    // token -> paused run
+	oauthCreds     map[string]*model.OAuthCredential // provider:integration -> credential
+	oauthProviders map[string]*model.OAuthProvider   // id -> provider
 }
 
 var _ Storage = (*MemoryStorage)(nil)
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		runs:       make(map[uuid.UUID]*model.Run),
-		steps:      make(map[uuid.UUID][]*model.StepRun),
-		paused:     make(map[string]any),
-		oauthCreds: make(map[string]*model.OAuthCredential),
+		runs:           make(map[uuid.UUID]*model.Run),
+		steps:          make(map[uuid.UUID][]*model.StepRun),
+		paused:         make(map[string]any),
+		oauthCreds:     make(map[string]*model.OAuthCredential),
+		oauthProviders: make(map[string]*model.OAuthProvider),
 	}
 }
 
@@ -211,4 +213,57 @@ func (m *MemoryStorage) RefreshOAuthCredential(ctx context.Context, id string, n
 	}
 
 	return sql.ErrNoRows
+}
+
+// OAuth provider methods
+
+func (m *MemoryStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
+	if err := provider.Validate(); err != nil {
+		return utils.Errorf("invalid provider: %w", err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.oauthProviders[provider.ID] = provider
+	return nil
+}
+
+func (m *MemoryStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	provider, ok := m.oauthProviders[id]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return provider, nil
+}
+
+func (m *MemoryStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var providers []*model.OAuthProvider
+	for _, provider := range m.oauthProviders {
+		providers = append(providers, provider)
+	}
+
+	// Sort by ID for consistent output
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].ID < providers[j].ID
+	})
+
+	return providers, nil
+}
+
+func (m *MemoryStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.oauthProviders[id]; !ok {
+		return sql.ErrNoRows
+	}
+
+	delete(m.oauthProviders, id)
+	return nil
 }

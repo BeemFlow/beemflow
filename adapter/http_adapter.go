@@ -35,9 +35,8 @@ var (
 )
 
 // storageContextKey is used to inject storage into context
-type contextKeyType string
-
-const storageContextKey contextKeyType = "storage"
+// Use same constant as engine to ensure compatibility
+const storageContextKey = "beemflow.storage"
 
 // validatePathParameter validates a path parameter to prevent security issues
 func validatePathParameter(_, value string) error {
@@ -391,6 +390,8 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 
 // getOAuthToken retrieves a valid OAuth token for the given provider and integration
 func (a *HTTPAdapter) getOAuthToken(ctx context.Context, provider, integration string) (string, error) {
+	// Retrieve OAuth token from storage using context-injected storage
+
 	// Get storage from context
 	storage, ok := ctx.Value(storageContextKey).(storage.Storage)
 	if !ok {

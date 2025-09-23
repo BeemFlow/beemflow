@@ -687,8 +687,23 @@ func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 			return
 		}
 
+		// Inject dependencies into context
+		ctx := r.Context()
+
+		// Get config and inject into context
+		if cfg, err := GetConfig(); err == nil && cfg != nil {
+			ctx = WithConfig(ctx, cfg)
+		}
+
+		// Get storage and inject into context
+		if cfg, err := GetConfig(); err == nil && cfg != nil {
+			if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
+				ctx = WithStore(ctx, store)
+			}
+		}
+
 		// Execute operation
-		result, err := matchedOp.Handler(r.Context(), args)
+		result, err := matchedOp.Handler(ctx, args)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

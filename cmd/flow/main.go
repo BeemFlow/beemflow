@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -175,8 +176,25 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 		exit(4)
 	}
 
+	// Inject dependencies into context for OAuth token access
+	ctx := cmd.Context()
+
+	// Get config and inject into context
+	if cfg, err := api.GetConfig(); err == nil && cfg != nil {
+		ctx = api.WithConfig(ctx, cfg)
+
+		// Get storage and inject into context using both keys
+		if store, err := api.GetStoreFromConfig(cfg); err == nil && store != nil {
+			ctx = api.WithStore(ctx, store)
+			// Also inject using HTTP adapter's expected key
+			type contextKeyType string
+			const httpAdapterStorageKey contextKeyType = "storage"
+			ctx = context.WithValue(ctx, httpAdapterStorageKey, store)
+		}
+	}
+
 	// Use the API service instead of direct engine access
-	runID, outputs, err := api.RunSpec(cmd.Context(), flow, event)
+	runID, outputs, err := api.RunSpec(ctx, flow, event)
 	if err != nil {
 		utils.Error(constants.ErrFlowExecutionFailed, err)
 		exit(5)

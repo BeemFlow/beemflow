@@ -404,5 +404,41 @@
       "AIRTABLE_API_KEY": "$env:AIRTABLE_API_KEY"
     },
     "transport": "stdio"
+  },
+  {
+    "type": "tool",
+    "name": "google_sheets.create",
+    "description": "Create a new Google Sheets spreadsheet",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "properties"
+      ],
+      "properties": {
+        "properties": {
+          "type": "object",
+          "required": [
+            "title"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title of the new spreadsheet"
+            }
+          }
+        }
+      }
+    },
+    "endpoint": "https://sheets.googleapis.com/v4/spreadsheets",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:google:sheets_default",
+      "Content-Type": "application/json"
+    }
   }
 ]

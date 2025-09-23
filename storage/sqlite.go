@@ -113,6 +113,16 @@ CREATE TABLE IF NOT EXISTS oauth_credentials (
 	updated_at INTEGER NOT NULL,
 	UNIQUE(provider, integration)
 );
+CREATE TABLE IF NOT EXISTS oauth_providers (
+	id TEXT PRIMARY KEY,
+	client_id TEXT NOT NULL,
+	client_secret TEXT NOT NULL,
+	auth_url TEXT NOT NULL,
+	token_url TEXT NOT NULL,
+	scopes JSON,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
 `
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
@@ -522,6 +532,111 @@ func (s *SqliteStorage) RefreshOAuthCredential(ctx context.Context, id string, n
 
 	if err != nil {
 		return utils.Errorf("failed to refresh OAuth credential: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// OAuth provider methods
+
+func (s *SqliteStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
+	if err := provider.Validate(); err != nil {
+		return utils.Errorf("invalid provider: %w", err)
+	}
+
+	scopesJSON, err := json.Marshal(provider.Scopes)
+	if err != nil {
+		return utils.Errorf("failed to marshal scopes: %w", err)
+	}
+
+	now := time.Now().Unix()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO oauth_providers 
+		(id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		provider.ID, provider.ClientID, provider.ClientSecret, provider.AuthURL, provider.TokenURL,
+		string(scopesJSON), now, now)
+
+	if err != nil {
+		return utils.Errorf("failed to save OAuth provider: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at
+		FROM oauth_providers 
+		WHERE id = ?`, id)
+
+	var provider model.OAuthProvider
+	var scopesJSON string
+	var createdAt, updatedAt int64
+
+	err := row.Scan(&provider.ID, &provider.ClientID, &provider.ClientSecret,
+		&provider.AuthURL, &provider.TokenURL, &scopesJSON, &createdAt, &updatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, utils.Errorf("failed to get OAuth provider: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(scopesJSON), &provider.Scopes); err != nil {
+		return nil, utils.Errorf("failed to unmarshal scopes: %w", err)
+	}
+
+	return &provider, nil
+}
+
+func (s *SqliteStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at
+		FROM oauth_providers 
+		ORDER BY created_at DESC`)
+
+	if err != nil {
+		return nil, utils.Errorf("failed to list OAuth providers: %w", err)
+	}
+	defer rows.Close()
+
+	var providers []*model.OAuthProvider
+	for rows.Next() {
+		var provider model.OAuthProvider
+		var scopesJSON string
+		var createdAt, updatedAt int64
+
+		err := rows.Scan(&provider.ID, &provider.ClientID, &provider.ClientSecret,
+			&provider.AuthURL, &provider.TokenURL, &scopesJSON, &createdAt, &updatedAt)
+
+		if err != nil {
+			continue
+		}
+
+		if err := json.Unmarshal([]byte(scopesJSON), &provider.Scopes); err != nil {
+			continue
+		}
+
+		providers = append(providers, &provider)
+	}
+
+	return providers, nil
+}
+
+func (s *SqliteStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM oauth_providers WHERE id = ?`, id)
+	if err != nil {
+		return utils.Errorf("failed to delete OAuth provider: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()

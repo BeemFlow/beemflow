@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/utils"
 )
@@ -131,17 +130,25 @@ func init() {
 
 // OAuth operation handlers
 func handleOAuthStart(ctx context.Context, args any) (any, error) {
-	req := args.(OAuthAuthorizationArgs)
-
-	// Get configuration
-	cfg := GetConfigFromContext(ctx)
-	if cfg == nil || cfg.OAuth == nil || cfg.OAuth.Providers == nil {
-		return nil, utils.Errorf("OAuth not configured")
+	var req OAuthAuthorizationArgs
+	switch v := args.(type) {
+	case OAuthAuthorizationArgs:
+		req = v
+	case *OAuthAuthorizationArgs:
+		req = *v
+	default:
+		return nil, utils.Errorf("invalid argument type for OAuth start: %T", args)
 	}
 
-	provider, exists := cfg.OAuth.Providers[req.Provider]
-	if !exists {
-		return nil, utils.Errorf("OAuth provider %q not configured", req.Provider)
+	// Get provider from database
+	storage := GetStoreFromContext(ctx)
+	if storage == nil {
+		return nil, utils.Errorf("storage not available")
+	}
+
+	provider, err := storage.GetOAuthProvider(ctx, req.Provider)
+	if err != nil {
+		return nil, utils.Errorf("OAuth provider %q not found", req.Provider)
 	}
 
 	// Generate state parameter for security
@@ -158,7 +165,7 @@ func handleOAuthStart(ctx context.Context, args any) (any, error) {
 	oauthStates[state] = req
 
 	// Build authorization URL
-	redirectURI := buildRedirectURI(cfg, req.Provider, provider.RedirectPath)
+	redirectURI := buildRedirectURI(ctx, req.Provider)
 	authURL := buildAuthURL(provider, redirectURI, state)
 
 	return OAuthAuthorizationResponse{
@@ -168,7 +175,15 @@ func handleOAuthStart(ctx context.Context, args any) (any, error) {
 }
 
 func handleOAuthCallback(ctx context.Context, args any) (any, error) {
-	req := args.(OAuthCallbackArgs)
+	var req OAuthCallbackArgs
+	switch v := args.(type) {
+	case OAuthCallbackArgs:
+		req = v
+	case *OAuthCallbackArgs:
+		req = *v
+	default:
+		return nil, utils.Errorf("invalid argument type for OAuth callback: %T", args)
+	}
 
 	// Validate state
 	originalReq, exists := oauthStates[req.State]
@@ -181,28 +196,24 @@ func handleOAuthCallback(ctx context.Context, args any) (any, error) {
 		return nil, utils.Errorf("provider mismatch in OAuth callback")
 	}
 
-	// Get configuration
-	cfg := GetConfigFromContext(ctx)
-	if cfg == nil || cfg.OAuth == nil || cfg.OAuth.Providers == nil {
-		return nil, utils.Errorf("OAuth not configured")
+	// Get provider from database
+	storage := GetStoreFromContext(ctx)
+	if storage == nil {
+		return nil, utils.Errorf("storage not available")
 	}
 
-	provider, exists := cfg.OAuth.Providers[req.Provider]
-	if !exists {
-		return nil, utils.Errorf("OAuth provider %q not configured", req.Provider)
+	provider, err := storage.GetOAuthProvider(ctx, req.Provider)
+	if err != nil {
+		return nil, utils.Errorf("OAuth provider %q not found", req.Provider)
 	}
 
 	// Exchange code for tokens
-	tokens, err := exchangeCodeForTokens(provider, req.Code, buildRedirectURI(cfg, req.Provider, provider.RedirectPath))
+	tokens, err := exchangeCodeForTokens(provider, req.Code, buildRedirectURI(ctx, req.Provider))
 	if err != nil {
 		return nil, utils.Errorf("failed to exchange authorization code: %w", err)
 	}
 
 	// Store OAuth credential
-	storage := GetStoreFromContext(ctx)
-	if storage == nil {
-		return nil, utils.Errorf("storage not available")
-	}
 
 	credential := &model.OAuthCredential{
 		ID:           generateCredentialID(req.Provider, originalReq.Integration),
@@ -230,7 +241,15 @@ func handleOAuthCallback(ctx context.Context, args any) (any, error) {
 }
 
 func handleOAuthList(ctx context.Context, args any) (any, error) {
-	req := args.(OAuthListArgs)
+	var req OAuthListArgs
+	switch v := args.(type) {
+	case OAuthListArgs:
+		req = v
+	case *OAuthListArgs:
+		req = *v
+	default:
+		return nil, utils.Errorf("invalid argument type for OAuth list: %T", args)
+	}
 
 	storage := GetStoreFromContext(ctx)
 	if storage == nil {
@@ -267,7 +286,15 @@ func handleOAuthList(ctx context.Context, args any) (any, error) {
 }
 
 func handleOAuthRevoke(ctx context.Context, args any) (any, error) {
-	req := args.(OAuthRevokeArgs)
+	var req OAuthRevokeArgs
+	switch v := args.(type) {
+	case OAuthRevokeArgs:
+		req = v
+	case *OAuthRevokeArgs:
+		req = *v
+	default:
+		return nil, utils.Errorf("invalid argument type for OAuth revoke: %T", args)
+	}
 
 	storage := GetStoreFromContext(ctx)
 	if storage == nil {
@@ -290,7 +317,6 @@ func handleOAuthRevoke(ctx context.Context, args any) (any, error) {
 // Custom HTTP handler for OAuth callback to handle query parameters
 func handleOAuthCallbackHTTP(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
-	provider := r.URL.Query().Get("provider")
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	errorParam := r.URL.Query().Get("error")
@@ -308,15 +334,38 @@ func handleOAuthCallbackHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get original OAuth request from stored state
+	originalReq, exists := oauthStates[state]
+	if !exists {
+		utils.Error("Invalid or expired OAuth state: %s", state)
+		http.Error(w, "Invalid or expired OAuth state", http.StatusBadRequest)
+		return
+	}
+
 	// Create callback args
 	args := OAuthCallbackArgs{
-		Provider: provider,
+		Provider: originalReq.Provider,
 		Code:     code,
 		State:    state,
 	}
 
+	// Inject dependencies into context
+	ctx := r.Context()
+
+	// Get config and inject into context
+	if cfg, err := GetConfig(); err == nil && cfg != nil {
+		ctx = WithConfig(ctx, cfg)
+	}
+
+	// Get storage and inject into context
+	if cfg, err := GetConfig(); err == nil && cfg != nil {
+		if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
+			ctx = WithStore(ctx, store)
+		}
+	}
+
 	// Execute callback handler
-	result, err := handleOAuthCallback(r.Context(), args)
+	result, err := handleOAuthCallback(ctx, args)
 	if err != nil {
 		utils.Error("OAuth callback failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -332,26 +381,21 @@ func handleOAuthCallbackHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Helper functions
 
-func buildRedirectURI(cfg *config.Config, provider, customPath string) string {
-	baseURL := cfg.OAuth.BaseURL
-	if baseURL == "" {
-		// Default to localhost with HTTP config port
-		port := 8080
-		if cfg.HTTP != nil && cfg.HTTP.Port != 0 {
-			port = cfg.HTTP.Port
-		}
-		baseURL = fmt.Sprintf("http://localhost:%d", port)
+func buildRedirectURI(ctx context.Context, _ string) string {
+	// Get config for HTTP port
+	cfg := GetConfigFromContext(ctx)
+	port := 8080
+	if cfg != nil && cfg.HTTP != nil && cfg.HTTP.Port != 0 {
+		port = cfg.HTTP.Port
 	}
 
-	redirectPath := customPath
-	if redirectPath == "" {
-		redirectPath = fmt.Sprintf("/oauth/callback?provider=%s", provider)
-	}
+	baseURL := fmt.Sprintf("http://localhost:%d", port)
+	redirectPath := "/oauth/callback"
 
 	return baseURL + redirectPath
 }
 
-func buildAuthURL(provider config.OAuthProviderConfig, redirectURI, state string) string {
+func buildAuthURL(provider *model.OAuthProvider, redirectURI, state string) string {
 	params := url.Values{}
 	params.Set("client_id", provider.ClientID)
 	params.Set("redirect_uri", redirectURI)
@@ -378,7 +422,7 @@ type oauthTokens struct {
 	ExpiresAt    *time.Time
 }
 
-func exchangeCodeForTokens(provider config.OAuthProviderConfig, code, redirectURI string) (*oauthTokens, error) {
+func exchangeCodeForTokens(provider *model.OAuthProvider, code, redirectURI string) (*oauthTokens, error) {
 	// Prepare token exchange request
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")

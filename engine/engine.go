@@ -1045,8 +1045,16 @@ func (e *Engine) handleToolExecution(ctx context.Context, toolName, stepID strin
 	// Log payload for debugging using our helper
 	logToolPayload(ctx, toolName, inputs)
 
+	// Inject storage into context for HTTP adapter OAuth token access
+	// This ensures HTTP adapters can access OAuth credentials during execution
+	// Use same context key as HTTP adapter to ensure compatibility
+	const storageContextKey = "beemflow.storage"
+	ctxWithStorage := context.WithValue(ctx, storageContextKey, e.Storage)
+
+	// Storage context is now available for OAuth token retrieval during tool execution
+
 	// Execute the tool
-	outputs, err := adapterInst.Execute(ctx, inputs)
+	outputs, err := adapterInst.Execute(ctxWithStorage, inputs)
 	if err != nil {
 		stepCtx.SetOutput(stepID, outputs)
 		return utils.Errorf(constants.ErrStepFailed, stepID, err)

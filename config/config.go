@@ -84,7 +84,6 @@ type Config struct {
 	Blob       *BlobConfig                `json:"blob,omitempty"`
 	Event      *EventConfig               `json:"event,omitempty"`
 	Secrets    *SecretsConfig             `json:"secrets,omitempty"`
-	OAuth      *OAuthConfig               `json:"oauth,omitempty"`
 	Registries []RegistryConfig           `json:"registries,omitempty"`
 	HTTP       *HTTPConfig                `json:"http,omitempty"`
 	Log        *LogConfig                 `json:"log,omitempty"`
@@ -130,22 +129,6 @@ type HTTPConfig struct {
 
 type LogConfig struct {
 	Level string `json:"level,omitempty"`
-}
-
-// OAuthConfig configures OAuth 2.0 providers for authentication
-type OAuthConfig struct {
-	Providers map[string]OAuthProviderConfig `json:"providers,omitempty"`
-	BaseURL   string                         `json:"baseUrl,omitempty"` // Base URL for OAuth callbacks (e.g., http://localhost:8080)
-}
-
-// OAuthProviderConfig defines OAuth 2.0 settings for a specific provider
-type OAuthProviderConfig struct {
-	ClientID     string   `json:"clientId"`
-	ClientSecret string   `json:"clientSecret"`
-	AuthURL      string   `json:"authUrl"`
-	TokenURL     string   `json:"tokenUrl"`
-	Scopes       []string `json:"scopes,omitempty"`
-	RedirectPath string   `json:"redirectPath,omitempty"` // Defaults to /oauth/callback/{provider}
 }
 
 // (No install_cmd, required_env, or snake_case).

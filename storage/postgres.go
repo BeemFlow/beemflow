@@ -364,6 +364,24 @@ func (s *PostgresStorage) RefreshOAuthCredential(ctx context.Context, id string,
 	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
 }
 
+// OAuth provider methods (stubs - not implemented for PostgreSQL yet)
+
+func (s *PostgresStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
+	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
+	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
+	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
+	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
 // Close closes the underlying PostgreSQL database connection.
 func (s *PostgresStorage) Close() error {
 	return s.db.Close()

@@ -28,4 +28,10 @@ type Storage interface {
 	ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error)
 	DeleteOAuthCredential(ctx context.Context, id string) error
 	RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error
+
+	// OAuth provider methods
+	SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error
+	GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error)
+	ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error)
+	DeleteOAuthProvider(ctx context.Context, id string) error
 }

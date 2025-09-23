@@ -13,6 +13,8 @@ import (
 	"github.com/beemflow/beemflow/storage"
 )
 
+// Use the same context key as production code to avoid compatibility issues
+
 func TestGoogleSheetsOAuth_EndToEnd_Integration(t *testing.T) {
 	// Create mock Google Sheets API server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
