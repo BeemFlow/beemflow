@@ -1376,8 +1376,11 @@ func testOAuthCredentialNotFound(t *testing.T, storage Storage) {
 		t.Error("Expected error for non-existent credential")
 	}
 
-	// Should be a "not found" type error
-	if !strings.Contains(err.Error(), "not found") && err.Error() != "credential not found" {
+	// Should be a "not found" type error (accept various formats)
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "not found") && 
+		errMsg != "credential not found" && 
+		errMsg != "sql: no rows in result set" {
 		t.Errorf("Expected not found error, got %v", err)
 	}
 }

@@ -17,9 +17,6 @@ import (
 	"github.com/beemflow/beemflow/storage"
 )
 
-// Use the same context key as production code to avoid compatibility issues
-var storageContextKey = struct{ key string }{key: "storage"}
-
 // TestHTTPAdapter_PathParameterSubstitution tests path parameter replacement in manifest URLs
 func TestHTTPAdapter_PathParameterSubstitution(t *testing.T) {
 	// Create a test server that verifies the path
