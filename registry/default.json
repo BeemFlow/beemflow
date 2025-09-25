@@ -440,5 +440,31 @@
       "Authorization": "$oauth:google:sheets_default",
       "Content-Type": "application/json"
     }
+  },
+  {
+    "type": "oauth_provider",
+    "name": "google",
+    "display_name": "Google",
+    "authorization_url": "https://accounts.google.com/o/oauth2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive"
+    ],
+    "client_id": "${GOOGLE_CLIENT_ID}",
+    "client_secret": "${GOOGLE_CLIENT_SECRET}"
+  },
+  {
+    "type": "oauth_provider",
+    "name": "github",
+    "display_name": "GitHub",
+    "authorization_url": "https://github.com/login/oauth/authorize",
+    "token_url": "https://github.com/login/oauth/access_token",
+    "scopes": [
+      "repo",
+      "user"
+    ],
+    "client_id": "${GITHUB_CLIENT_ID}",
+    "client_secret": "${GITHUB_CLIENT_SECRET}"
   }
 ]

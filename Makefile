@@ -62,6 +62,7 @@ e2e:
 	@for flow in $(E2E_FLOWS); do go run $(CMD_PATH) run $$flow; done
 
 integration:
+	go test -tags=integration ./...
 	@for flow in $(INTEGRATION_FLOWS); do go run $(CMD_PATH) run $$flow; done
 
 # Full test suite

@@ -51,3 +51,36 @@ func (d *DefaultRegistry) GetServer(ctx context.Context, name string) (*Registry
 
 	return nil, nil // Not found
 }
+
+// ListOAuthProviders returns OAuth providers from the default registry
+func (d *DefaultRegistry) ListOAuthProviders(ctx context.Context, opts ListOptions) ([]RegistryEntry, error) {
+	entries, err := d.ListServers(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var oauthProviders []RegistryEntry
+	for _, entry := range entries {
+		if entry.Type == "oauth_provider" {
+			oauthProviders = append(oauthProviders, entry)
+		}
+	}
+
+	return oauthProviders, nil
+}
+
+// GetOAuthProvider finds a specific OAuth provider by name
+func (d *DefaultRegistry) GetOAuthProvider(ctx context.Context, name string) (*RegistryEntry, error) {
+	providers, err := d.ListOAuthProviders(ctx, ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, provider := range providers {
+		if provider.Name == name {
+			return &provider, nil
+		}
+	}
+
+	return nil, nil // Not found
+}

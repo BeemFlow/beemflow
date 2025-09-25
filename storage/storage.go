@@ -34,4 +34,19 @@ type Storage interface {
 	GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error)
 	ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error)
 	DeleteOAuthProvider(ctx context.Context, id string) error
+
+	// OAuth client methods (for dynamic client registration)
+	SaveOAuthClient(ctx context.Context, client *model.OAuthClient) error
+	GetOAuthClient(ctx context.Context, id string) (*model.OAuthClient, error)
+	ListOAuthClients(ctx context.Context) ([]*model.OAuthClient, error)
+	DeleteOAuthClient(ctx context.Context, id string) error
+
+	// OAuth token methods (for token storage)
+	SaveOAuthToken(ctx context.Context, token *model.OAuthToken) error
+	GetOAuthTokenByCode(ctx context.Context, code string) (*model.OAuthToken, error)
+	GetOAuthTokenByAccess(ctx context.Context, access string) (*model.OAuthToken, error)
+	GetOAuthTokenByRefresh(ctx context.Context, refresh string) (*model.OAuthToken, error)
+	DeleteOAuthTokenByCode(ctx context.Context, code string) error
+	DeleteOAuthTokenByAccess(ctx context.Context, access string) error
+	DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error
 }

@@ -90,6 +90,7 @@ type Config struct {
 	FlowsDir   string                     `json:"flowsDir,omitempty"`
 	MCPServers map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 	Tracing    *TracingConfig             `json:"tracing,omitempty"`
+	OAuth      *OAuthConfig               `json:"oauth,omitempty"`
 }
 
 type StorageConfig struct {
@@ -141,6 +142,11 @@ type MCPServerConfig struct {
 	Endpoint  string            `json:"endpoint,omitempty"`
 }
 
+// OAuthConfig controls OAuth 2.1 server behavior
+type OAuthConfig struct {
+	Enabled bool `json:"enabled,omitempty"` // Whether OAuth is enabled (default: true in production, false in tests)
+}
+
 // SecretsProvider resolves secrets for flows (env, AWS-SM, Vault, etc.)
 type SecretsProvider interface {
 	GetSecret(key string) (string, error)
@@ -182,6 +188,14 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, err
 	}
+
+	// Set default OAuth configuration
+	if cfg.OAuth == nil {
+		cfg.OAuth = &OAuthConfig{
+			Enabled: true, // OAuth enabled by default in production
+		}
+	}
+
 	return &cfg, nil
 }
 

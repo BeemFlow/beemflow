@@ -11,10 +11,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
+	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
 	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
@@ -363,6 +362,22 @@ func (a *HTTPAdapter) extractHeaders(inputs map[string]any) map[string]string {
 
 // expandValue expands both OAuth tokens and environment variables in a value string
 func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
+	// Get storage from context for OAuth client
+	store, ok := ctx.Value(storageContextKey).(storage.Storage)
+	if !ok {
+		utils.Debug("Storage not available in context for OAuth expansion")
+		// Fall back to environment variable expansion only
+		return envVarPattern.ReplaceAllStringFunc(value, func(match string) string {
+			varName := match[5:] // Remove "$env:" prefix
+			if envVal := os.Getenv(varName); envVal != "" {
+				return envVal
+			}
+			return match
+		})
+	}
+
+	oauthClient := auth.NewOAuthClient(store)
+
 	// First handle OAuth patterns
 	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
@@ -371,7 +386,7 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 		}
 		provider, integration := parts[0], parts[1]
 
-		if token, err := a.getOAuthToken(ctx, provider, integration); err == nil {
+		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
 			return "Bearer " + token
 		}
 		utils.Debug("OAuth token not found for %s:%s, keeping original", provider, integration)
@@ -388,42 +403,6 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 	})
 }
 
-// getOAuthToken retrieves a valid OAuth token for the given provider and integration
-func (a *HTTPAdapter) getOAuthToken(ctx context.Context, provider, integration string) (string, error) {
-	// Retrieve OAuth token from storage using context-injected storage
-
-	// Get storage from context
-	storage, ok := ctx.Value(storageContextKey).(storage.Storage)
-	if !ok {
-		return "", utils.Errorf("storage not available in context")
-	}
-
-	cred, err := storage.GetOAuthCredential(ctx, provider, integration)
-	if err != nil {
-		return "", utils.Errorf("failed to get OAuth credential for %s:%s: %w", provider, integration, err)
-	}
-
-	// Check if token needs refresh
-	if cred.ExpiresAt != nil && time.Now().After(*cred.ExpiresAt) {
-		if err := a.refreshOAuthToken(ctx, storage, cred); err != nil {
-			return "", utils.Errorf("failed to refresh OAuth token: %w", err)
-		}
-		// Re-get the credential after refresh
-		cred, err = storage.GetOAuthCredential(ctx, provider, integration)
-		if err != nil {
-			return "", utils.Errorf("failed to get refreshed OAuth credential: %w", err)
-		}
-	}
-
-	return cred.AccessToken, nil
-}
-
-// refreshOAuthToken refreshes an expired OAuth token (placeholder implementation)
-func (a *HTTPAdapter) refreshOAuthToken(ctx context.Context, storage storage.Storage, cred *model.OAuthCredential) error {
-	// TODO: Implement OAuth token refresh flow
-	// For now, return an error indicating refresh is not implemented
-	return utils.Errorf("OAuth token refresh not implemented yet")
-}
 
 // expandEnvValue expands environment variables in a value string using regex for safety
 func expandEnvValue(value string) string {

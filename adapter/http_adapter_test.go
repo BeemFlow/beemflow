@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
@@ -1190,10 +1191,10 @@ func TestHTTPAdapter_GetOAuthToken(t *testing.T) {
 		t.Fatalf("Failed to save credential: %v", err)
 	}
 
-	adapter := &HTTPAdapter{AdapterID: "test"}
-	token, err := adapter.getOAuthToken(ctx, "google", "sheets_test")
+	oauthClient := auth.NewOAuthClient(storage)
+	token, err := oauthClient.GetToken(ctx, "google", "sheets_test")
 	if err != nil {
-		t.Fatalf("getOAuthToken failed: %v", err)
+		t.Fatalf("GetToken failed: %v", err)
 	}
 
 	if token != "valid_token" {
@@ -1206,8 +1207,8 @@ func TestHTTPAdapter_GetOAuthToken_NotFound(t *testing.T) {
 	storage := storage.NewMemoryStorage()
 	ctx := context.WithValue(context.Background(), storageContextKey, storage)
 
-	adapter := &HTTPAdapter{AdapterID: "test"}
-	_, err := adapter.getOAuthToken(ctx, "nonexistent", "integration")
+	oauthClient := auth.NewOAuthClient(storage)
+	_, err := oauthClient.GetToken(ctx, "nonexistent", "integration")
 	if err == nil {
 		t.Error("Expected error for non-existent OAuth credential")
 	}
@@ -1219,17 +1220,17 @@ func TestHTTPAdapter_GetOAuthToken_NotFound(t *testing.T) {
 
 // TestHTTPAdapter_GetOAuthToken_NoStorage tests OAuth token retrieval without storage
 func TestHTTPAdapter_GetOAuthToken_NoStorage(t *testing.T) {
-	// Context without storage
+	storage := storage.NewMemoryStorage()
 	ctx := context.Background()
 
-	adapter := &HTTPAdapter{AdapterID: "test"}
-	_, err := adapter.getOAuthToken(ctx, "google", "sheets_test")
+	oauthClient := auth.NewOAuthClient(storage)
+	_, err := oauthClient.GetToken(ctx, "google", "sheets_test")
 	if err == nil {
-		t.Error("Expected error when storage not available in context")
+		t.Error("Expected error when credential doesn't exist")
 	}
 
-	if !strings.Contains(err.Error(), "storage not available") {
-		t.Errorf("Expected storage error, got %v", err)
+	if !strings.Contains(err.Error(), "failed to get OAuth credential") {
+		t.Errorf("Expected credential error, got %v", err)
 	}
 }
 
@@ -1255,12 +1256,15 @@ func TestHTTPAdapter_GetOAuthToken_ExpiredToken(t *testing.T) {
 		t.Fatalf("Failed to save expired credential: %v", err)
 	}
 
-	adapter := &HTTPAdapter{AdapterID: "test"}
+	oauthClient := auth.NewOAuthClient(storage)
 
-	// This should fail since we don't have token refresh implemented yet
-	_, err = adapter.getOAuthToken(ctx, "google", "sheets_expired")
-	if err == nil {
-		t.Error("Expected error for expired token without refresh implementation")
+	// This should succeed but return the expired token (resilient behavior)
+	token, err := oauthClient.GetToken(ctx, "google", "sheets_expired")
+	if err != nil {
+		t.Errorf("Expected success with expired token, got error: %v", err)
+	}
+	if token != "expired_token" {
+		t.Errorf("Expected expired token 'expired_token', got %s", token)
 	}
 }
 
@@ -1658,15 +1662,15 @@ func TestGoogleSheetsOAuth_FallbackToEnvironment(t *testing.T) {
 
 // TestGoogleSheetsOAuth_ExpiredToken tests expired OAuth token handling
 func TestGoogleSheetsOAuth_ExpiredToken(t *testing.T) {
-	// Create mock server that expects the unresolved OAuth syntax (indicating refresh failed)
+	// Create mock server that expects expired token (resilient OAuth behavior)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		// When token refresh fails, the original $oauth: syntax should be kept
-		expectedAuth := "$oauth:google:sheets_default"
+		// With resilient OAuth, expired tokens are returned rather than failing refresh
+		expectedAuth := "Bearer expired_token"
 		if authHeader != expectedAuth {
-			t.Errorf("Expected unresolved OAuth header %q (indicating refresh failed), got %q", expectedAuth, authHeader)
+			t.Errorf("Expected expired OAuth token header %q, got %q", expectedAuth, authHeader)
 		}
-		// Return 401 unauthorized for invalid OAuth syntax
+		// Return 401 unauthorized for expired token
 		w.WriteHeader(401)
 		w.Write([]byte(`{"error": "invalid_grant", "error_description": "Invalid OAuth token"}`))
 	}))

@@ -28,6 +28,9 @@ func createTestConfig(t *testing.T) *config.Config {
 			Driver: "sqlite",
 			DSN:    ":memory:",
 		},
+		OAuth: &config.OAuthConfig{
+			Enabled: false, // Disable OAuth for unit tests
+		},
 	}
 }
 

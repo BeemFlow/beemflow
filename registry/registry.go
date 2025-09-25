@@ -28,6 +28,13 @@ type RegistryEntry struct {
 	Env       map[string]string `json:"env,omitempty"`
 	Port      int               `json:"port,omitempty"`
 	Transport string            `json:"transport,omitempty"`
+	// OAuth provider fields
+	DisplayName      string   `json:"display_name,omitempty"`
+	AuthorizationURL string   `json:"authorization_url,omitempty"`
+	TokenURL         string   `json:"token_url,omitempty"`
+	Scopes           []string `json:"scopes,omitempty"`
+	ClientID         string   `json:"client_id,omitempty"`
+	ClientSecret     string   `json:"client_secret,omitempty"`
 }
 
 // ListOptions allows filtering and pagination for registry queries.
@@ -41,6 +48,12 @@ type ListOptions struct {
 type MCPRegistry interface {
 	ListServers(ctx context.Context, opts ListOptions) ([]RegistryEntry, error)
 	GetServer(ctx context.Context, name string) (*RegistryEntry, error)
+}
+
+// OAuthRegistry is the interface for OAuth provider management
+type OAuthRegistry interface {
+	ListOAuthProviders(ctx context.Context, opts ListOptions) ([]RegistryEntry, error)
+	GetOAuthProvider(ctx context.Context, name string) (*RegistryEntry, error)
 }
 
 // RegistryStats represents statistics for a single registry

@@ -70,17 +70,50 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		}
 	})
 
-	// Generate and register all operation handlers
-	api.GenerateHTTPHandlers(mux)
-
-	// Register metrics endpoint
-	mux.Handle("/metrics", promhttp.Handler())
-
 	// Initialize all dependencies (this could be moved to a separate DI package)
 	cleanup, err := api.InitializeDependencies(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Get storage for OAuth setup
+	store, err := api.GetStoreFromConfig(cfg)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	// Setup OAuth endpoints
+	_, oauthServer := setupOAuthServer(cfg, store)
+	if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	// Generate and register all operation handlers
+	api.GenerateHTTPHandlers(mux)
+
+	// Setup MCP route protection with authentication
+	// OAuth is enabled by default unless explicitly disabled in config
+	oauthEnabled := true
+	if cfg.OAuth != nil && !cfg.OAuth.Enabled {
+		oauthEnabled = false
+	}
+
+	if oauthEnabled {
+		setupMCPRouteProtection(mux, store, oauthServer)
+	}
+
+	// Setup web-based OAuth authorization flows
+	if oauthEnabled {
+		baseURL := getOAuthIssuerURL(cfg)
+		// Use default registry for OAuth providers
+		registry := api.GetDefaultRegistry()
+		RegisterWebOAuthRoutes(mux, store, registry, baseURL)
+	}
+
+	// Register metrics endpoint
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// Create wrapped handler with middleware
 	wrappedMux := otelhttp.NewHandler(

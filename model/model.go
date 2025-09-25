@@ -105,12 +105,46 @@ type OAuthCredential struct {
 }
 
 type OAuthProvider struct {
-	ID           string   `json:"id"`
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret"` // encrypted at storage layer
-	AuthURL      string   `json:"auth_url"`
-	TokenURL     string   `json:"token_url"`
-	Scopes       []string `json:"scopes"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	ClientID     string    `json:"client_id"`
+	ClientSecret string    `json:"client_secret"` // encrypted at storage layer
+	AuthURL      string    `json:"auth_url"`
+	TokenURL     string    `json:"token_url"`
+	Scopes       []string  `json:"scopes"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// OAuthClient represents a registered OAuth client
+type OAuthClient struct {
+	ID            string    `json:"id"`
+	Secret        string    `json:"secret"` // encrypted at storage layer
+	Name          string    `json:"name"`
+	RedirectURIs  []string  `json:"redirect_uris"`
+	GrantTypes    []string  `json:"grant_types"`
+	ResponseTypes []string  `json:"response_types"`
+	Scope         string    `json:"scope"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// OAuthToken represents an OAuth token
+type OAuthToken struct {
+	ID               string        `json:"id"`
+	ClientID         string        `json:"client_id"`
+	UserID           string        `json:"user_id"`
+	RedirectURI      string        `json:"redirect_uri"`
+	Scope            string        `json:"scope"`
+	Code             string        `json:"code"`
+	CodeCreateAt     time.Time     `json:"code_create_at"`
+	CodeExpiresIn    time.Duration `json:"code_expires_in"`
+	Access           string        `json:"access"`
+	AccessCreateAt   time.Time     `json:"access_create_at"`
+	AccessExpiresIn  time.Duration `json:"access_expires_in"`
+	Refresh          string        `json:"refresh"`
+	RefreshCreateAt  time.Time     `json:"refresh_create_at"`
+	RefreshExpiresIn time.Duration `json:"refresh_expires_in"`
 }
 
 // Validate checks if the OAuth credential has all required fields

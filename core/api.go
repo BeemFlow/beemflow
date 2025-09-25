@@ -21,6 +21,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// GetDefaultRegistry returns the default registry with OAuth providers
+func GetDefaultRegistry() registry.OAuthRegistry {
+	return registry.NewDefaultRegistry()
+}
+
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
 func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
