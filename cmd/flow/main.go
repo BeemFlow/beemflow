@@ -67,7 +67,7 @@ func NewRootCmd() *cobra.Command {
 		newServeCmd(),
 		newRunCmd(),
 		newOAuthCmd(),
-		// MCP commands now handled via operations framework
+		// Other commands handled via operations framework
 	)
 
 	// Add auto-generated commands from the unified system

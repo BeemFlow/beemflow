@@ -103,12 +103,6 @@ type SearchArgs struct {
 	Query string `json:"query" flag:"query" description:"Search query"`
 }
 
-// MCPServeArgs represents arguments for MCP serve
-type MCPServeArgs struct {
-	Stdio bool   `json:"stdio" flag:"stdio" description:"Serve over stdin/stdout instead of HTTP"`
-	Addr  string `json:"addr" flag:"addr" description:"Listen address for HTTP mode"`
-}
-
 // Global operation registry
 var operationRegistry = make(map[string]*OperationDefinition)
 
@@ -990,18 +984,11 @@ func init() {
 		CLIShort:    "Start MCP server for BeemFlow tools",
 		SkipMCP:     true, // Can't expose serve via MCP
 		ArgsType:    reflect.TypeOf(MCPServeArgs{}),
-		CLIHandler: func(cmd *cobra.Command, args []string) error {
-			stdio, _ := cmd.Flags().GetBool("stdio")
-			addr, _ := cmd.Flags().GetString("addr")
-
-			// Default to stdio mode if no addr is provided and stdio not explicitly set
-			if !stdio && addr == "" {
-				stdio = true
-			}
-
-			debug, _ := cmd.Flags().GetBool("debug")
+		Handler: func(ctx context.Context, args any) (any, error) {
+			mcpArgs := args.(*MCPServeArgs)
+			// For programmatic calls, don't suppress output (debug=false)
 			tools := GenerateMCPTools()
-			return mcp.Serve(debug, stdio, addr, tools)
+			return nil, mcp.Serve(false, mcpArgs.Stdio, mcpArgs.Addr, tools)
 		},
 	})
 

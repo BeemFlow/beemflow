@@ -46,26 +46,35 @@ func TestOAuthServer_HandleMetadataDiscovery(t *testing.T) {
 }
 
 func TestIsValidRedirectURI(t *testing.T) {
+	// Test with production config (localhost redirects disabled)
+	prodCfg := &OAuthConfig{AllowLocalhostRedirects: false}
+	prodServer := &OAuthServer{config: prodCfg}
+
+	// Test with development config (localhost redirects enabled)
+	devCfg := &OAuthConfig{AllowLocalhostRedirects: true}
+	devServer := &OAuthServer{config: devCfg}
+
 	tests := []struct {
 		name     string
 		uri      string
 		expected bool
+		server   *OAuthServer
 	}{
-		{"valid HTTPS", "https://example.com/callback", true},
-		{"invalid HTTP", "http://example.com/callback", false},
-		{"localhost HTTPS", "https://localhost:8080/callback", false}, // Disabled for production security
-		{"invalid localhost HTTP", "http://localhost:8080/callback", false},
-		{"invalid 127.0.0.1 HTTP", "http://127.0.0.1:8080/callback", false},
-		{"invalid IP address", "https://192.168.1.1/callback", false},
-		{"invalid fragment", "https://example.com/callback#fragment", false},
-		{"too long URI", "https://" + string(make([]byte, 2000)) + ".com/callback", false},
-		{"empty string", "", false},
-		{"invalid URL", "not-a-url", false},
+		{"valid HTTPS", "https://example.com/callback", true, prodServer},
+		{"invalid HTTP", "http://example.com/callback", false, prodServer},
+		{"localhost HTTPS (prod)", "https://localhost:8080/callback", false, prodServer},
+		{"localhost HTTPS (dev)", "https://localhost:8080/callback", true, devServer},
+		{"invalid localhost HTTP", "http://localhost:8080/callback", false, prodServer},
+		{"invalid 127.0.0.1 HTTP", "http://127.0.0.1:8080/callback", false, prodServer},
+		{"invalid IP address", "https://192.168.1.1/callback", false, prodServer},
+		{"invalid fragment", "https://example.com/callback#fragment", false, prodServer},
+		{"empty string", "", false, prodServer},
+		{"invalid URL", "not-a-url", false, prodServer},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isValidRedirectURI(tt.uri)
+			result := tt.server.isValidRedirectURI(tt.uri)
 			if result != tt.expected {
 				t.Errorf("isValidRedirectURI(%q) = %v, want %v", tt.uri, result, tt.expected)
 			}

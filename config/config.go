@@ -91,6 +91,7 @@ type Config struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 	Tracing    *TracingConfig             `json:"tracing,omitempty"`
 	OAuth      *OAuthConfig               `json:"oauth,omitempty"`
+	MCP        *MCPConfig                 `json:"mcp,omitempty"`
 }
 
 type StorageConfig struct {
@@ -147,6 +148,11 @@ type OAuthConfig struct {
 	Enabled bool `json:"enabled,omitempty"` // Whether OAuth is enabled (default: true in production, false in tests)
 }
 
+// MCPConfig controls MCP server behavior
+type MCPConfig struct {
+	RequireAuth bool `json:"requireAuth,omitempty"` // Whether MCP requires OAuth authentication (default: true)
+}
+
 // SecretsProvider resolves secrets for flows (env, AWS-SM, Vault, etc.)
 type SecretsProvider interface {
 	GetSecret(key string) (string, error)
@@ -189,12 +195,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Set default OAuth configuration
-	if cfg.OAuth == nil {
-		cfg.OAuth = &OAuthConfig{
-			Enabled: true, // OAuth enabled by default in production
-		}
-	}
+	// OAuth for MCP are disabled by default - only enabled when explicitly configured
+	// This allows people to use reverse proxies or local development without auth
 
 	return &cfg, nil
 }

@@ -55,3 +55,9 @@ type MCPConvertOpenAPIExtendedArgs struct {
 type MCPFlowFileArgs struct {
 	Name string `json:"name" jsonschema:"required,description=Name of the flow file"`
 }
+
+// MCPServeArgs represents arguments for MCP serve
+type MCPServeArgs struct {
+	Stdio bool   `json:"stdio" flag:"stdio" description:"Run in stdio mode instead of HTTP"`
+	Addr  string `json:"addr" flag:"addr" description:"HTTP server address"`
+}

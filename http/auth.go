@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/config"
+	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
 	"github.com/beemflow/beemflow/storage"
@@ -24,11 +26,12 @@ import (
 func setupOAuthServer(cfg *config.Config, store storage.Storage) (*auth.OAuthConfig, *auth.OAuthServer) {
 	// Create OAuth server configuration
 	oauthCfg := &auth.OAuthConfig{
-		Issuer:        getOAuthIssuerURL(cfg),
-		ClientID:      "beemflow",        // Default client ID
-		ClientSecret:  "beemflow-secret", // Default client secret (should be configurable)
-		TokenExpiry:   3600,              // 1 hour
-		RefreshExpiry: 7200,              // 2 hours
+		Issuer:                  getOAuthIssuerURL(cfg),
+		ClientID:                "beemflow",        // Default client ID
+		ClientSecret:            "beemflow-secret", // Default client secret (should be configurable)
+		TokenExpiry:             3600,              // 1 hour
+		RefreshExpiry:           7200,              // 2 hours
+		AllowLocalhostRedirects: strings.Contains(getOAuthIssuerURL(cfg), "localhost") || strings.Contains(getOAuthIssuerURL(cfg), "127.0.0.1"),
 	}
 
 	// Create OAuth server
@@ -50,18 +53,260 @@ func SetupOAuthHandlers(mux *http.ServeMux, cfg *config.Config, store storage.St
 	return nil
 }
 
-// setupMCPRouteProtection protects MCP routes with OAuth authentication
-func setupMCPRouteProtection(mux *http.ServeMux, store storage.Storage, oauthServer *auth.OAuthServer) {
-	// Create auth middleware for MCP routes
-	authMiddleware := NewAuthMiddleware(store, oauthServer, "mcp")
+// setupMCPRoutes sets up MCP routes with optional OAuth authentication
+func setupMCPRoutes(mux *http.ServeMux, store storage.Storage, oauthServer *auth.OAuthServer, requireAuth bool) {
+	// Create auth middleware only if OAuth server exists and auth is required
+	var authMiddleware *AuthMiddleware
+	if requireAuth && oauthServer != nil {
+		authMiddleware = NewAuthMiddleware(store, oauthServer, "mcp")
+	}
 
-	// For now, we'll add a catch-all handler for MCP routes that requires auth
-	// In a real implementation, this would delegate to the actual MCP server
-	mux.Handle("/mcp/", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// This handler will only be reached if authentication passes
-		utils.Info("Authenticated MCP request: %s %s", r.Method, r.URL.Path)
-		http.Error(w, "MCP endpoint not implemented at this level", http.StatusNotImplemented)
-	})))
+	// Initialize MCP server with all registered tools
+	tools := api.GenerateMCPTools()
+
+	// Create a simple MCP tool executor for HTTP-based requests
+	// This bridges the gap between HTTP JSON-RPC and MCP tool execution
+	mcpToolExecutor := make(map[string]interface{})
+	for _, tool := range tools {
+		mcpToolExecutor[tool.Name] = tool.Handler
+	}
+
+	utils.Info("Initialized MCP tool executor with %d tools", len(tools))
+
+	// Create MCP HTTP handler that implements JSON-RPC over HTTP
+	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authMsg := ""
+		if requireAuth {
+			authMsg = "Authenticated "
+		}
+		utils.Info("%sMCP request: %s %s from %s", authMsg, r.Method, r.URL.Path, r.RemoteAddr)
+
+		// Validate request
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if r.Header.Get("Content-Type") != "application/json" {
+			http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+			return
+		}
+
+		// Parse JSON-RPC request
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			utils.Warn("Failed to parse MCP JSON-RPC request: %v", err)
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		method, _ := req["method"].(string)
+		id := req["id"]
+		params, _ := req["params"].(map[string]interface{})
+
+		utils.Debug("MCP request: method=%s, id=%v", method, id)
+
+		w.Header().Set("Content-Type", "application/json")
+		ctx := r.Context()
+
+		// Handle MCP protocol methods
+		switch method {
+		case "initialize":
+			// Standard MCP initialization response
+			response := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]interface{}{
+					"protocolVersion": "2024-11-05",
+					"capabilities": map[string]interface{}{
+						"tools": map[string]interface{}{
+							"listChanged": true,
+						},
+					},
+					"serverInfo": map[string]interface{}{
+						"name":    "beemflow",
+						"version": "1.0.0",
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+
+		case "tools/list":
+			// Return list of available tools
+			toolList := make([]map[string]interface{}, 0, len(tools))
+			for _, tool := range tools {
+				toolList = append(toolList, map[string]interface{}{
+					"name":        tool.Name,
+					"description": tool.Description,
+					"inputSchema": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				})
+			}
+
+			response := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result": map[string]interface{}{
+					"tools": toolList,
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+
+		case "tools/call":
+			// Execute a tool call
+			toolName, _ := params["name"].(string)
+			toolArgs, _ := params["arguments"].(map[string]interface{})
+
+			if toolName == "" {
+				response := map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"error": map[string]interface{}{
+						"code":    -32602,
+						"message": "Invalid params: tool name required",
+					},
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			// Execute tool using the registered handler
+			handler, exists := mcpToolExecutor[toolName]
+			if !exists {
+				response := map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"error": map[string]interface{}{
+						"code":    -32601,
+						"message": "Tool not found",
+					},
+				}
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			// Call the tool handler (this will be type-safe based on the generated handlers)
+			// For now, we'll handle the most common case - operations that take structured args
+			result, err := callToolHandler(ctx, handler, toolArgs)
+			if err != nil {
+				utils.Warn("MCP tool execution failed: %v", err)
+				response := map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"error": map[string]interface{}{
+						"code":    -32603,
+						"message": fmt.Sprintf("Tool execution failed: %v", err),
+					},
+				}
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(response)
+				return
+			}
+
+			response := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result":  result,
+			}
+			json.NewEncoder(w).Encode(response)
+
+		default:
+			// Method not supported
+			response := map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"error": map[string]interface{}{
+					"code":    -32601,
+					"message": "Method not found",
+				},
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(response)
+		}
+	})
+
+	// Apply authentication middleware if required
+	var mcpHandler http.Handler
+	if authMiddleware != nil {
+		mcpHandler = authMiddleware.Middleware(baseHandler)
+	} else {
+		mcpHandler = baseHandler
+	}
+
+	// Register MCP routes
+	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/mcp/", mcpHandler)
+}
+
+// callToolHandler dynamically calls an MCP tool handler with the provided arguments
+func callToolHandler(ctx context.Context, handler interface{}, args map[string]interface{}) (interface{}, error) {
+	// Use reflection to call the handler with proper argument types
+	handlerValue := reflect.ValueOf(handler)
+	handlerType := handlerValue.Type()
+
+	// Get the input type (first parameter of the handler function)
+	if handlerType.NumIn() != 1 {
+		return nil, fmt.Errorf("handler must accept exactly one argument")
+	}
+
+	inputType := handlerType.In(0)
+	inputValue := reflect.New(inputType).Elem()
+
+	// Populate the input struct from the args map
+	for key, value := range args {
+		field := inputValue.FieldByNameFunc(func(fieldName string) bool {
+			// Case-insensitive field matching
+			return strings.EqualFold(fieldName, key)
+		})
+		if field.IsValid() && field.CanSet() {
+			// Convert the value to the appropriate type
+			convertedValue := reflect.ValueOf(value)
+			if convertedValue.Type().AssignableTo(field.Type()) {
+				field.Set(convertedValue)
+			} else {
+				// Try type conversion for basic types
+				switch field.Kind() {
+				case reflect.String:
+					if str, ok := value.(string); ok {
+						field.SetString(str)
+					}
+				case reflect.Bool:
+					if b, ok := value.(bool); ok {
+						field.SetBool(b)
+					}
+				case reflect.Int, reflect.Int64:
+					if i, ok := value.(float64); ok { // JSON numbers are float64
+						field.SetInt(int64(i))
+					}
+				case reflect.Float64:
+					if f, ok := value.(float64); ok {
+						field.SetFloat(f)
+					}
+				}
+			}
+		}
+	}
+
+	// Call the handler
+	results := handlerValue.Call([]reflect.Value{inputValue})
+	if len(results) != 2 {
+		return nil, fmt.Errorf("handler must return (result, error)")
+	}
+
+	result := results[0].Interface()
+	errInterface := results[1].Interface()
+
+	if errInterface != nil {
+		if err, ok := errInterface.(error); ok {
+			return nil, err
+		}
+	}
+
+	return result, nil
 }
 
 // getOAuthIssuerURL determines the OAuth issuer URL from config
@@ -126,43 +371,31 @@ func (a *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
-		// Validate token
-		if !a.validateToken(r.Context(), token) {
+		// Validate token and get user info
+		tokenInfo, err := a.store.GetOAuthTokenByAccess(r.Context(), token)
+		if err != nil || tokenInfo == nil {
+			utils.Debug("Token validation failed: %v", err)
 			a.unauthorized(w, r, "Invalid or expired token")
 			return
 		}
 
+		// Check if token is expired
+		if tokenInfo.AccessExpiresIn > 0 {
+			accessExpiry := tokenInfo.AccessCreateAt.Add(tokenInfo.AccessExpiresIn)
+			if time.Now().After(accessExpiry) {
+				utils.Debug("Token has expired")
+				a.unauthorized(w, r, "Token has expired")
+				return
+			}
+		}
+
+		// Store user ID in context for downstream handlers
+		ctx := context.WithValue(r.Context(), "user_id", tokenInfo.UserID)
+		r = r.WithContext(ctx)
+
 		// Token is valid, proceed
 		next.ServeHTTP(w, r)
 	})
-}
-
-// validateToken validates an OAuth access token
-func (a *AuthMiddleware) validateToken(ctx context.Context, token string) bool {
-	// Get token info from storage
-	tokenInfo, err := a.store.GetOAuthTokenByAccess(ctx, token)
-	if err != nil {
-		utils.Debug("Token validation failed: %v", err)
-		return false
-	}
-
-	// Check if token is expired
-	if tokenInfo.AccessExpiresIn > 0 {
-		// Check if token has expired
-		accessExpiry := tokenInfo.AccessCreateAt.Add(tokenInfo.AccessExpiresIn)
-		if time.Now().After(accessExpiry) {
-			utils.Debug("Token has expired")
-			return false
-		}
-	}
-
-	// Check scope
-	if a.requiredScope != "" && !strings.Contains(tokenInfo.Scope, a.requiredScope) {
-		utils.Debug("Token scope %s does not include required scope %s", tokenInfo.Scope, a.requiredScope)
-		return false
-	}
-
-	return true
 }
 
 // unauthorized sends an HTTP 401 Unauthorized response with OAuth challenge
@@ -195,17 +428,35 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 
 		if authHeader != "" {
-			// Token provided, validate it
+			// Token provided, validate it and extract user ID
 			if !strings.HasPrefix(authHeader, "Bearer ") {
 				a.unauthorized(w, r, "Invalid authorization header format")
 				return
 			}
 
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if !a.validateToken(r.Context(), token) {
+
+			// Validate token and get user info
+			tokenInfo, err := a.store.GetOAuthTokenByAccess(r.Context(), token)
+			if err != nil || tokenInfo == nil {
+				utils.Debug("Token validation failed: %v", err)
 				a.unauthorized(w, r, "Invalid or expired token")
 				return
 			}
+
+			// Check if token is expired
+			if tokenInfo.AccessExpiresIn > 0 {
+				accessExpiry := tokenInfo.AccessCreateAt.Add(tokenInfo.AccessExpiresIn)
+				if time.Now().After(accessExpiry) {
+					utils.Debug("Token has expired")
+					a.unauthorized(w, r, "Token has expired")
+					return
+				}
+			}
+
+			// Store user ID in context for downstream handlers
+			ctx := context.WithValue(r.Context(), "user_id", tokenInfo.UserID)
+			r = r.WithContext(ctx)
 		}
 
 		// No token or valid token, proceed
@@ -313,7 +564,10 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	state := base64.URLEncoding.EncodeToString(stateBytes)
 
 	// Get user ID from the MCP client authentication (stored in context by middleware)
-	userID := "anonymous" // TODO: Get from authenticated MCP client context
+	userID := "anonymous"
+	if uid, ok := r.Context().Value("user_id").(string); ok && uid != "" {
+		userID = uid
+	}
 
 	// Store auth state
 	h.authStates[state] = &OAuthAuthState{

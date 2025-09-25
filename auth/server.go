@@ -24,12 +24,13 @@ import (
 
 // OAuthConfig holds OAuth 2.1 server configuration
 type OAuthConfig struct {
-	Issuer        string
-	ClientID      string
-	ClientSecret  string
-	PrivateKey    []byte // For JWT signing
-	TokenExpiry   time.Duration
-	RefreshExpiry time.Duration
+	Issuer                  string
+	ClientID                string
+	ClientSecret            string
+	PrivateKey              []byte // For JWT signing
+	TokenExpiry             time.Duration
+	RefreshExpiry           time.Duration
+	AllowLocalhostRedirects bool // Allow localhost redirects (for development)
 }
 
 // rateLimiter provides simple rate limiting for OAuth endpoints
@@ -239,7 +240,7 @@ func (o *OAuthServer) HandleDynamicClientRegistration(w http.ResponseWriter, r *
 
 	// Validate redirect URIs
 	for _, uri := range req.RedirectURIs {
-		if !isValidRedirectURI(uri) {
+		if !o.isValidRedirectURI(uri) {
 			http.Error(w, "Invalid redirect URI: "+uri, http.StatusBadRequest)
 			return
 		}
@@ -307,7 +308,7 @@ func generateClientSecret() string {
 }
 
 // isValidRedirectURI validates a redirect URI according to OAuth 2.1 best practices
-func isValidRedirectURI(uri string) bool {
+func (s *OAuthServer) isValidRedirectURI(uri string) bool {
 	u, err := url.Parse(uri)
 	if err != nil {
 		return false
@@ -321,11 +322,11 @@ func isValidRedirectURI(uri string) bool {
 	// Additional validation: prevent common attacks
 	hostname := u.Hostname()
 
-	// Reject localhost/127.0.0.1 in production (only allow in development)
+	// Reject localhost/127.0.0.1 unless explicitly allowed (for development)
 	if hostname == "localhost" || hostname == "127.0.0.1" {
-		// Only allow localhost in development environments
-		// This should be configurable based on environment
-		return false // TODO: Make this configurable for development
+		if !s.config.AllowLocalhostRedirects {
+			return false
+		}
 	}
 
 	// Reject IP addresses (except localhost which is already handled)

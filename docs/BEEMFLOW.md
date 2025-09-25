@@ -584,6 +584,74 @@ The generic HTTP adapter provides full control:
 
 ---
 
+## OAuth Configuration for ChatGPT MCP
+
+BeemFlow supports OAuth 2.1 authentication for secure MCP access. By default, OAuth is **disabled** for easier local development. Enable it only when you need secure access for ChatGPT or production deployments.
+
+### Enabling OAuth
+
+Add OAuth configuration to your `flow.config.json`:
+
+```json
+{
+  "oauth": {
+    "enabled": true
+  }
+}
+```
+
+When OAuth is enabled:
+- MCP endpoints require Bearer token authentication
+- OAuth 2.1 endpoints are available at `/oauth/*`
+- ChatGPT can authenticate and access your BeemFlow operations securely
+
+### OAuth Endpoints
+
+When OAuth is enabled, these endpoints become available:
+
+- `/.well-known/oauth-authorization-server` - Server metadata
+- `/oauth/authorize` - Authorization endpoint
+- `/oauth/token` - Token endpoint
+- `/oauth/register` - Dynamic client registration
+
+### ChatGPT MCP Setup
+
+1. **Enable OAuth** in your BeemFlow config
+2. **Start BeemFlow server**: `flow serve`
+3. **Configure ChatGPT MCP**:
+   - **Server URL**: `https://your-domain.com/mcp`
+   - **Authentication**: Choose "OAuth"
+   - **Client Registration**: ChatGPT will automatically register as an OAuth client
+
+4. **Complete OAuth flow** when ChatGPT connects
+
+### Example Configuration
+
+```json
+{
+  "storage": {
+    "driver": "sqlite",
+    "dsn": ".beemflow/flow.db"
+  },
+  "oauth": {
+    "enabled": true
+  },
+  "http": {
+    "host": "0.0.0.0",
+    "port": 443
+  }
+}
+```
+
+### Security Notes
+
+- OAuth is **disabled by default** for local development
+- Only enable OAuth when deploying for ChatGPT or production use
+- Use HTTPS in production (OAuth requires secure transport)
+- MCP automatically requires authentication when OAuth is enabled
+
+---
+
 ## MCP Integration
 
 ### MCP Server Configuration

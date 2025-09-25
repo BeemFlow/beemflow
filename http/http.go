@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/config"
 	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/utils"
@@ -83,34 +84,28 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	// Setup OAuth endpoints
-	_, oauthServer := setupOAuthServer(cfg, store)
-	if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
+	// Setup OAuth endpoints only if OAuth is enabled
+	var oauthServer *auth.OAuthServer
+	if cfg.OAuth != nil && cfg.OAuth.Enabled {
+		_, oauthServer = setupOAuthServer(cfg, store)
+		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
 
-	// Generate and register all operation handlers
-	api.GenerateHTTPHandlers(mux)
-
-	// Setup MCP route protection with authentication
-	// OAuth is enabled by default unless explicitly disabled in config
-	oauthEnabled := true
-	if cfg.OAuth != nil && !cfg.OAuth.Enabled {
-		oauthEnabled = false
-	}
-
-	if oauthEnabled {
-		setupMCPRouteProtection(mux, store, oauthServer)
-	}
-
-	// Setup web-based OAuth authorization flows
-	if oauthEnabled {
+		// Setup web-based OAuth authorization flows
 		baseURL := getOAuthIssuerURL(cfg)
 		// Use default registry for OAuth providers
 		registry := api.GetDefaultRegistry()
 		RegisterWebOAuthRoutes(mux, store, registry, baseURL)
 	}
+
+	// Generate and register all operation handlers
+	api.GenerateHTTPHandlers(mux)
+
+	// Setup MCP routes (auth required only when OAuth server is running)
+	mcpRequireAuth := oauthServer != nil
+	setupMCPRoutes(mux, store, oauthServer, mcpRequireAuth)
 
 	// Register metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())

@@ -67,6 +67,13 @@
       },
       "additionalProperties": false
     },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "requireAuth": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "mcpServers": {
       "type": "object",
       "additionalProperties": {

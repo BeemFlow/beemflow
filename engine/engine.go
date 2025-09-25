@@ -1072,7 +1072,7 @@ func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 
 	// Get environment variables but with lazy loading for security
 	// We create a proxy map that loads values on demand
-	env := createEnvProxy()
+	env := e.createEnvProxy()
 
 	// Get current execution context
 	e.mu.Lock()
@@ -1101,15 +1101,13 @@ func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
 }
 
 // createEnvProxy creates a map that loads environment variables on demand
-// This is more secure as it only exposes variables that are explicitly accessed
-func createEnvProxy() map[string]string {
-	// TODO: Future improvement - scan templates for {{ env.VARNAME }} patterns
-	// and only load those specific environment variables. This would prevent
-	// any potential information leakage through template introspection.
-	// For now, we load all env vars as users control their own environment.
+// We load all environment variables since users control their own environment.
+// The selective loading approach was removed for simplicity - env vars are inherently
+// under user control and the scanning regex was complex without significant security benefit.
+func (e *Engine) createEnvProxy() map[string]string {
 	env := make(map[string]string)
-	for _, e := range os.Environ() {
-		pair := strings.SplitN(e, "=", 2)
+	for _, envPair := range os.Environ() {
+		pair := strings.SplitN(envPair, "=", 2)
 		if len(pair) == 2 {
 			env[pair[0]] = pair[1]
 		}
