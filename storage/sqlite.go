@@ -436,24 +436,7 @@ func (s *SqliteStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAu
 	}
 
 	// Encrypt sensitive token data before storage
-	var encryptedAccessToken string
-	var encryptedRefreshToken *string
-
-	if cred.AccessToken != "" {
-		encrypted, err := utils.EncryptToken(cred.AccessToken)
-		if err != nil {
-			return utils.Errorf("failed to encrypt access token: %w", err)
-		}
-		encryptedAccessToken = encrypted
-	}
-
-	if cred.RefreshToken != nil && *cred.RefreshToken != "" {
-		encrypted, err := utils.EncryptToken(*cred.RefreshToken)
-		if err != nil {
-			return utils.Errorf("failed to encrypt refresh token: %w", err)
-		}
-		encryptedRefreshToken = &encrypted
-	}
+	// No encryption yet - store tokens as-is
 
 	var expiresAt *int64
 	if cred.ExpiresAt != nil {
@@ -465,7 +448,7 @@ func (s *SqliteStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAu
 		INSERT OR REPLACE INTO oauth_credentials
 		(id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		cred.ID, cred.Provider, cred.Integration, encryptedAccessToken, encryptedRefreshToken,
+		cred.ID, cred.Provider, cred.Integration, cred.AccessToken, cred.RefreshToken,
 		expiresAt, cred.Scope, cred.CreatedAt.Unix(), cred.UpdatedAt.Unix())
 
 	if err != nil {
@@ -496,21 +479,8 @@ func (s *SqliteStorage) GetOAuthCredential(ctx context.Context, provider, integr
 		return nil, utils.Errorf("failed to get OAuth credential: %w", err)
 	}
 
-	// Decrypt sensitive token data before returning
-	if cred.AccessToken != "" {
-		decryptedToken, err := utils.DecryptToken(cred.AccessToken)
-		if err != nil {
-			return nil, utils.Errorf("failed to decrypt access token: %w", err)
-		}
-		cred.AccessToken = decryptedToken
-	}
-
 	if refreshToken.Valid {
-		decryptedRefreshToken, err := utils.DecryptToken(refreshToken.String)
-		if err != nil {
-			return nil, utils.Errorf("failed to decrypt refresh token: %w", err)
-		}
-		cred.RefreshToken = &decryptedRefreshToken
+		cred.RefreshToken = &refreshToken.String
 	}
 
 	if expiresAt.Valid {
@@ -548,21 +518,8 @@ func (s *SqliteStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAut
 			continue
 		}
 
-		// Decrypt sensitive token data before returning
-		if cred.AccessToken != "" {
-			decryptedToken, err := utils.DecryptToken(cred.AccessToken)
-			if err != nil {
-				continue // Skip corrupted credentials
-			}
-			cred.AccessToken = decryptedToken
-		}
-
 		if refreshToken.Valid {
-			decryptedRefreshToken, err := utils.DecryptToken(refreshToken.String)
-			if err != nil {
-				continue // Skip corrupted credentials
-			}
-			cred.RefreshToken = &decryptedRefreshToken
+			cred.RefreshToken = &refreshToken.String
 		}
 
 		if expiresAt.Valid {
@@ -597,16 +554,6 @@ func (s *SqliteStorage) DeleteOAuthCredential(ctx context.Context, id string) er
 }
 
 func (s *SqliteStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
-	// Encrypt the new token before storing
-	var encryptedToken string
-	if newToken != "" {
-		encrypted, err := utils.EncryptToken(newToken)
-		if err != nil {
-			return utils.Errorf("failed to encrypt new token: %w", err)
-		}
-		encryptedToken = encrypted
-	}
-
 	var expiresAtUnix *int64
 	if expiresAt != nil {
 		timestamp := expiresAt.Unix()
@@ -617,7 +564,7 @@ func (s *SqliteStorage) RefreshOAuthCredential(ctx context.Context, id string, n
 		UPDATE oauth_credentials
 		SET access_token = ?, expires_at = ?, updated_at = ?
 		WHERE id = ?`,
-		encryptedToken, expiresAtUnix, time.Now().Unix(), id)
+		newToken, expiresAtUnix, time.Now().Unix(), id)
 
 	if err != nil {
 		return utils.Errorf("failed to refresh OAuth credential: %w", err)

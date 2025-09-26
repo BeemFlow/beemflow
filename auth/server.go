@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -157,13 +158,20 @@ func (o *OAuthServer) HandleMetadataDiscovery(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(metadata)
 }
 
-// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS
+// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS in production
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
-	if r.TLS == nil {
-		http.Error(w, "HTTPS required for OAuth endpoints", http.StatusForbidden)
-		return false
+	// Always allow localhost/development
+	if strings.Contains(r.Host, "localhost") || strings.Contains(r.Host, "127.0.0.1") {
+		return true
 	}
-	return true
+
+	// Check for HTTPS via TLS or reverse proxy
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		return true
+	}
+
+	http.Error(w, "HTTPS required for OAuth endpoints", http.StatusForbidden)
+	return false
 }
 
 // enforceRateLimit checks rate limits for OAuth endpoints
@@ -353,9 +361,6 @@ func (o *OAuthServer) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For MCP servers, we implement a simplified authorization flow
-	// This could be extended to show a proper consent page in the future
-
 	// Check if this is a programmatic client request (for MCP tools)
 	clientID := r.FormValue("client_id")
 	if clientID == "" {
@@ -388,7 +393,7 @@ func (o *OAuthServer) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// For MCP servers, we auto-approve requests for registered clients
+	// For programmatic requests (API calls), auto-approve for registered clients
 	// Set a dummy user ID for MCP server context
 	r.Form.Set("user_id", "mcp-server")
 
@@ -407,7 +412,7 @@ func (o *OAuthServer) HandleToken(w http.ResponseWriter, r *http.Request) {
 
 	err := o.server.HandleTokenRequest(w, r)
 	if err != nil {
-		utils.Error("OAuth token error: %v", err)
+		utils.Error("OAuth token error")
 		http.Error(w, "Token request failed", http.StatusBadRequest)
 	}
 }

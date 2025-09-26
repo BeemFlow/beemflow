@@ -445,12 +445,18 @@
     "type": "oauth_provider",
     "name": "google",
     "display_name": "Google",
+    "description": "Connect to Google services including Drive, Sheets, Calendar, and more",
+    "icon": "🇬",
     "authorization_url": "https://accounts.google.com/o/oauth2/auth",
     "token_url": "https://oauth2.googleapis.com/token",
     "scopes": [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive"
     ],
+    "scope_descriptions": {
+      "https://www.googleapis.com/auth/spreadsheets": "Read and write Google Sheets",
+      "https://www.googleapis.com/auth/drive": "Access Google Drive files"
+    },
     "client_id": "${GOOGLE_CLIENT_ID}",
     "client_secret": "${GOOGLE_CLIENT_SECRET}"
   },
@@ -458,12 +464,18 @@
     "type": "oauth_provider",
     "name": "github",
     "display_name": "GitHub",
+    "description": "Access repositories, issues, pull requests, and GitHub features",
+    "icon": "🐙",
     "authorization_url": "https://github.com/login/oauth/authorize",
     "token_url": "https://github.com/login/oauth/access_token",
     "scopes": [
       "repo",
       "user"
     ],
+    "scope_descriptions": {
+      "repo": "Full access to private and public repositories",
+      "user": "Read and write access to user profile data"
+    },
     "client_id": "${GITHUB_CLIENT_ID}",
     "client_secret": "${GITHUB_CLIENT_SECRET}"
   }

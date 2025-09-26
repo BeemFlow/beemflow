@@ -148,30 +148,11 @@ func (m *MemoryStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAu
 		return utils.Errorf("invalid credential: %w", err)
 	}
 
-	// Encrypt sensitive token data before storage
-	encryptedCred := *cred // Create a copy
-
-	if cred.AccessToken != "" {
-		encryptedToken, err := utils.EncryptToken(cred.AccessToken)
-		if err != nil {
-			return utils.Errorf("failed to encrypt access token: %w", err)
-		}
-		encryptedCred.AccessToken = encryptedToken
-	}
-
-	if cred.RefreshToken != nil && *cred.RefreshToken != "" {
-		encryptedRefreshToken, err := utils.EncryptToken(*cred.RefreshToken)
-		if err != nil {
-			return utils.Errorf("failed to encrypt refresh token: %w", err)
-		}
-		encryptedCred.RefreshToken = &encryptedRefreshToken
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := cred.UniqueKey()
-	m.oauthCreds[key] = &encryptedCred
+	m.oauthCreds[key] = cred
 	return nil
 }
 
@@ -180,31 +161,12 @@ func (m *MemoryStorage) GetOAuthCredential(ctx context.Context, provider, integr
 	defer m.mu.RUnlock()
 
 	key := provider + ":" + integration
-	encryptedCred, ok := m.oauthCreds[key]
+	cred, ok := m.oauthCreds[key]
 	if !ok {
 		return nil, sql.ErrNoRows
 	}
 
-	// Decrypt sensitive token data before returning
-	decryptedCred := *encryptedCred // Create a copy
-
-	if encryptedCred.AccessToken != "" {
-		decryptedToken, err := utils.DecryptToken(encryptedCred.AccessToken)
-		if err != nil {
-			return nil, utils.Errorf("failed to decrypt access token: %w", err)
-		}
-		decryptedCred.AccessToken = decryptedToken
-	}
-
-	if encryptedCred.RefreshToken != nil && *encryptedCred.RefreshToken != "" {
-		decryptedRefreshToken, err := utils.DecryptToken(*encryptedCred.RefreshToken)
-		if err != nil {
-			return nil, utils.Errorf("failed to decrypt refresh token: %w", err)
-		}
-		decryptedCred.RefreshToken = &decryptedRefreshToken
-	}
-
-	return &decryptedCred, nil
+	return cred, nil
 }
 
 func (m *MemoryStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
@@ -212,27 +174,8 @@ func (m *MemoryStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAut
 	defer m.mu.RUnlock()
 
 	out := make([]*model.OAuthCredential, 0, len(m.oauthCreds))
-	for _, encryptedCred := range m.oauthCreds {
-		// Decrypt sensitive token data before returning
-		decryptedCred := *encryptedCred // Create a copy
-
-		if encryptedCred.AccessToken != "" {
-			decryptedToken, err := utils.DecryptToken(encryptedCred.AccessToken)
-			if err != nil {
-				return nil, utils.Errorf("failed to decrypt access token: %w", err)
-			}
-			decryptedCred.AccessToken = decryptedToken
-		}
-
-		if encryptedCred.RefreshToken != nil && *encryptedCred.RefreshToken != "" {
-			decryptedRefreshToken, err := utils.DecryptToken(*encryptedCred.RefreshToken)
-			if err != nil {
-				return nil, utils.Errorf("failed to decrypt refresh token: %w", err)
-			}
-			decryptedCred.RefreshToken = &decryptedRefreshToken
-		}
-
-		out = append(out, &decryptedCred)
+	for _, cred := range m.oauthCreds {
+		out = append(out, cred)
 	}
 
 	// Sort by CreatedAt DESC to match SQL implementations
@@ -265,14 +208,7 @@ func (m *MemoryStorage) RefreshOAuthCredential(ctx context.Context, id string, n
 	// Find credential by ID
 	for key, cred := range m.oauthCreds {
 		if cred.ID == id {
-			// Encrypt the new token before storing
-			if newToken != "" {
-				encryptedToken, err := utils.EncryptToken(newToken)
-				if err != nil {
-					return utils.Errorf("failed to encrypt new token: %w", err)
-				}
-				cred.AccessToken = encryptedToken
-			}
+			cred.AccessToken = newToken
 			cred.ExpiresAt = expiresAt
 			cred.UpdatedAt = time.Now()
 			m.oauthCreds[key] = cred

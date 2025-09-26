@@ -72,7 +72,7 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	})
 
 	// Initialize all dependencies (this could be moved to a separate DI package)
-	cleanup, err := api.InitializeDependencies(cfg)
+	baseCleanup, err := api.InitializeDependencies(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -80,7 +80,19 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Get storage for OAuth setup
 	store, err := api.GetStoreFromConfig(cfg)
 	if err != nil {
-		cleanup()
+		baseCleanup()
+		return nil, nil, err
+	}
+
+	// Initialize session store and template renderer
+	sessionStore := NewSessionStore()
+	templateRenderer := NewTemplateRenderer(".")
+
+	// Load OAuth templates
+	if err := templateRenderer.LoadOAuthTemplates(); err != nil {
+		utils.Error("Failed to load OAuth templates: %v", err)
+		sessionStore.Close()
+		baseCleanup()
 		return nil, nil, err
 	}
 
@@ -89,7 +101,8 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
 		_, oauthServer = setupOAuthServer(cfg, store)
 		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
-			cleanup()
+			sessionStore.Close()
+			baseCleanup()
 			return nil, nil, err
 		}
 
@@ -97,7 +110,8 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		baseURL := getOAuthIssuerURL(cfg)
 		// Use default registry for OAuth providers
 		registry := api.GetDefaultRegistry()
-		RegisterWebOAuthRoutes(mux, store, registry, baseURL)
+		RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
+
 	}
 
 	// Generate and register all operation handlers
@@ -110,13 +124,26 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Register metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
 
+	// Create session middleware
+	sessionMiddleware := NewSessionMiddleware(sessionStore)
+
 	// Create wrapped handler with middleware
 	wrappedMux := otelhttp.NewHandler(
 		requestIDMiddleware(
-			metricsMiddleware("root", mux),
+			sessionMiddleware.Middleware(
+				metricsMiddleware("root", mux),
+			),
 		),
 		"http.root",
 	)
+
+	// Create combined cleanup function
+	cleanup := func() {
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
+		baseCleanup()
+	}
 
 	return wrappedMux, cleanup, nil
 }
