@@ -983,12 +983,8 @@ func init() {
 		CLIUse:      "mcp serve",
 		CLIShort:    "Start MCP server for BeemFlow tools",
 		SkipMCP:     true, // Can't expose serve via MCP
-		ArgsType:    nil,  // Custom CLI handler provides its own flag setup
+		ArgsType:    reflect.TypeOf(MCPServeArgs{}),
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
-			// Default to stdio mode for MCP clients (Cursor, Claude, etc.)
-			cmd.Flags().Bool("stdio", true, "Run in stdio mode instead of HTTP")
-			cmd.Flags().String("addr", "localhost:3333", "HTTP server address")
-
 			stdio, _ := cmd.Flags().GetBool("stdio")
 			addr, _ := cmd.Flags().GetString("addr")
 			debugFlag, _ := cmd.Flags().GetBool("debug")

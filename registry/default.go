@@ -81,7 +81,11 @@ func (d *DefaultRegistry) GetOAuthProvider(ctx context.Context, name string) (*R
 
 	for _, provider := range providers {
 		if provider.Name == name {
-			return &provider, nil
+			// Expand environment variables in the provider configuration
+			expandedProvider := provider
+			expandedProvider.ClientID = os.ExpandEnv(provider.ClientID)
+			expandedProvider.ClientSecret = os.ExpandEnv(provider.ClientSecret)
+			return &expandedProvider, nil
 		}
 	}
 

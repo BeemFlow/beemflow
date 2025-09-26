@@ -60,4 +60,5 @@ type MCPFlowFileArgs struct {
 type MCPServeArgs struct {
 	Stdio bool   `json:"stdio" flag:"stdio" description:"Run in stdio mode instead of HTTP"`
 	Addr  string `json:"addr" flag:"addr" description:"HTTP server address"`
+	Debug bool   `json:"debug" flag:"debug" description:"Enable debug mode"`
 }

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorize BeemFlow Access</title>
+    <link rel="stylesheet" href="/static/oauth/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 BeemFlow Authorization</h1>
+            <p>Grant access to your BeemFlow workflows</p>
+        </div>
+
+        <div class="consent-card">
+            <div class="client-info">
+                <div class="client-icon">
+                    {{.ClientIcon}}
+                </div>
+                <div class="client-details">
+                    <h2>{{.ClientName}}</h2>
+                    <p>{{.ClientDescription}}</p>
+                </div>
+            </div>
+
+            <div class="permissions">
+                <h3>This application will be able to:</h3>
+                <ul>
+                    <li>Execute workflows on your behalf</li>
+                    <li>Access workflow results and outputs</li>
+                    <li>Use your configured integrations (Google, Slack, etc.)</li>
+                </ul>
+            </div>
+
+            <div class="scope-info">
+                <h3>Requested Permissions:</h3>
+                <div class="scope-tag">{{.Scope}}</div>
+            </div>
+
+            <form method="POST" action="/oauth/authorize" class="consent-form">
+                <input type="hidden" name="client_id" value="{{.ClientID}}">
+                <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+                <input type="hidden" name="scope" value="{{.Scope}}">
+                <input type="hidden" name="state" value="{{.State}}">
+                <input type="hidden" name="response_type" value="{{.ResponseType}}">
+                <input type="hidden" name="user_id" value="mcp-user">
+                
+                <div class="consent-actions">
+                    <button type="submit" class="btn btn-primary">Allow Access</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="footer">
+            <p>By continuing, you agree to BeemFlow's Terms of Service and Privacy Policy.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -29,12 +29,14 @@ type RegistryEntry struct {
 	Port      int               `json:"port,omitempty"`
 	Transport string            `json:"transport,omitempty"`
 	// OAuth provider fields
-	DisplayName      string   `json:"display_name,omitempty"`
-	AuthorizationURL string   `json:"authorization_url,omitempty"`
-	TokenURL         string   `json:"token_url,omitempty"`
-	Scopes           []string `json:"scopes,omitempty"`
-	ClientID         string   `json:"client_id,omitempty"`
-	ClientSecret     string   `json:"client_secret,omitempty"`
+	DisplayName       string            `json:"display_name,omitempty"`
+	Icon              string            `json:"icon,omitempty"`
+	AuthorizationURL  string            `json:"authorization_url,omitempty"`
+	TokenURL          string            `json:"token_url,omitempty"`
+	Scopes            []string          `json:"scopes,omitempty"`
+	ScopeDescriptions map[string]string `json:"scope_descriptions,omitempty"`
+	ClientID          string            `json:"client_id,omitempty"`
+	ClientSecret      string            `json:"client_secret,omitempty"`
 }
 
 // ListOptions allows filtering and pagination for registry queries.

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -553,7 +554,8 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 // enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost for development)
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	// Allow HTTP for localhost development
-	if r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
+	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" || 
+	   r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
 		return true
 	}
 	
@@ -570,10 +572,12 @@ func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 
 // WebOAuthHandler provides web-based OAuth flows for external service authorization
 type WebOAuthHandler struct {
-	store      storage.Storage
-	registry   registry.OAuthRegistry
-	baseURL    string
-	authStates map[string]*OAuthAuthState // In production, use Redis
+	store            storage.Storage
+	registry         registry.OAuthRegistry
+	baseURL          string
+	authStates       map[string]*OAuthAuthState // In production, use Redis
+	sessionStore     *SessionStore
+	templateRenderer *TemplateRenderer
 }
 
 // OAuthAuthState tracks the state of an OAuth authorization flow
@@ -586,13 +590,27 @@ type OAuthAuthState struct {
 }
 
 // NewWebOAuthHandler creates a new web OAuth handler
-func NewWebOAuthHandler(store storage.Storage, registry registry.OAuthRegistry, baseURL string) *WebOAuthHandler {
+func NewWebOAuthHandler(store storage.Storage, registry registry.OAuthRegistry, baseURL string, sessionStore *SessionStore, templateRenderer *TemplateRenderer) *WebOAuthHandler {
 	return &WebOAuthHandler{
-		store:      store,
-		registry:   registry,
-		baseURL:    baseURL,
-		authStates: make(map[string]*OAuthAuthState),
+		store:            store,
+		registry:         registry,
+		baseURL:          baseURL,
+		authStates:       make(map[string]*OAuthAuthState),
+		sessionStore:     sessionStore,
+		templateRenderer: templateRenderer,
 	}
+}
+
+// ProviderTemplateData represents data for the providers template
+type ProviderTemplateData struct {
+	Name               string
+	DisplayName        string
+	Icon               string
+	Connected          bool
+	Integration        string
+	DefaultIntegration string
+	Scopes             []string
+	ExpiresAt          string
 }
 
 // HandleOAuthProviders serves a list of available OAuth providers
@@ -603,23 +621,130 @@ func (h *WebOAuthHandler) HandleOAuthProviders(w http.ResponseWriter, r *http.Re
 
 	providers, err := h.registry.ListOAuthProviders(r.Context(), registry.ListOptions{})
 	if err != nil {
+		utils.Error("Failed to load OAuth providers: %v", err)
 		http.Error(w, "Failed to load OAuth providers", http.StatusInternalServerError)
 		return
 	}
 
-	// Return providers as JSON
-	response := make([]map[string]interface{}, 0, len(providers))
-	for _, provider := range providers {
-		response = append(response, map[string]interface{}{
-			"name":         provider.Name,
-			"display_name": provider.DisplayName,
-			"scopes":       provider.Scopes,
-			"auth_url":     fmt.Sprintf("/oauth/authorize/%s", provider.Name),
-		})
+	// Get current credentials to show connection status
+	credentials, err := h.store.ListOAuthCredentials(r.Context())
+	if err != nil {
+		utils.Warn("Failed to load OAuth credentials: %v", err)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	// Create map of connected providers
+	connectedProviders := make(map[string]*model.OAuthCredential)
+	for _, cred := range credentials {
+		key := cred.Provider + ":" + cred.Integration
+		connectedProviders[key] = cred
+	}
+
+	// Prepare template data
+	templateData := make([]ProviderTemplateData, 0, len(providers))
+	for _, provider := range providers {
+		// Check if connected (use default integration)
+		defaultIntegration := "default"
+		key := provider.Name + ":" + defaultIntegration
+		cred, connected := connectedProviders[key]
+
+		data := ProviderTemplateData{
+			Name:               provider.Name,
+			DisplayName:        provider.DisplayName,
+			Icon:               h.getProviderIcon(provider.Name),
+			Connected:          connected,
+			Integration:        defaultIntegration,
+			DefaultIntegration: defaultIntegration,
+			Scopes:             provider.Scopes,
+		}
+
+		if connected && cred.ExpiresAt != nil {
+			data.ExpiresAt = cred.ExpiresAt.Format("2006-01-02 15:04")
+		}
+
+		templateData = append(templateData, data)
+	}
+
+	templateDataWrapper := struct {
+		Providers []ProviderTemplateData
+	}{
+		Providers: templateData,
+	}
+
+	if err := h.templateRenderer.RenderTemplate(w, "providers", templateDataWrapper); err != nil {
+		utils.Error("Failed to render providers template: %v", err)
+		http.Error(w, "Failed to render page", http.StatusInternalServerError)
+	}
+}
+
+// getProviderIcon returns an icon for a provider from registry metadata
+func (h *WebOAuthHandler) getProviderIcon(providerName string) string {
+	ctx := context.Background()
+	provider, err := h.registry.GetOAuthProvider(ctx, providerName)
+	if err == nil && provider != nil && provider.Icon != "" {
+		return provider.Icon
+	}
+	return "🔗" // Default icon
+}
+
+// getProviderDescription returns a description for a provider from registry metadata
+func (h *WebOAuthHandler) getProviderDescription(providerName string) string {
+	ctx := context.Background()
+	provider, err := h.registry.GetOAuthProvider(ctx, providerName)
+	if err == nil && provider != nil && provider.Description != "" {
+		return provider.Description
+	}
+	return "Connect to " + providerName + " services"
+}
+
+// getIntegrationDescription returns a description for an integration
+func (h *WebOAuthHandler) getIntegrationDescription(integration string) string {
+	// Generic - integrations define their own descriptions in registry
+	if integration == "default" {
+		return "Default integration"
+	}
+	return integration + " integration"
+}
+
+// getScopeDescriptions returns descriptions for OAuth scopes from registry metadata
+func (h *WebOAuthHandler) getScopeDescriptions(providerName string, scopes []string) []ScopeDescription {
+	ctx := context.Background()
+	provider, err := h.registry.GetOAuthProvider(ctx, providerName)
+
+	var descriptions []ScopeDescription
+	for _, scope := range scopes {
+		desc := "Access to " + scope // Default description
+
+		// Use registry metadata if available
+		if err == nil && provider != nil && provider.ScopeDescriptions != nil {
+			if customDesc, exists := provider.ScopeDescriptions[scope]; exists {
+				desc = customDesc
+			}
+		}
+
+		descriptions = append(descriptions, ScopeDescription{
+			Scope:       scope,
+			Description: desc,
+		})
+	}
+	return descriptions
+}
+
+// ProviderAuthTemplateData represents data for the provider auth template
+type ProviderAuthTemplateData struct {
+	ProviderName           string
+	ProviderDisplayName    string
+	ProviderIcon           string
+	ProviderDescription    string
+	Integration            string
+	IntegrationDescription string
+	AuthURL                string
+	Scopes                 []ScopeDescription
+}
+
+// ScopeDescription describes a scope with human-readable text
+type ScopeDescription struct {
+	Scope       string
+	Description string
 }
 
 // HandleOAuthAuthorize initiates OAuth authorization for a provider
@@ -645,6 +770,7 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	// Get provider from registry
 	provider, err := h.registry.GetOAuthProvider(r.Context(), providerName)
 	if err != nil || provider == nil {
+		utils.Error("OAuth provider not found: %s", providerName)
 		http.Error(w, "OAuth provider not found", http.StatusNotFound)
 		return
 	}
@@ -654,10 +780,20 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	rand.Read(stateBytes)
 	state := base64.URLEncoding.EncodeToString(stateBytes)
 
-	// Get user ID from the MCP client authentication (stored in context by middleware)
+	// Get user ID from session or create anonymous session
+	session, _ := GetSessionFromRequest(r)
 	userID := "anonymous"
-	if uid, ok := r.Context().Value("user_id").(string); ok && uid != "" {
-		userID = uid
+	if session != nil {
+		userID = session.UserID
+	} else {
+		// Create anonymous session for this OAuth flow
+		session, err := h.sessionStore.CreateSession("anonymous", 30*time.Minute)
+		if err != nil {
+			utils.Error("Failed to create session: %v", err)
+			http.Error(w, "Session creation failed", http.StatusInternalServerError)
+			return
+		}
+		userID = session.UserID
 	}
 
 	// Store auth state
@@ -672,6 +808,7 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	// Build authorization URL
 	authURL, err := url.Parse(provider.AuthorizationURL)
 	if err != nil {
+		utils.Error("Invalid provider authorization URL: %v", err)
 		http.Error(w, "Invalid provider authorization URL", http.StatusInternalServerError)
 		return
 	}
@@ -684,8 +821,22 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	query.Set("state", state)
 	authURL.RawQuery = query.Encode()
 
-	// Redirect to provider's authorization endpoint
-	http.Redirect(w, r, authURL.String(), http.StatusFound)
+	// Prepare template data
+	templateData := ProviderAuthTemplateData{
+		ProviderName:           provider.Name,
+		ProviderDisplayName:    provider.DisplayName,
+		ProviderIcon:           h.getProviderIcon(provider.Name),
+		ProviderDescription:    h.getProviderDescription(provider.Name),
+		Integration:            integration,
+		IntegrationDescription: h.getIntegrationDescription(integration),
+		AuthURL:                authURL.String(),
+		Scopes:                 h.getScopeDescriptions(provider.Name, provider.Scopes),
+	}
+
+	if err := h.templateRenderer.RenderTemplate(w, "provider_auth", templateData); err != nil {
+		utils.Error("Failed to render provider auth template: %v", err)
+		http.Error(w, "Failed to render page", http.StatusInternalServerError)
+	}
 }
 
 // HandleOAuthCallback handles the OAuth callback from the provider
@@ -699,11 +850,13 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	errorParam := r.URL.Query().Get("error")
 
 	if errorParam != "" {
+		utils.Error("OAuth authorization failed: %s", errorParam)
 		http.Error(w, fmt.Sprintf("OAuth authorization failed: %s", errorParam), http.StatusBadRequest)
 		return
 	}
 
 	if code == "" || state == "" {
+		utils.Error("Missing authorization code or state parameter")
 		http.Error(w, "Missing authorization code or state", http.StatusBadRequest)
 		return
 	}
@@ -711,6 +864,7 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	// Verify state parameter
 	authState, exists := h.authStates[state]
 	if !exists || time.Now().After(authState.ExpiresAt) {
+		utils.Error("Invalid or expired state parameter: %s", state)
 		http.Error(w, "Invalid or expired state parameter", http.StatusBadRequest)
 		return
 	}
@@ -719,6 +873,7 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	// Get provider from registry
 	provider, err := h.registry.GetOAuthProvider(r.Context(), authState.Provider)
 	if err != nil || provider == nil {
+		utils.Error("OAuth provider not found: %s", authState.Provider)
 		http.Error(w, "OAuth provider not found", http.StatusInternalServerError)
 		return
 	}
@@ -735,12 +890,15 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 
 	resp, err := http.PostForm(tokenURL, data)
 	if err != nil {
+		utils.Error("Failed to exchange code for tokens")
 		http.Error(w, "Failed to exchange code for tokens", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		utils.Error("Token exchange failed with status %d: %s", resp.StatusCode, string(body))
 		http.Error(w, "Token exchange failed", http.StatusInternalServerError)
 		return
 	}
@@ -753,9 +911,16 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		utils.Error("Failed to parse token response: %v", err)
 		http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
 		return
 	}
+
+	// Debug: Log what Google returned
+	utils.Info("DEBUG: Google token response - AccessToken length: %d, starts with: %s", 
+		len(tokenResp.AccessToken), 
+		tokenResp.AccessToken[:20]+"...")
+	utils.Info("DEBUG: TokenType: %s, ExpiresIn: %d", tokenResp.TokenType, tokenResp.ExpiresIn)
 
 	// Store the credentials
 	var refreshToken *string
@@ -781,24 +946,51 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		UpdatedAt:    time.Now(),
 	}
 
+	// Debug: Log what we're about to store
+	utils.Info("DEBUG: About to store credential - AccessToken length: %d, starts with: %s", 
+		len(cred.AccessToken), 
+		cred.AccessToken[:20]+"...")
+
 	if err := h.store.SaveOAuthCredential(r.Context(), cred); err != nil {
+		utils.Error("Failed to save OAuth credentials: %v", err)
 		http.Error(w, "Failed to save OAuth credentials", http.StatusInternalServerError)
 		return
 	}
 
-	// Return success page or redirect
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":      "success",
-		"provider":    authState.Provider,
-		"integration": authState.Integration,
-		"message":     "OAuth authorization completed successfully",
-	})
+	// Debug: Verify what was actually stored
+	storedCred, err := h.store.GetOAuthCredential(r.Context(), authState.Provider, authState.Integration)
+	if err == nil {
+		utils.Info("DEBUG: Retrieved stored credential - AccessToken length: %d, starts with: %s", 
+			len(storedCred.AccessToken), 
+			storedCred.AccessToken[:20]+"...")
+	} else {
+		utils.Error("DEBUG: Failed to retrieve stored credential for verification: %v", err)
+	}
+
+	utils.Info("Successfully authorized OAuth for %s:%s", authState.Provider, authState.Integration)
+
+	// Redirect to success page
+	templateData := struct {
+		ProviderName string
+		Integration  string
+		Scopes       string
+		Message      string
+	}{
+		ProviderName: authState.Provider,
+		Integration:  authState.Integration,
+		Scopes:       strings.Join(provider.Scopes, " "),
+		Message:      fmt.Sprintf("%s has been successfully connected!", provider.DisplayName),
+	}
+
+	if err := h.templateRenderer.RenderTemplate(w, "success", templateData); err != nil {
+		utils.Error("Failed to render success template: %v", err)
+		http.Error(w, "Authorization successful but failed to show success page", http.StatusInternalServerError)
+	}
 }
 
 // RegisterWebOAuthRoutes registers the web OAuth routes
-func RegisterWebOAuthRoutes(mux *http.ServeMux, store storage.Storage, registry registry.OAuthRegistry, baseURL string) {
-	handler := NewWebOAuthHandler(store, registry, baseURL)
+func RegisterWebOAuthRoutes(mux *http.ServeMux, store storage.Storage, registry registry.OAuthRegistry, baseURL string, sessionStore *SessionStore, templateRenderer *TemplateRenderer) {
+	handler := NewWebOAuthHandler(store, registry, baseURL, sessionStore, templateRenderer)
 
 	mux.HandleFunc("/oauth/providers", handler.HandleOAuthProviders)
 	mux.HandleFunc("/oauth/authorize/", handler.HandleOAuthAuthorize)

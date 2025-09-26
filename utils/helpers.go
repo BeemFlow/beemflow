@@ -2,14 +2,8 @@ package utils
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/beemflow/beemflow/constants"
@@ -246,75 +240,4 @@ func SafeIntAssert(v any) (int, bool) {
 func SafeBoolAssert(v any) (bool, bool) {
 	b, ok := v.(bool)
 	return b, ok
-}
-
-// ============================================================================
-// CRYPTO UTILITIES FOR SECURE TOKEN STORAGE
-// ============================================================================
-
-// EncryptToken encrypts a token using AES-GCM with a fixed key
-// WARNING: In production, use a proper key management system
-func EncryptToken(plaintext string) (string, error) {
-	if plaintext == "" {
-		return "", nil
-	}
-
-	// Use a fixed key for development - IN PRODUCTION, USE PROPER KEY MANAGEMENT
-	key := []byte("beemflow-oauth-encryption-key-32") // Exactly 32 bytes
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// DecryptToken decrypts a token encrypted with EncryptToken
-func DecryptToken(ciphertext string) (string, error) {
-	if ciphertext == "" {
-		return "", nil
-	}
-
-	// Use the same fixed key
-	key := []byte("beemflow-oauth-encryption-key-32") // Exactly 32 bytes
-
-	ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode base64: %w", err)
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(ciphertextBytes) < nonceSize {
-		return "", errors.New("ciphertext too short")
-	}
-
-	nonce, ciphertextBytes := ciphertextBytes[:nonceSize], ciphertextBytes[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	return string(plaintext), nil
 }
