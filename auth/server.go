@@ -157,8 +157,13 @@ func (o *OAuthServer) HandleMetadataDiscovery(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(metadata)
 }
 
-// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS
+// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost for development)
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
+	// Allow HTTP for localhost development
+	if r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
+		return true
+	}
+	
 	if r.TLS == nil {
 		http.Error(w, "HTTPS required for OAuth endpoints", http.StatusForbidden)
 		return false
