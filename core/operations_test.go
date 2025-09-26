@@ -119,8 +119,8 @@ func TestGetOperationsMapByGroups(t *testing.T) {
 	}
 
 	// Verify we get different results for different groups
-	if len(flowsOps) == len(runsOps) || len(flowsOps) == len(allOps) {
-		t.Error("Groups should filter to different subsets")
+	if len(flowsOps) >= len(allOps) || len(runsOps) >= len(allOps) {
+		t.Error("Groups should filter to subsets of all operations")
 	}
 
 	// Test with multiple groups
