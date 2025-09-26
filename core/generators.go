@@ -565,6 +565,14 @@ func addCLIFlags(cmd *cobra.Command, argsType reflect.Type) {
 				cmd.Flags().StringSlice(flagName, nil, description)
 			}
 			// Other slice types not supported for flags
+
+		case reflect.Map:
+			// Maps are typically passed as JSON strings
+			cmd.Flags().String(flagName, "", description)
+
+		case reflect.Interface:
+			// Interfaces are typically passed as JSON strings
+			cmd.Flags().String(flagName, "", description)
 		}
 	}
 }
