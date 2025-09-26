@@ -411,10 +411,8 @@ func generateCLICommand(op *OperationDefinition) *cobra.Command {
 		Long:  op.Description,
 	}
 
-	// Add flags based on args type (skip if custom CLI handler handles its own flags)
-	if op.CLIHandler == nil {
-		addCLIFlags(cmd, op.ArgsType)
-	}
+	// Add flags based on args type
+	addCLIFlags(cmd, op.ArgsType)
 
 	// Set run function
 	if op.CLIHandler != nil {
@@ -462,10 +460,8 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 		Long:  op.Description,
 	}
 
-	// Add flags based on args type (skip if custom CLI handler handles its own flags)
-	if op.CLIHandler == nil {
-		addCLIFlags(cmd, op.ArgsType)
-	}
+	// Add flags based on args type
+	addCLIFlags(cmd, op.ArgsType)
 
 	// Set run function
 	if op.CLIHandler != nil {
@@ -494,17 +490,8 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 	}
 
 	// Add special flags for certain operations
-	if op.ID == "validateFlow" {
-		cmd.Flags().String("name", "", "Name of the flow to validate")
-		cmd.Flags().String("file", "", "Path to flow file to validate")
-	}
 	if op.ID == "graphFlow" {
-		cmd.Flags().String("name", "", "Name of the flow to graph")
-		cmd.Flags().String("file", "", "Path to flow file to graph")
 		cmd.Flags().StringP("output", "o", "", "Path to write graph output (defaults to stdout)")
-	}
-	if op.ID == "startRun" {
-		cmd.Flags().String("event-json", "", "Event data as JSON string")
 	}
 
 	return cmd
