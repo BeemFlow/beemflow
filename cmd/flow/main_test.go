@@ -804,6 +804,8 @@ func TestRunsSubcommand(t *testing.T) {
 		if startCmd.Flags().Lookup("event-json") == nil {
 			t.Error("Expected runs start command to have --event-json flag")
 		}
+	} else {
+		t.Error("runs start command not found")
 	}
 }
 
