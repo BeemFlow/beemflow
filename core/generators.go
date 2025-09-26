@@ -411,8 +411,10 @@ func generateCLICommand(op *OperationDefinition) *cobra.Command {
 		Long:  op.Description,
 	}
 
-	// Add flags based on args type
-	addCLIFlags(cmd, op.ArgsType)
+	// Add flags based on args type (skip if custom CLI handler handles its own flags)
+	if op.CLIHandler == nil {
+		addCLIFlags(cmd, op.ArgsType)
+	}
 
 	// Set run function
 	if op.CLIHandler != nil {
@@ -460,8 +462,10 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 		Long:  op.Description,
 	}
 
-	// Add flags based on args type
-	addCLIFlags(cmd, op.ArgsType)
+	// Add flags based on args type (skip if custom CLI handler handles its own flags)
+	if op.CLIHandler == nil {
+		addCLIFlags(cmd, op.ArgsType)
+	}
 
 	// Set run function
 	if op.CLIHandler != nil {
@@ -499,33 +503,92 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 
 // addCLIFlags adds flags to a CLI command based on the args type
 func addCLIFlags(cmd *cobra.Command, argsType reflect.Type) {
-	// Skip if empty args
-	if argsType.Name() == "EmptyArgs" {
+	// Skip if no args type provided
+	if argsType == nil {
 		return
 	}
 
+	// Skip if not a struct type
+	if argsType.Kind() != reflect.Struct {
+		return
+	}
+
+	// Skip empty structs
+	if argsType.NumField() == 0 {
+		return
+	}
+
+	// Add flags for each struct field
 	for i := 0; i < argsType.NumField(); i++ {
 		field := argsType.Field(i)
-		flagTag := field.Tag.Get("flag")
-		descTag := field.Tag.Get("description")
+		flagName := getFlagName(field)
 
-		if flagTag == "" || flagTag == "-" {
+		if flagName == "" || flagName == "-" {
 			continue
 		}
 
+		fieldType := field.Type
+		description := getFieldDescription(field)
+
 		// Add flag based on field type
-		switch field.Type.Kind() {
+		switch fieldType.Kind() {
 		case reflect.String:
-			cmd.Flags().String(flagTag, "", descTag)
+			defaultValue := ""
+			if tag := field.Tag.Get("default"); tag != "" {
+				defaultValue = tag
+			}
+			cmd.Flags().String(flagName, defaultValue, description)
+
 		case reflect.Bool:
-			cmd.Flags().Bool(flagTag, false, descTag)
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			cmd.Flags().Int(flagTag, 0, descTag)
-		case reflect.Interface, reflect.Map:
-			// For map[string]any fields and interface{} fields
-			cmd.Flags().String(flagTag, "", descTag+" (JSON)")
+			defaultValue := false
+			if tag := field.Tag.Get("default"); tag == "true" {
+				defaultValue = true
+			}
+			cmd.Flags().Bool(flagName, defaultValue, description)
+
+		case reflect.Int, reflect.Int64:
+			defaultValue := int64(0)
+			if tag := field.Tag.Get("default"); tag != "" {
+				if parsed, err := strconv.ParseInt(tag, 10, 64); err == nil {
+					defaultValue = parsed
+				}
+			}
+			cmd.Flags().Int64(flagName, defaultValue, description)
+
+		case reflect.Float64:
+			defaultValue := 0.0
+			if tag := field.Tag.Get("default"); tag != "" {
+				if parsed, err := strconv.ParseFloat(tag, 64); err == nil {
+					defaultValue = parsed
+				}
+			}
+			cmd.Flags().Float64(flagName, defaultValue, description)
+
+		case reflect.Slice:
+			if fieldType.Elem().Kind() == reflect.String {
+				cmd.Flags().StringSlice(flagName, nil, description)
+			}
+			// Other slice types not supported for flags
 		}
 	}
+}
+
+// getFlagName extracts the flag name from struct field tags
+func getFlagName(field reflect.StructField) string {
+	if tag := field.Tag.Get("flag"); tag != "" {
+		return tag
+	}
+	// Default to lowercase field name
+	return strings.ToLower(field.Name)
+}
+
+// getFieldDescription extracts the description from struct field tags
+func getFieldDescription(field reflect.StructField) string {
+	if desc := field.Tag.Get("description"); desc != "" {
+		return desc
+	}
+	// Fallback to field name
+	return field.Name
 }
 
 // runGeneratedCLICommand executes a generated CLI command

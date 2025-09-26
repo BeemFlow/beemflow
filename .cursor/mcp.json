@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "beemflow": {
+      "type": "stdio",
+      "command": "./flow",
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "env": {}
+    }
+  }
+}

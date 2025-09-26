@@ -244,69 +244,155 @@ func setupMCPRoutes(mux *http.ServeMux, store storage.Storage, oauthServer *auth
 
 // callToolHandler dynamically calls an MCP tool handler with the provided arguments
 func callToolHandler(ctx context.Context, handler interface{}, args map[string]interface{}) (interface{}, error) {
-	// Use reflection to call the handler with proper argument types
 	handlerValue := reflect.ValueOf(handler)
 	handlerType := handlerValue.Type()
 
-	// Get the input type (first parameter of the handler function)
-	if handlerType.NumIn() != 1 {
-		return nil, fmt.Errorf("handler must accept exactly one argument")
+	// Validate handler signature
+	if err := validateHandlerSignature(handlerType); err != nil {
+		return nil, fmt.Errorf("invalid handler: %w", err)
 	}
 
-	inputType := handlerType.In(0)
-	inputValue := reflect.New(inputType).Elem()
-
-	// Populate the input struct from the args map
-	for key, value := range args {
-		field := inputValue.FieldByNameFunc(func(fieldName string) bool {
-			// Case-insensitive field matching
-			return strings.EqualFold(fieldName, key)
-		})
-		if field.IsValid() && field.CanSet() {
-			// Convert the value to the appropriate type
-			convertedValue := reflect.ValueOf(value)
-			if convertedValue.Type().AssignableTo(field.Type()) {
-				field.Set(convertedValue)
-			} else {
-				// Try type conversion for basic types
-				switch field.Kind() {
-				case reflect.String:
-					if str, ok := value.(string); ok {
-						field.SetString(str)
-					}
-				case reflect.Bool:
-					if b, ok := value.(bool); ok {
-						field.SetBool(b)
-					}
-				case reflect.Int, reflect.Int64:
-					if i, ok := value.(float64); ok { // JSON numbers are float64
-						field.SetInt(int64(i))
-					}
-				case reflect.Float64:
-					if f, ok := value.(float64); ok {
-						field.SetFloat(f)
-					}
-				}
-			}
-		}
+	// Create and populate input struct
+	inputValue, err := createAndPopulateInputStruct(handlerType.In(0), args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create input: %w", err)
 	}
 
 	// Call the handler
 	results := handlerValue.Call([]reflect.Value{inputValue})
 	if len(results) != 2 {
-		return nil, fmt.Errorf("handler must return (result, error)")
+		return nil, fmt.Errorf("handler must return exactly 2 values")
 	}
 
+	// Extract result and error
 	result := results[0].Interface()
-	errInterface := results[1].Interface()
-
-	if errInterface != nil {
+	if errInterface := results[1].Interface(); errInterface != nil {
 		if err, ok := errInterface.(error); ok {
 			return nil, err
 		}
+		return nil, fmt.Errorf("handler returned non-error: %v", errInterface)
 	}
 
 	return result, nil
+}
+
+// validateHandlerSignature ensures the handler has the correct function signature
+func validateHandlerSignature(handlerType reflect.Type) error {
+	if handlerType.Kind() != reflect.Func {
+		return fmt.Errorf("handler must be a function")
+	}
+	if handlerType.NumIn() != 1 {
+		return fmt.Errorf("handler must accept exactly one argument, got %d", handlerType.NumIn())
+	}
+	if handlerType.NumOut() != 2 {
+		return fmt.Errorf("handler must return exactly two values, got %d", handlerType.NumOut())
+	}
+	// Second return value should be error
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	if !handlerType.Out(1).Implements(errorType) {
+		return fmt.Errorf("handler second return value must implement error interface")
+	}
+	return nil
+}
+
+// createAndPopulateInputStruct creates a struct instance and populates it from args
+func createAndPopulateInputStruct(inputType reflect.Type, args map[string]interface{}) (reflect.Value, error) {
+	if inputType.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("input type must be a struct, got %s", inputType.Kind())
+	}
+
+	inputValue := reflect.New(inputType).Elem()
+
+	for key, value := range args {
+		if err := setStructField(inputValue, key, value); err != nil {
+			return reflect.Value{}, fmt.Errorf("failed to set field %s: %w", key, err)
+		}
+	}
+
+	return inputValue, nil
+}
+
+// setStructField sets a struct field with type conversion
+func setStructField(structValue reflect.Value, key string, value interface{}) error {
+	field := structValue.FieldByNameFunc(func(fieldName string) bool {
+		return strings.EqualFold(fieldName, key)
+	})
+
+	if !field.IsValid() {
+		// Field doesn't exist - skip silently for flexibility
+		return nil
+	}
+
+	if !field.CanSet() {
+		return fmt.Errorf("field %s cannot be set", key)
+	}
+
+	// Try direct assignment first
+	convertedValue := reflect.ValueOf(value)
+	if convertedValue.Type().AssignableTo(field.Type()) {
+		field.Set(convertedValue)
+		return nil
+	}
+
+	// Try type conversion for common cases
+	return convertAndSetField(field, value)
+}
+
+// convertAndSetField performs type conversions for common JSON types
+func convertAndSetField(field reflect.Value, value interface{}) error {
+	switch field.Kind() {
+	case reflect.String:
+		if str, ok := value.(string); ok {
+			field.SetString(str)
+			return nil
+		}
+	case reflect.Bool:
+		if b, ok := value.(bool); ok {
+			field.SetBool(b)
+			return nil
+		}
+	case reflect.Int, reflect.Int64:
+		if f, ok := value.(float64); ok { // JSON numbers are float64
+			field.SetInt(int64(f))
+			return nil
+		}
+	case reflect.Float64:
+		if f, ok := value.(float64); ok {
+			field.SetFloat(f)
+			return nil
+		}
+	case reflect.Slice:
+		// Handle array conversion if needed
+		if arr, ok := value.([]interface{}); ok {
+			return setSliceField(field, arr)
+		}
+	}
+
+	// If we can't convert, leave field as zero value
+	// This is more permissive than failing
+	return nil
+}
+
+// setSliceField converts []interface{} to typed slice
+func setSliceField(field reflect.Value, arr []interface{}) error {
+	elemType := field.Type().Elem()
+	sliceValue := reflect.MakeSlice(field.Type(), len(arr), len(arr))
+
+	for i, item := range arr {
+		elemValue := reflect.ValueOf(item)
+		if elemValue.Type().AssignableTo(elemType) {
+			sliceValue.Index(i).Set(elemValue)
+		} else {
+			// Try basic conversions for slice elements
+			elemField := reflect.New(elemType).Elem()
+			if err := convertAndSetField(elemField, item); err == nil {
+				sliceValue.Index(i).Set(elemField)
+			}
+		}
+	}
+
+	field.Set(sliceValue)
+	return nil
 }
 
 // getOAuthIssuerURL determines the OAuth issuer URL from config
