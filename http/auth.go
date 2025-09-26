@@ -27,10 +27,10 @@ func setupOAuthServer(cfg *config.Config, store storage.Storage) (*auth.OAuthCon
 	// Create OAuth server configuration
 	oauthCfg := &auth.OAuthConfig{
 		Issuer:                  getOAuthIssuerURL(cfg),
-		ClientID:                "beemflow",        // Default client ID
-		ClientSecret:            "beemflow-secret", // Default client secret (should be configurable)
-		TokenExpiry:             3600,              // 1 hour
-		RefreshExpiry:           7200,              // 2 hours
+		ClientID:                "beemflow",         // Default client ID
+		ClientSecret:            "beemflow-secret",  // Default client secret (should be configurable)
+		TokenExpiry:             3600 * time.Second, // 1 hour
+		RefreshExpiry:           7200 * time.Second, // 2 hours
 		AllowLocalhostRedirects: strings.Contains(getOAuthIssuerURL(cfg), "localhost") || strings.Contains(getOAuthIssuerURL(cfg), "127.0.0.1"),
 	}
 
