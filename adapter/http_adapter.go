@@ -391,9 +391,9 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 
 		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
 			utils.Info("DEBUG: OAuth token retrieved successfully, length: %d", len(token))
-			bearerToken := "Bearer " + token
-			utils.Info("DEBUG: Authorization header: %s", bearerToken[:50]+"...")
-			return bearerToken
+			// Don't log the actual token for security reasons
+			utils.Info("DEBUG: Using OAuth token for authorization header")
+			return "Bearer " + token
 		} else {
 			utils.Error("DEBUG: OAuth token retrieval failed for %s:%s: %v", provider, integration, err)
 		}
@@ -409,7 +409,6 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 		return match
 	})
 }
-
 
 // expandEnvValue expands environment variables in a value string using regex for safety
 func expandEnvValue(value string) string {
