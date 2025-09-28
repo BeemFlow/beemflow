@@ -21,6 +21,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// GetDefaultRegistry returns the default registry with OAuth providers
+func GetDefaultRegistry() registry.OAuthRegistry {
+	return registry.NewDefaultRegistry()
+}
+
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
 func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
@@ -628,12 +633,24 @@ func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, e
 		return nil, fmt.Errorf("'%s' is not an MCP server", serverName)
 	}
 
-	// TODO: Actually install to config file
-	// For now, just return success
+	// Convert server spec to config format
+	serverConfig := config.MCPServerConfig{
+		Command:   server.Command,
+		Args:      server.Args,
+		Env:       server.Env,
+		Port:      server.Port,
+		Transport: server.Transport,
+		Endpoint:  server.Endpoint,
+	}
+
+	// Update the config in memory
+	config.UpsertMCPServer(cfg, serverName, serverConfig)
+
+	// Note: Config changes are in memory only. User needs to save config manually
 	return map[string]any{
 		"status":  "installed",
 		"server":  serverName,
-		"message": fmt.Sprintf("MCP server '%s' installed successfully", serverName),
+		"message": fmt.Sprintf("MCP server '%s' installed successfully. Run 'flow config save' to persist changes.", serverName),
 	}, nil
 }
 

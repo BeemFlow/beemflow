@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Integrations</title>
+    <link rel="stylesheet" href="/static/oauth/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 OAuth Integrations</h1>
+            <p>Manage your connected services and integrations</p>
+        </div>
+
+        <div class="integrations-grid">
+            {{range .Providers}}
+            <div class="integration-card">
+                <div class="integration-header">
+                    <div class="provider-icon">
+                        {{.Icon}}
+                    </div>
+                    <h3>{{.DisplayName}}</h3>
+                </div>
+
+                <div class="integration-status">
+                    {{if .Connected}}
+                        <span class="status-connected">✅ Connected</span>
+                        <div class="integration-details">
+                            <small>Integration: {{.Integration}}</small><br>
+                            <small>Expires: {{.ExpiresAt}}</small>
+                        </div>
+                    {{else}}
+                        <span class="status-disconnected">❌ Not Connected</span>
+                    {{end}}
+                </div>
+
+                <div class="integration-actions">
+                    {{if .Connected}}
+                        <button class="btn btn-secondary" onclick="disconnect('{{.Name}}', '{{.Integration}}')">Disconnect</button>
+                        <button class="btn btn-primary" onclick="reauthorize('{{.Name}}', '{{.Integration}}')">Re-authorize</button>
+                    {{else}}
+                        <a href="/oauth/authorize/{{.Name}}?integration={{.DefaultIntegration}}" class="btn btn-primary">Connect</a>
+                    {{end}}
+                </div>
+
+                <div class="scopes">
+                    <small>Scopes: {{range .Scopes}}{{.}} {{end}}</small>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="footer">
+            <p>BeemFlow securely stores your OAuth tokens and automatically refreshes them when needed.</p>
+        </div>
+    </div>
+
+    <script>
+        function disconnect(provider, integration) {
+            if (confirm(`Are you sure you want to disconnect ${provider}?`)) {
+                // TODO: Implement disconnect endpoint
+                alert('Disconnect functionality not yet implemented');
+            }
+        }
+
+        function reauthorize(provider, integration) {
+            window.location.href = `/oauth/authorize/${provider}?integration=${integration}`;
+        }
+    </script>
+</body>
+</html>

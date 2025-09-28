@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect {{.ProviderName}}</title>
+    <link rel="stylesheet" href="/static/oauth/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 Connect {{.ProviderName}}</h1>
+            <p>Authorize BeemFlow to access your {{.ProviderName}} account</p>
+        </div>
+
+        <div class="consent-card">
+            <div class="provider-info">
+                <div class="provider-icon">
+                    {{.ProviderIcon}}
+                </div>
+                <div class="provider-details">
+                    <h2>{{.ProviderDisplayName}}</h2>
+                    <p>{{.ProviderDescription}}</p>
+                </div>
+            </div>
+
+            <div class="permissions">
+                <h3>This will allow BeemFlow to:</h3>
+                <ul>
+                    {{range .Scopes}}
+                    <li>{{.Description}}</li>
+                    {{end}}
+                </ul>
+            </div>
+
+            <div class="integration-info">
+                <h3>Integration:</h3>
+                <p><strong>{{.Integration}}</strong> - {{.IntegrationDescription}}</p>
+            </div>
+
+            <div class="consent-actions">
+                <a href="/oauth/providers" class="btn btn-secondary">Cancel</a>
+                <a href="{{.AuthURL}}" class="btn btn-primary">Continue to {{.ProviderDisplayName}}</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>You'll be redirected to {{.ProviderName}} to complete authorization.</p>
+        </div>
+    </div>
+</body>
+</html>

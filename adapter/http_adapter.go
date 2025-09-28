@@ -12,8 +12,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/registry"
+	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
 )
 
@@ -25,11 +27,18 @@ func getHTTPClient() *http.Client {
 	}
 }
 
-// Environment variable pattern for safe parsing
-var envVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+// Environment variable and OAuth patterns for safe parsing
+var (
+	envVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+	oauthPattern  = regexp.MustCompile(`\$oauth:([a-z_]+):([a-z_]+)`)
+)
+
+// storageContextKey is used to inject storage into context
+// Use same constant as engine to ensure compatibility
+const storageContextKey = "beemflow.storage"
 
 // validatePathParameter validates a path parameter to prevent security issues
-func validatePathParameter(name, value string) error {
+func validatePathParameter(_, value string) error {
 	// Check for path traversal attempts
 	if strings.Contains(value, "..") {
 		return fmt.Errorf("path traversal attempt detected")
@@ -107,7 +116,7 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	enrichedInputs := a.enrichInputsWithDefaults(inputs)
 
 	// Prepare headers
-	headers := a.prepareManifestHeaders(enrichedInputs)
+	headers := a.prepareManifestHeaders(ctx, enrichedInputs)
 
 	// Replace path parameters in URL with validation
 	url := a.ToolManifest.Endpoint
@@ -308,13 +317,13 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 }
 
 // prepareManifestHeaders prepares headers for manifest-based requests
-func (a *HTTPAdapter) prepareManifestHeaders(inputs map[string]any) map[string]string {
+func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) map[string]string {
 	headers := make(map[string]string)
 
-	// Add manifest headers with environment variable expansion
+	// Add manifest headers with OAuth and environment variable expansion
 	if a.ToolManifest.Headers != nil {
 		for k, v := range a.ToolManifest.Headers {
-			headers[k] = expandEnvValue(v)
+			headers[k] = a.expandValue(ctx, v)
 		}
 	}
 
@@ -349,6 +358,56 @@ func (a *HTTPAdapter) extractHeaders(inputs map[string]any) map[string]string {
 		}
 	}
 	return headers
+}
+
+// expandValue expands both OAuth tokens and environment variables in a value string
+func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
+	// Get storage from context for OAuth client
+	store, ok := ctx.Value(storageContextKey).(storage.Storage)
+	if !ok {
+		utils.Error("DEBUG: Storage not available in context for OAuth expansion")
+		// Fall back to environment variable expansion only
+		return envVarPattern.ReplaceAllStringFunc(value, func(match string) string {
+			varName := match[5:] // Remove "$env:" prefix
+			if envVal := os.Getenv(varName); envVal != "" {
+				return envVal
+			}
+			return match
+		})
+	}
+
+	utils.Info("DEBUG: Storage found in context, creating OAuth client")
+	oauthClient := auth.NewOAuthClient(store)
+
+	// First handle OAuth patterns
+	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
+		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
+		if len(parts) != 2 {
+			utils.Error("DEBUG: Invalid OAuth pattern: %s", match)
+			return match
+		}
+		provider, integration := parts[0], parts[1]
+		utils.Info("DEBUG: Attempting to retrieve OAuth token for %s:%s", provider, integration)
+
+		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
+			utils.Info("DEBUG: OAuth token retrieved successfully, length: %d", len(token))
+			// Don't log the actual token for security reasons
+			utils.Info("DEBUG: Using OAuth token for authorization header")
+			return "Bearer " + token
+		} else {
+			utils.Error("DEBUG: OAuth token retrieval failed for %s:%s: %v", provider, integration, err)
+		}
+		return match // Keep original if OAuth token not found
+	})
+
+	// Then handle environment variables (existing logic)
+	return envVarPattern.ReplaceAllStringFunc(expanded, func(match string) string {
+		varName := match[5:] // Remove "$env:" prefix
+		if envVal := os.Getenv(varName); envVal != "" {
+			return envVal
+		}
+		return match
+	})
 }
 
 // expandEnvValue expands environment variables in a value string using regex for safety

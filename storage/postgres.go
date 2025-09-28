@@ -342,6 +342,92 @@ LIMIT 1`, flowName)
 	return &run, nil
 }
 
+// OAuth credential methods (stubs - not implemented for PostgreSQL yet)
+
+func (s *PostgresStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error) {
+	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
+	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthCredential(ctx context.Context, id string) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
+	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+}
+
+// OAuth provider methods (stubs - not implemented for PostgreSQL yet)
+
+func (s *PostgresStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
+	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
+	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
+	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
+	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+}
+
+// OAuth client methods (stubs - not implemented for PostgreSQL yet)
+func (s *PostgresStorage) SaveOAuthClient(ctx context.Context, client *model.OAuthClient) error {
+	return utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthClient(ctx context.Context, id string) (*model.OAuthClient, error) {
+	return nil, utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) ListOAuthClients(ctx context.Context) ([]*model.OAuthClient, error) {
+	return nil, utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthClient(ctx context.Context, id string) error {
+	return utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+}
+
+// OAuth token methods (stubs - not implemented for PostgreSQL yet)
+func (s *PostgresStorage) SaveOAuthToken(ctx context.Context, token *model.OAuthToken) error {
+	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthTokenByCode(ctx context.Context, code string) (*model.OAuthToken, error) {
+	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthTokenByAccess(ctx context.Context, access string) (*model.OAuthToken, error) {
+	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) GetOAuthTokenByRefresh(ctx context.Context, refresh string) (*model.OAuthToken, error) {
+	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthTokenByCode(ctx context.Context, code string) error {
+	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthTokenByAccess(ctx context.Context, access string) error {
+	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+func (s *PostgresStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error {
+	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
 // Close closes the underlying PostgreSQL database connection.
 func (s *PostgresStorage) Close() error {
 	return s.db.Close()

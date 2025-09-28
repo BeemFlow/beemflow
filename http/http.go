@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/config"
 	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/utils"
@@ -70,25 +71,79 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		}
 	})
 
-	// Generate and register all operation handlers
-	api.GenerateHTTPHandlers(mux)
-
-	// Register metrics endpoint
-	mux.Handle("/metrics", promhttp.Handler())
-
 	// Initialize all dependencies (this could be moved to a separate DI package)
-	cleanup, err := api.InitializeDependencies(cfg)
+	baseCleanup, err := api.InitializeDependencies(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// Get storage for OAuth setup
+	store, err := api.GetStoreFromConfig(cfg)
+	if err != nil {
+		baseCleanup()
+		return nil, nil, err
+	}
+
+	// Initialize session store and template renderer
+	sessionStore := NewSessionStore()
+	templateRenderer := NewTemplateRenderer(".")
+
+	// Load OAuth templates
+	if err := templateRenderer.LoadOAuthTemplates(); err != nil {
+		utils.Error("Failed to load OAuth templates: %v", err)
+		sessionStore.Close()
+		baseCleanup()
+		return nil, nil, err
+	}
+
+	// Setup OAuth endpoints only if OAuth is enabled
+	var oauthServer *auth.OAuthServer
+	if cfg.OAuth != nil && cfg.OAuth.Enabled {
+		_, oauthServer = setupOAuthServer(cfg, store)
+		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
+			sessionStore.Close()
+			baseCleanup()
+			return nil, nil, err
+		}
+
+		// Setup web-based OAuth authorization flows
+		baseURL := getOAuthIssuerURL(cfg)
+		// Use default registry for OAuth providers
+		registry := api.GetDefaultRegistry()
+		RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
+
+	}
+
+	// Generate and register all operation handlers
+	api.GenerateHTTPHandlers(mux)
+
+	// Setup MCP routes (auth required only when OAuth server is running)
+	mcpRequireAuth := oauthServer != nil
+	setupMCPRoutes(mux, store, oauthServer, mcpRequireAuth)
+
+	// Register metrics endpoint
+	mux.Handle("/metrics", promhttp.Handler())
+
+	// Create session middleware
+	sessionMiddleware := NewSessionMiddleware(sessionStore)
+
 	// Create wrapped handler with middleware
 	wrappedMux := otelhttp.NewHandler(
 		requestIDMiddleware(
-			metricsMiddleware("root", mux),
+			sessionMiddleware.Middleware(
+				metricsMiddleware("root", mux),
+			),
 		),
 		"http.root",
 	)
+
+	// Create combined cleanup function
+	cleanup := func() {
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
+		baseCleanup()
+	}
 
 	return wrappedMux, cleanup, nil
 }

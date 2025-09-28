@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorization Successful</title>
+    <link rel="stylesheet" href="/static/oauth/style.css">
+    <meta http-equiv="refresh" content="3;url=/oauth/providers">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✅ Authorization Successful</h1>
+            <p>{{.Message}}</p>
+        </div>
+
+        <div class="success-card">
+            <div class="success-icon">
+                ✓
+            </div>
+            <h2>{{.ProviderName}} Connected</h2>
+            <p>Your {{.ProviderName}} account has been successfully connected to BeemFlow.</p>
+
+            <div class="integration-details">
+                <strong>Integration:</strong> {{.Integration}}<br>
+                <strong>Scopes:</strong> {{.Scopes}}
+            </div>
+        </div>
+
+        <div class="next-steps">
+            <p>You can now use {{.ProviderName}} integrations in your BeemFlow workflows.</p>
+            <a href="/oauth/providers" class="btn btn-primary">Manage Integrations</a>
+        </div>
+
+        <div class="footer">
+            <p>This page will redirect automatically in 3 seconds...</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -101,6 +101,59 @@ CREATE TABLE IF NOT EXISTS paused_runs (
 	step_ctx JSON,
 	outputs JSON
 );
+CREATE TABLE IF NOT EXISTS oauth_credentials (
+	id TEXT PRIMARY KEY,
+	provider TEXT NOT NULL,
+	integration TEXT NOT NULL,
+	access_token TEXT NOT NULL,
+	refresh_token TEXT,
+	expires_at INTEGER,
+	scope TEXT,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	UNIQUE(provider, integration)
+);
+CREATE TABLE IF NOT EXISTS oauth_providers (
+	id TEXT PRIMARY KEY,
+	client_id TEXT NOT NULL,
+	client_secret TEXT NOT NULL,
+	auth_url TEXT NOT NULL,
+	token_url TEXT NOT NULL,
+	scopes JSON,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+	id TEXT PRIMARY KEY,
+	secret TEXT NOT NULL,
+	name TEXT NOT NULL,
+	redirect_uris TEXT NOT NULL, -- JSON array
+	grant_types TEXT NOT NULL, -- JSON array
+	response_types TEXT NOT NULL, -- JSON array
+	scope TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+	id TEXT PRIMARY KEY,
+	client_id TEXT NOT NULL,
+	user_id TEXT,
+	redirect_uri TEXT,
+	scope TEXT,
+	code TEXT UNIQUE,
+	code_create_at INTEGER,
+	code_expires_in INTEGER,
+	access TEXT UNIQUE,
+	access_create_at INTEGER,
+	access_expires_in INTEGER,
+	refresh TEXT UNIQUE,
+	refresh_create_at INTEGER,
+	refresh_expires_in INTEGER,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
 `
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
@@ -373,6 +426,474 @@ func (s *SqliteStorage) DeleteRun(ctx context.Context, id uuid.UUID) error {
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM runs WHERE id=?`, id.String())
 	return err
+}
+
+// OAuth credential methods
+
+func (s *SqliteStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error {
+	if err := cred.Validate(); err != nil {
+		return utils.Errorf("invalid credential: %w", err)
+	}
+
+	// Encrypt sensitive token data before storage
+	// No encryption yet - store tokens as-is
+
+	var expiresAt *int64
+	if cred.ExpiresAt != nil {
+		timestamp := cred.ExpiresAt.Unix()
+		expiresAt = &timestamp
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO oauth_credentials
+		(id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cred.ID, cred.Provider, cred.Integration, cred.AccessToken, cred.RefreshToken,
+		expiresAt, cred.Scope, cred.CreatedAt.Unix(), cred.UpdatedAt.Unix())
+
+	if err != nil {
+		return utils.Errorf("failed to save OAuth credential: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at
+		FROM oauth_credentials 
+		WHERE provider = ? AND integration = ?`,
+		provider, integration)
+
+	var cred model.OAuthCredential
+	var refreshToken sql.NullString
+	var expiresAt sql.NullInt64
+	var createdAt, updatedAt int64
+
+	err := row.Scan(&cred.ID, &cred.Provider, &cred.Integration, &cred.AccessToken,
+		&refreshToken, &expiresAt, &cred.Scope, &createdAt, &updatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, utils.Errorf("failed to get OAuth credential: %w", err)
+	}
+
+	if refreshToken.Valid {
+		cred.RefreshToken = &refreshToken.String
+	}
+
+	if expiresAt.Valid {
+		t := time.Unix(expiresAt.Int64, 0)
+		cred.ExpiresAt = &t
+	}
+	cred.CreatedAt = time.Unix(createdAt, 0)
+	cred.UpdatedAt = time.Unix(updatedAt, 0)
+
+	return &cred, nil
+}
+
+func (s *SqliteStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at
+		FROM oauth_credentials 
+		ORDER BY created_at DESC`)
+
+	if err != nil {
+		return nil, utils.Errorf("failed to list OAuth credentials: %w", err)
+	}
+	defer rows.Close()
+
+	var creds []*model.OAuthCredential
+	for rows.Next() {
+		var cred model.OAuthCredential
+		var refreshToken sql.NullString
+		var expiresAt sql.NullInt64
+		var createdAt, updatedAt int64
+
+		err := rows.Scan(&cred.ID, &cred.Provider, &cred.Integration, &cred.AccessToken,
+			&refreshToken, &expiresAt, &cred.Scope, &createdAt, &updatedAt)
+
+		if err != nil {
+			continue
+		}
+
+		if refreshToken.Valid {
+			cred.RefreshToken = &refreshToken.String
+		}
+
+		if expiresAt.Valid {
+			t := time.Unix(expiresAt.Int64, 0)
+			cred.ExpiresAt = &t
+		}
+		cred.CreatedAt = time.Unix(createdAt, 0)
+		cred.UpdatedAt = time.Unix(updatedAt, 0)
+
+		creds = append(creds, &cred)
+	}
+
+	return creds, nil
+}
+
+func (s *SqliteStorage) DeleteOAuthCredential(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM oauth_credentials WHERE id = ?`, id)
+	if err != nil {
+		return utils.Errorf("failed to delete OAuth credential: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func (s *SqliteStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
+	var expiresAtUnix *int64
+	if expiresAt != nil {
+		timestamp := expiresAt.Unix()
+		expiresAtUnix = &timestamp
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE oauth_credentials
+		SET access_token = ?, expires_at = ?, updated_at = ?
+		WHERE id = ?`,
+		newToken, expiresAtUnix, time.Now().Unix(), id)
+
+	if err != nil {
+		return utils.Errorf("failed to refresh OAuth credential: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// OAuth provider methods
+
+func (s *SqliteStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
+	if err := provider.Validate(); err != nil {
+		return utils.Errorf("invalid provider: %w", err)
+	}
+
+	scopesJSON, err := json.Marshal(provider.Scopes)
+	if err != nil {
+		return utils.Errorf("failed to marshal scopes: %w", err)
+	}
+
+	now := time.Now().Unix()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO oauth_providers 
+		(id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		provider.ID, provider.ClientID, provider.ClientSecret, provider.AuthURL, provider.TokenURL,
+		string(scopesJSON), now, now)
+
+	if err != nil {
+		return utils.Errorf("failed to save OAuth provider: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at
+		FROM oauth_providers 
+		WHERE id = ?`, id)
+
+	var provider model.OAuthProvider
+	var scopesJSON string
+	var createdAt, updatedAt int64
+
+	err := row.Scan(&provider.ID, &provider.ClientID, &provider.ClientSecret,
+		&provider.AuthURL, &provider.TokenURL, &scopesJSON, &createdAt, &updatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, utils.Errorf("failed to get OAuth provider: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(scopesJSON), &provider.Scopes); err != nil {
+		return nil, utils.Errorf("failed to unmarshal scopes: %w", err)
+	}
+
+	return &provider, nil
+}
+
+func (s *SqliteStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, client_id, client_secret, auth_url, token_url, scopes, created_at, updated_at
+		FROM oauth_providers 
+		ORDER BY created_at DESC`)
+
+	if err != nil {
+		return nil, utils.Errorf("failed to list OAuth providers: %w", err)
+	}
+	defer rows.Close()
+
+	var providers []*model.OAuthProvider
+	for rows.Next() {
+		var provider model.OAuthProvider
+		var scopesJSON string
+		var createdAt, updatedAt int64
+
+		err := rows.Scan(&provider.ID, &provider.ClientID, &provider.ClientSecret,
+			&provider.AuthURL, &provider.TokenURL, &scopesJSON, &createdAt, &updatedAt)
+
+		if err != nil {
+			continue
+		}
+
+		if err := json.Unmarshal([]byte(scopesJSON), &provider.Scopes); err != nil {
+			continue
+		}
+
+		providers = append(providers, &provider)
+	}
+
+	return providers, nil
+}
+
+func (s *SqliteStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM oauth_providers WHERE id = ?`, id)
+	if err != nil {
+		return utils.Errorf("failed to delete OAuth provider: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// OAuth client methods
+func (s *SqliteStorage) SaveOAuthClient(ctx context.Context, client *model.OAuthClient) error {
+	redirectURIsJSON, err := json.Marshal(client.RedirectURIs)
+	if err != nil {
+		return utils.Errorf("failed to marshal redirect URIs: %w", err)
+	}
+	grantTypesJSON, err := json.Marshal(client.GrantTypes)
+	if err != nil {
+		return utils.Errorf("failed to marshal grant types: %w", err)
+	}
+	responseTypesJSON, err := json.Marshal(client.ResponseTypes)
+	if err != nil {
+		return utils.Errorf("failed to marshal response types: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO oauth_clients
+		(id, secret, name, redirect_uris, grant_types, response_types, scope, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		client.ID, client.Secret, client.Name, string(redirectURIsJSON),
+		string(grantTypesJSON), string(responseTypesJSON), client.Scope,
+		client.CreatedAt.Unix(), time.Now().Unix())
+
+	if err != nil {
+		return utils.Errorf("failed to save OAuth client: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetOAuthClient(ctx context.Context, id string) (*model.OAuthClient, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, secret, name, redirect_uris, grant_types, response_types, scope, created_at, updated_at
+		FROM oauth_clients WHERE id = ?`, id)
+
+	var client model.OAuthClient
+	var redirectURIsJSON, grantTypesJSON, responseTypesJSON string
+	var createdAt, updatedAt int64
+
+	err := row.Scan(&client.ID, &client.Secret, &client.Name, &redirectURIsJSON,
+		&grantTypesJSON, &responseTypesJSON, &client.Scope, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, utils.Errorf("failed to get OAuth client: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(redirectURIsJSON), &client.RedirectURIs); err != nil {
+		return nil, utils.Errorf("failed to unmarshal redirect URIs: %w", err)
+	}
+	if err := json.Unmarshal([]byte(grantTypesJSON), &client.GrantTypes); err != nil {
+		return nil, utils.Errorf("failed to unmarshal grant types: %w", err)
+	}
+	if err := json.Unmarshal([]byte(responseTypesJSON), &client.ResponseTypes); err != nil {
+		return nil, utils.Errorf("failed to unmarshal response types: %w", err)
+	}
+
+	client.CreatedAt = time.Unix(createdAt, 0)
+	client.UpdatedAt = time.Unix(updatedAt, 0)
+
+	return &client, nil
+}
+
+func (s *SqliteStorage) ListOAuthClients(ctx context.Context) ([]*model.OAuthClient, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, secret, name, redirect_uris, grant_types, response_types, scope, created_at, updated_at
+		FROM oauth_clients ORDER BY created_at DESC`)
+
+	if err != nil {
+		return nil, utils.Errorf("failed to list OAuth clients: %w", err)
+	}
+	defer rows.Close()
+
+	var clients []*model.OAuthClient
+	for rows.Next() {
+		var client model.OAuthClient
+		var redirectURIsJSON, grantTypesJSON, responseTypesJSON string
+		var createdAt, updatedAt int64
+
+		err := rows.Scan(&client.ID, &client.Secret, &client.Name, &redirectURIsJSON,
+			&grantTypesJSON, &responseTypesJSON, &client.Scope, &createdAt, &updatedAt)
+		if err != nil {
+			return nil, utils.Errorf("failed to scan OAuth client: %w", err)
+		}
+
+		if err := json.Unmarshal([]byte(redirectURIsJSON), &client.RedirectURIs); err != nil {
+			return nil, utils.Errorf("failed to unmarshal redirect URIs: %w", err)
+		}
+		if err := json.Unmarshal([]byte(grantTypesJSON), &client.GrantTypes); err != nil {
+			return nil, utils.Errorf("failed to unmarshal grant types: %w", err)
+		}
+		if err := json.Unmarshal([]byte(responseTypesJSON), &client.ResponseTypes); err != nil {
+			return nil, utils.Errorf("failed to unmarshal response types: %w", err)
+		}
+
+		client.CreatedAt = time.Unix(createdAt, 0)
+		client.UpdatedAt = time.Unix(updatedAt, 0)
+
+		clients = append(clients, &client)
+	}
+
+	return clients, nil
+}
+
+func (s *SqliteStorage) DeleteOAuthClient(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM oauth_clients WHERE id = ?`, id)
+	if err != nil {
+		return utils.Errorf("failed to delete OAuth client: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+// OAuth token methods
+func (s *SqliteStorage) SaveOAuthToken(ctx context.Context, token *model.OAuthToken) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO oauth_tokens
+		(id, client_id, user_id, redirect_uri, scope, code, code_create_at, code_expires_in,
+		 access, access_create_at, access_expires_in, refresh, refresh_create_at, refresh_expires_in,
+		 created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		token.ID, token.ClientID, token.UserID, token.RedirectURI, token.Scope,
+		token.Code, token.CodeCreateAt.Unix(), int64(token.CodeExpiresIn),
+		token.Access, token.AccessCreateAt.Unix(), int64(token.AccessExpiresIn),
+		token.Refresh, token.RefreshCreateAt.Unix(), int64(token.RefreshExpiresIn),
+		time.Now().Unix(), time.Now().Unix())
+
+	if err != nil {
+		return utils.Errorf("failed to save OAuth token: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetOAuthTokenByCode(ctx context.Context, code string) (*model.OAuthToken, error) {
+	return s.getOAuthTokenByField(ctx, "code", code)
+}
+
+func (s *SqliteStorage) GetOAuthTokenByAccess(ctx context.Context, access string) (*model.OAuthToken, error) {
+	return s.getOAuthTokenByField(ctx, "access", access)
+}
+
+func (s *SqliteStorage) GetOAuthTokenByRefresh(ctx context.Context, refresh string) (*model.OAuthToken, error) {
+	return s.getOAuthTokenByField(ctx, "refresh", refresh)
+}
+
+func (s *SqliteStorage) getOAuthTokenByField(ctx context.Context, field, value string) (*model.OAuthToken, error) {
+	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT id, client_id, user_id, redirect_uri, scope, code, code_create_at, code_expires_in,
+			access, access_create_at, access_expires_in, refresh, refresh_create_at, refresh_expires_in
+		FROM oauth_tokens WHERE %s = ?`, field), value)
+
+	var token model.OAuthToken
+	var codeCreateAt, accessCreateAt, refreshCreateAt int64
+	var codeExpiresIn, accessExpiresIn, refreshExpiresIn int64
+
+	err := row.Scan(&token.ID, &token.ClientID, &token.UserID, &token.RedirectURI, &token.Scope,
+		&token.Code, &codeCreateAt, &codeExpiresIn,
+		&token.Access, &accessCreateAt, &accessExpiresIn,
+		&token.Refresh, &refreshCreateAt, &refreshExpiresIn)
+	if err != nil {
+		return nil, utils.Errorf("failed to get OAuth token: %w", err)
+	}
+
+	token.CodeCreateAt = time.Unix(codeCreateAt, 0)
+	token.CodeExpiresIn = time.Duration(codeExpiresIn)
+	token.AccessCreateAt = time.Unix(accessCreateAt, 0)
+	token.AccessExpiresIn = time.Duration(accessExpiresIn)
+	token.RefreshCreateAt = time.Unix(refreshCreateAt, 0)
+	token.RefreshExpiresIn = time.Duration(refreshExpiresIn)
+
+	return &token, nil
+}
+
+func (s *SqliteStorage) DeleteOAuthTokenByCode(ctx context.Context, code string) error {
+	return s.deleteOAuthTokenByField(ctx, "code", code)
+}
+
+func (s *SqliteStorage) DeleteOAuthTokenByAccess(ctx context.Context, access string) error {
+	return s.deleteOAuthTokenByField(ctx, "access", access)
+}
+
+func (s *SqliteStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error {
+	return s.deleteOAuthTokenByField(ctx, "refresh", refresh)
+}
+
+func (s *SqliteStorage) deleteOAuthTokenByField(ctx context.Context, field, value string) error {
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM oauth_tokens WHERE %s = ?`, field), value)
+	if err != nil {
+		return utils.Errorf("failed to delete OAuth token: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return utils.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }
 
 // Close closes the underlying SQL database connection.

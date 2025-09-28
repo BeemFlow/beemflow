@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +19,10 @@ import (
 	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/dsl"
 	beemhttp "github.com/beemflow/beemflow/http"
+	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
+	"github.com/google/uuid"
 )
 
 var (
@@ -61,7 +66,8 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(
 		newServeCmd(),
 		newRunCmd(),
-		// MCP commands now handled via operations framework
+		newOAuthCmd(),
+		// Other commands handled via operations framework
 	)
 
 	// Add auto-generated commands from the unified system
@@ -175,8 +181,25 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 		exit(4)
 	}
 
+	// Inject dependencies into context for OAuth token access
+	ctx := cmd.Context()
+
+	// Get config and inject into context
+	if cfg, err := api.GetConfig(); err == nil && cfg != nil {
+		ctx = api.WithConfig(ctx, cfg)
+
+		// Get storage and inject into context using both keys
+		if store, err := api.GetStoreFromConfig(cfg); err == nil && store != nil {
+			ctx = api.WithStore(ctx, store)
+			// Also inject using HTTP adapter's expected key
+			type contextKeyType string
+			const httpAdapterStorageKey contextKeyType = "storage"
+			ctx = context.WithValue(ctx, httpAdapterStorageKey, store)
+		}
+	}
+
 	// Use the API service instead of direct engine access
-	runID, outputs, err := api.RunSpec(cmd.Context(), flow, event)
+	runID, outputs, err := api.RunSpec(ctx, flow, event)
 	if err != nil {
 		utils.Error(constants.ErrFlowExecutionFailed, err)
 		exit(5)
@@ -393,4 +416,310 @@ func loadEvent(path, inline string) (map[string]any, error) {
 	}
 	// No event provided: return empty event for flows that don't use event data
 	return map[string]any{}, nil
+}
+
+// ============================================================================
+// OAUTH COMMAND
+// ============================================================================
+
+func newOAuthCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "oauth",
+		Short: "Manage OAuth providers and credentials",
+		Long:  "Manage OAuth providers and credentials for connecting BeemFlow to external services like Google, Slack, GitHub, etc.",
+	}
+
+	cmd.AddCommand(
+		newOAuthProvidersCmd(),
+		newOAuthCredentialsCmd(),
+	)
+
+	return cmd
+}
+
+func newOAuthProvidersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "providers",
+		Short: "Manage OAuth providers",
+		Long:  "Manage OAuth provider configurations (Google, GitHub, Slack, etc.)",
+	}
+
+	cmd.AddCommand(
+		newOAuthProvidersListCmd(),
+		newOAuthProvidersAddCmd(),
+		newOAuthProvidersRemoveCmd(),
+	)
+
+	return cmd
+}
+
+func newOAuthCredentialsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "credentials",
+		Short: "Manage OAuth credentials",
+		Long:  "Manage OAuth credentials for connecting to external services",
+	}
+
+	cmd.AddCommand(
+		newOAuthCredentialsListCmd(),
+		newOAuthCredentialsAddCmd(),
+		newOAuthCredentialsRemoveCmd(),
+	)
+
+	return cmd
+}
+
+func newOAuthProvidersListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List configured OAuth providers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			providers, err := store.ListOAuthProviders(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to list OAuth providers: %w", err)
+			}
+
+			if len(providers) == 0 {
+				fmt.Println("No OAuth providers configured")
+				return nil
+			}
+
+			fmt.Println("Configured OAuth providers:")
+			for _, p := range providers {
+				fmt.Printf("  %s: %s (%s)\n", p.ID, p.Name, p.AuthURL)
+			}
+
+			return nil
+		},
+	}
+}
+
+func newOAuthProvidersAddCmd() *cobra.Command {
+	var name, clientID, clientSecret, authURL, tokenURL string
+
+	cmd := &cobra.Command{
+		Use:   "add <provider-id>",
+		Short: "Add an OAuth provider",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			providerID := args[0]
+
+			// Validate required fields
+			if name == "" || clientID == "" || clientSecret == "" || authURL == "" || tokenURL == "" {
+				return fmt.Errorf("all fields are required: --name, --client-id, --client-secret, --auth-url, --token-url")
+			}
+
+			provider := &model.OAuthProvider{
+				ID:           providerID,
+				Name:         name,
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				AuthURL:      authURL,
+				TokenURL:     tokenURL,
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+
+			if err := store.SaveOAuthProvider(ctx, provider); err != nil {
+				return fmt.Errorf("failed to save OAuth provider: %w", err)
+			}
+
+			fmt.Printf("Added OAuth provider: %s\n", providerID)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Provider display name")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "OAuth client ID")
+	cmd.Flags().StringVar(&clientSecret, "client-secret", "", "OAuth client secret")
+	cmd.Flags().StringVar(&authURL, "auth-url", "", "OAuth authorization URL")
+	cmd.Flags().StringVar(&tokenURL, "token-url", "", "OAuth token URL")
+
+	return cmd
+}
+
+func newOAuthProvidersRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <provider-id>",
+		Short: "Remove an OAuth provider",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			providerID := args[0]
+
+			if err := store.DeleteOAuthProvider(ctx, providerID); err != nil {
+				return fmt.Errorf("failed to remove OAuth provider: %w", err)
+			}
+
+			fmt.Printf("Removed OAuth provider: %s\n", providerID)
+			return nil
+		},
+	}
+}
+
+func newOAuthCredentialsListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List OAuth credentials",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			creds, err := store.ListOAuthCredentials(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to list OAuth credentials: %w", err)
+			}
+
+			if len(creds) == 0 {
+				fmt.Println("No OAuth credentials configured")
+				return nil
+			}
+
+			fmt.Println("Configured OAuth credentials:")
+			for _, c := range creds {
+				status := "valid"
+				if c.IsExpired() {
+					status = "expired"
+				}
+				fmt.Printf("  %s:%s (%s)\n", c.Provider, c.Integration, status)
+			}
+
+			return nil
+		},
+	}
+}
+
+func newOAuthCredentialsAddCmd() *cobra.Command {
+	var accessToken, refreshToken string
+	var expiresIn int
+
+	cmd := &cobra.Command{
+		Use:   "add <provider> <integration>",
+		Short: "Add OAuth credentials",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			providerID := args[0]
+			integrationID := args[1]
+
+			// Check if provider exists
+			providerInfo, err := store.GetOAuthProvider(ctx, providerID)
+			if err != nil {
+				return fmt.Errorf("OAuth provider '%s' not found. Add it first with 'flow oauth providers add'", providerID)
+			}
+
+			var expiresAt *time.Time
+			if expiresIn > 0 {
+				t := time.Now().Add(time.Duration(expiresIn) * time.Second)
+				expiresAt = &t
+			}
+
+			cred := &model.OAuthCredential{
+				ID:           uuid.New().String(),
+				Provider:     providerID,
+				Integration:  integrationID,
+				AccessToken:  accessToken,
+				RefreshToken: &refreshToken,
+				ExpiresAt:    expiresAt,
+				Scope:        "https://www.googleapis.com/auth/spreadsheets", // Default scope, should be configurable
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+
+			if err := store.SaveOAuthCredential(ctx, cred); err != nil {
+				return fmt.Errorf("failed to save OAuth credentials: %w", err)
+			}
+
+			fmt.Printf("Added OAuth credentials for %s:%s\n", providerID, integrationID)
+			fmt.Printf("Provider: %s (%s)\n", providerInfo.Name, providerInfo.AuthURL)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&accessToken, "access-token", "", "OAuth access token")
+	cmd.Flags().StringVar(&refreshToken, "refresh-token", "", "OAuth refresh token")
+	cmd.Flags().IntVar(&expiresIn, "expires-in", 3600, "Token expiration time in seconds")
+
+	_ = cmd.MarkFlagRequired("access-token")
+	_ = cmd.MarkFlagRequired("refresh-token")
+
+	return cmd
+}
+
+func newOAuthCredentialsRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <provider> <integration>",
+		Short: "Remove OAuth credentials",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			store, err := getStoreFromConfig()
+			if err != nil {
+				return err
+			}
+
+			providerID := args[0]
+			integrationID := args[1]
+
+			// Find the credential by provider:integration
+			creds, err := store.ListOAuthCredentials(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to list credentials: %w", err)
+			}
+
+			var credID string
+			for _, c := range creds {
+				if c.Provider == providerID && c.Integration == integrationID {
+					credID = c.ID
+					break
+				}
+			}
+
+			if credID == "" {
+				return fmt.Errorf("credentials not found for %s:%s", providerID, integrationID)
+			}
+
+			if err := store.DeleteOAuthCredential(ctx, credID); err != nil {
+				return fmt.Errorf("failed to remove OAuth credentials: %w", err)
+			}
+
+			fmt.Printf("Removed OAuth credentials for %s:%s\n", providerID, integrationID)
+			return nil
+		},
+	}
+}
+
+// getStoreFromConfig creates a storage instance from the current config
+func getStoreFromConfig() (storage.Storage, error) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	return api.GetStoreFromConfig(cfg)
 }

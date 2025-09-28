@@ -103,12 +103,6 @@ type SearchArgs struct {
 	Query string `json:"query" flag:"query" description:"Search query"`
 }
 
-// MCPServeArgs represents arguments for MCP serve
-type MCPServeArgs struct {
-	Stdio bool   `json:"stdio" flag:"stdio" description:"Serve over stdin/stdout instead of HTTP"`
-	Addr  string `json:"addr" flag:"addr" description:"Listen address for HTTP mode"`
-}
-
 // Global operation registry
 var operationRegistry = make(map[string]*OperationDefinition)
 
@@ -993,15 +987,11 @@ func init() {
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
 			stdio, _ := cmd.Flags().GetBool("stdio")
 			addr, _ := cmd.Flags().GetString("addr")
+			debugFlag, _ := cmd.Flags().GetBool("debug")
 
-			// Default to stdio mode if no addr is provided and stdio not explicitly set
-			if !stdio && addr == "" {
-				stdio = true
-			}
-
-			debug, _ := cmd.Flags().GetBool("debug")
 			tools := GenerateMCPTools()
-			return mcp.Serve(debug, stdio, addr, tools)
+			utils.Info("Starting MCP server with %d tools (stdio=%v, addr=%s)", len(tools), stdio, addr)
+			return mcp.Serve(debugFlag, stdio, addr, tools)
 		},
 	})
 
