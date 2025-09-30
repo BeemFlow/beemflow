@@ -237,6 +237,7 @@ const (
 	ErrTemplateErrorStepID      = "template error in step ID %s: %w"
 	ErrForeachNotList           = "foreach expression did not evaluate to a list, got: %T"
 	ErrTemplateErrorForeach     = "template error in foreach expression: %w"
+	ErrTemplateResolutionFailed = "template resolution failed for: %s"
 )
 
 // Engine constants

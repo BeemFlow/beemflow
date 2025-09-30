@@ -27,6 +27,25 @@ func TestListFlows(t *testing.T) {
 }
 
 func TestGetFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	flowsDir := t.TempDir()
+	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	_, err := GetFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("GetFlow returned error: %v", err)
@@ -34,6 +53,25 @@ func TestGetFlow(t *testing.T) {
 }
 
 func TestValidateFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	flowsDir := t.TempDir()
+	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	err := ValidateFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("ValidateFlow returned error: %v", err)
@@ -41,6 +79,25 @@ func TestValidateFlow(t *testing.T) {
 }
 
 func TestGraphFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	flowsDir := t.TempDir()
+	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	_, err := GraphFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("GraphFlow returned error: %v", err)
@@ -48,6 +105,25 @@ func TestGraphFlow(t *testing.T) {
 }
 
 func TestStartRun(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	flowsDir := t.TempDir()
+	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	// Use test context with memory storage
 	ctx := WithStore(context.Background(), storage.NewMemoryStorage())
 	_, err := StartRun(ctx, "dummy", map[string]any{})
@@ -107,8 +183,8 @@ func TestListFlows_DirError(t *testing.T) {
 
 func TestGetFlow_FileNotFound(t *testing.T) {
 	_, err := GetFlow(context.Background(), "definitely_not_a_real_flow")
-	if err != nil {
-		t.Errorf("expected nil error for missing file, got: %v", err)
+	if err == nil {
+		t.Errorf("expected error for missing file, got nil")
 	}
 }
 
@@ -131,8 +207,8 @@ func TestGetFlow_ParseError(t *testing.T) {
 
 func TestValidateFlow_FileNotFound(t *testing.T) {
 	err := ValidateFlow(context.Background(), "definitely_not_a_real_flow")
-	if err != nil {
-		t.Errorf("expected nil error for missing file, got: %v", err)
+	if err == nil {
+		t.Errorf("expected error for missing file, got nil")
 	}
 }
 
@@ -160,6 +236,25 @@ func TestValidateFlow_SchemaError(t *testing.T) {
 }
 
 func TestStartRun_ConfigError(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	flowsDir := t.TempDir()
+	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	// Simulate config error by renaming config file
 	orig := "flow.config.json"
 	if err := os.Rename(orig, orig+".bak"); err != nil && !os.IsNotExist(err) {
@@ -167,8 +262,10 @@ func TestStartRun_ConfigError(t *testing.T) {
 	}
 	defer func() { _ = os.Rename(orig+".bak", orig) }()
 	_, err := StartRun(context.Background(), "dummy", map[string]any{})
-	if err != nil && !os.IsNotExist(err) {
-		t.Errorf("expected nil or not exist error, got: %v", err)
+	// Config errors happen during engine creation, but flow validation happens first
+	// Since we set up a valid flow, this should succeed despite missing config
+	if err != nil {
+		t.Errorf("expected no error since flow is valid, got: %v", err)
 	}
 }
 
@@ -337,22 +434,26 @@ func TestResumeRun_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestStartRun_ListRunsError(t *testing.T) {
-	// Patch storage to return error from ListRuns
-	// Not possible without interface injection or reflection, so just test empty runs case
-	if err := os.MkdirAll("flows", 0755); err != nil {
-		t.Fatalf("os.MkdirAll failed: %v", err)
+	// Set up a temporary flows directory with empty flow
+	flowsDir := t.TempDir()
+	emptyFlowPath := filepath.Join(flowsDir, "empty.flow.cue")
+	emptyFlowContent := `name: "empty"
+on: "cli.manual"
+steps: [{id: "dummy", use: "core.echo", with: {text: "dummy"}}]`
+	if err := os.WriteFile(emptyFlowPath, []byte(emptyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create empty flow: %v", err)
 	}
-	if err := os.WriteFile(config.DefaultFlowsDir+"/empty.flow.cue", []byte(`name: "empty"
-steps: []`), 0644); err != nil {
-		t.Fatalf("os.WriteFile failed: %v", err)
-	}
-	defer os.Remove(config.DefaultFlowsDir + "/empty.flow.cue")
+
+	originalDir := flowsDir
+	SetFlowsDir(flowsDir)
+	defer SetFlowsDir(originalDir)
+
 	id, err := StartRun(context.Background(), "empty", map[string]any{})
 	if err != nil {
 		t.Errorf("expected no error for empty runs, got: %v", err)
 	}
-	if id != uuid.Nil {
-		t.Errorf("expected uuid.Nil for no runs, got: %v", id)
+	if id == uuid.Nil {
+		t.Errorf("expected non-nil UUID for run, got uuid.Nil")
 	}
 }
 
@@ -514,7 +615,7 @@ func TestGetFlow_CustomDir(t *testing.T) {
 		t.Fatalf("failed to create custom flows2 dir: %v", err)
 	}
 	// minimal valid flow
-	cue := []byte("name: \"myflow\"\non: \"cli.manual\"\nsteps: []\n")
+	cue := []byte("name: \"myflow\"\non: \"cli.manual\"\nsteps: [{id: \"test\", use: \"core.echo\", with: {text: \"test\"}}]\n")
 	if err := os.WriteFile(filepath.Join(cust, "myflow.flow.cue"), cue, 0644); err != nil {
 		t.Fatalf("failed to write myflow file: %v", err)
 	}
@@ -783,8 +884,8 @@ func TestGetFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	flow, err := GetFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("GetFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("GetFlow should error for non-existent flow, got nil")
 	}
 	if flow.Name != "" {
 		t.Errorf("Expected empty flow for non-existent, got %v", flow)
@@ -804,8 +905,8 @@ func TestValidateFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	err = ValidateFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("ValidateFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("ValidateFlow should error for non-existent flow, got nil")
 	}
 }
 
@@ -822,8 +923,8 @@ func TestGraphFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	graph, err := GraphFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("GraphFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("GraphFlow should error for non-existent flow, got nil")
 	}
 	if graph != "" {
 		t.Errorf("Expected empty graph for non-existent flow, got %s", graph)
@@ -843,8 +944,8 @@ func TestStartRun_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	runID, err := StartRun(ctx, "nonexistent", map[string]any{})
-	if err != nil {
-		t.Errorf("StartRun should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("StartRun should error for non-existent flow, got nil")
 	}
 	if runID != uuid.Nil {
 		t.Errorf("Expected nil UUID for non-existent flow, got %v", runID)

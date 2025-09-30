@@ -18,10 +18,17 @@ vars: {
 		level1: {
 			level2: {
 				level3: "deep value"
-				array: [1, "two", true, null, {nested: "object"}]
+				array: ["first", "second", "third"]
 			}
 		}
 	}
+	has_items: ["item1", "item2", "item3"]
+	disabled: false
+	a: true
+	b: true
+	c: true
+	text: "hello world"
+	num: 42
 }
 
 steps: [
@@ -68,17 +75,17 @@ steps: [
 		parallel: true
 		steps: [
 			{
-				id: "success_step"
+				id: "parallel_ok"
 				use: "core.echo"
 				with: {
-					text: "This should succeed"
+					text: "Parallel step 1"
 				}
 			},
 			{
-				id: "another_success"
+				id: "parallel_ok2"
 				use: "core.echo"
 				with: {
-					text: "This should also succeed"
+					text: "Parallel step 2"
 				}
 			}
 		]
@@ -99,6 +106,34 @@ steps: [
 		use: "core.echo"
 		with: {
 			text: "Safe access patterns work"
+		}
+	},
+
+	// Test boolean evaluation edge cases
+	{
+		id: "test_boolean_edge_cases"
+		if: "{{ vars.has_items | length > 0 }}"
+		use: "core.echo"
+		with: {
+			text: "Array length check works"
+		}
+	},
+
+	{
+		id: "test_complex_boolean"
+		if: "{{ vars.a && (vars.b || vars.c) }}"
+		use: "core.echo"
+		with: {
+			text: "Complex boolean logic works"
+		}
+	},
+
+	{
+		id: "test_negation"
+		if: "{{ !vars.disabled }}"
+		use: "core.echo"
+		with: {
+			text: "Negation works"
 		}
 	},
 

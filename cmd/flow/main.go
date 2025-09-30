@@ -168,7 +168,8 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 	}
 
 	// Parse the flow file
-	flow, err := cue.ParseFile(args[0])
+	parser := cue.NewParser()
+	flow, err := parser.ParseFile(args[0])
 	if err != nil {
 		utils.Error("Flow parse error: %v", err)
 		exit(1)

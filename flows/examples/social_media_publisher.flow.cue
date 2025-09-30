@@ -12,7 +12,7 @@ post approved content to Twitter, and generate new drafts when queue is empty.
 Runs every 5 minutes via cron or manually.
 """
 
-on: ["cli.manual", "cron.*/5 * * * *"]
+on: "cli.manual"
 
 vars: {
 	SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"
@@ -49,29 +49,29 @@ steps: [
 		id: "read_sheet"
 		use: "google_sheets.values.get"
 		with: {
-			spreadsheetId: vars.SPREADSHEET_ID
-			range:        vars.SHEET_NAME + "!A:E"
+			spreadsheetId: {{ vars.SPREADSHEET_ID }}
+			range:        {{ vars.SHEET_NAME }} + "!A:E"
 		}
 	},
 
 	// Simplified processing - focus on core patterns
 	{
 		id: "check_queue"
-		if: "len(outputs.read_sheet.values) > 0"
+		if: "{{ outputs.read_sheet.values | length > 0 }}"
 		use: "core.echo"
 		with: {
-			text: "Found \(len(outputs.read_sheet.values)) rows to process"
+			text: "Found {{ outputs.read_sheet.values | length }} rows to process"
 		}
 	},
 
 	// Generate new draft if needed
 	{
 		id: "generate_draft"
-		if: "len(outputs.read_sheet.values) == 0"
+		if: "{{ outputs.read_sheet.values | length == 0 }}"
 		use: "anthropic.chat_completion"
 		with: {
-			model: vars.MODEL
-			system: vars.BASE_PROMPT
+			model: {{ vars.MODEL }}
+			system: {{ vars.BASE_PROMPT }}
 			messages: [{
 				role: "user"
 				content: "Generate a fresh BeemFlow post. Pick any angle that feels right today."
@@ -82,11 +82,11 @@ steps: [
 	// Add new draft to sheet
 	{
 		id: "add_draft"
-		if: "outputs.generate_draft.content[0].text != _|_"
+		if: "{{ outputs.generate_draft.content[0].text != \"\" }}"
 		use: "google_sheets.values.append"
 		with: {
-			spreadsheetId: vars.SPREADSHEET_ID
-			range:        vars.SHEET_NAME + "!A:E"
+			spreadsheetId: {{ vars.SPREADSHEET_ID }}
+			range:        {{ vars.SHEET_NAME }} + "!A:E"
 			values: [[
 				outputs.generate_draft.content[0].text,
 				"draft",

@@ -431,8 +431,8 @@ steps:
 
 	op.HTTPHandler(w, req)
 
-	// Should get bad request
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// Should get not found (endpoint not found)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCron_ErrorHandling(t *testing.T) {

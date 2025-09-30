@@ -155,6 +155,19 @@ func (r *RunsAccess) Previous() map[string]any {
 // validIdentifierRegex matches valid Go-style identifiers
 var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// ExecutionMetrics tracks performance and usage metrics
+type ExecutionMetrics struct {
+	TotalExecutions      int64
+	SuccessfulExecutions int64
+	FailedExecutions     int64
+	PausedExecutions     int64
+	TotalExecutionTime   time.Duration
+	AverageExecutionTime time.Duration
+	CacheHits            int64
+	CacheMisses          int64
+	LastExecutionTime    time.Time
+}
+
 // Engine is the core runtime for executing BeemFlow flows. It manages adapters, event bus, and execution state.
 type Engine struct {
 	Adapters  *adapter.Registry
@@ -169,6 +182,12 @@ type Engine struct {
 	// Current execution context (set during Execute)
 	currentFlow  *model.Flow
 	currentRunID uuid.UUID
+	// Template context cache for performance optimization
+	templateCache      map[string]map[string]any
+	templateCacheMutex sync.RWMutex
+	// Execution metrics for monitoring and performance analysis
+	metrics      ExecutionMetrics
+	metricsMutex sync.RWMutex
 	// NOTE: Storage, blob, eventbus, and cron are pluggable; in-memory is the default for now.
 	// Call Close() to clean up resources (e.g., MCPAdapter subprocesses) when done.
 }
@@ -244,6 +263,7 @@ func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engi
 		waiting:          make(map[string]*PausedRun),
 		completedOutputs: make(map[string]map[string]any),
 		Storage:          storage.NewMemoryStorage(),
+		templateCache:    make(map[string]map[string]any),
 	}
 }
 
@@ -261,6 +281,7 @@ func NewEngine(
 		Storage:          storage,
 		waiting:          make(map[string]*PausedRun),
 		completedOutputs: make(map[string]map[string]any),
+		templateCache:    make(map[string]map[string]any),
 	}
 }
 
@@ -270,9 +291,23 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 		return nil, nil
 	}
 
+	startTime := time.Now()
+	e.updateMetrics(func(m *ExecutionMetrics) {
+		m.TotalExecutions++
+		m.LastExecutionTime = startTime
+	})
+
+	utils.Info("Starting flow execution: %s (run_id: %s)", flow.Name, e.currentRunID)
+
 	// Initialize outputs and handle empty flow as no-op
 	outputs := make(map[string]any)
 	if len(flow.Steps) == 0 {
+		utils.Info("Flow %s completed: no steps to execute", flow.Name)
+		e.updateMetrics(func(m *ExecutionMetrics) {
+			m.SuccessfulExecutions++
+			m.TotalExecutionTime += time.Since(startTime)
+			m.AverageExecutionTime = m.TotalExecutionTime / time.Duration(m.TotalExecutions)
+		})
 		return outputs, nil
 	}
 
@@ -281,7 +316,8 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 	// Check if this is a duplicate run
 	if runID == uuid.Nil {
-		// Duplicate detected - return empty outputs and no error to signal successful deduplication
+		utils.Info("Duplicate run detected for flow %s, skipping execution", flow.Name)
+		e.updateMetrics(func(m *ExecutionMetrics) { m.SuccessfulExecutions++ })
 		return map[string]any{}, nil
 	}
 
@@ -290,6 +326,8 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 	e.currentFlow = flow
 	e.currentRunID = runID
 	e.mu.Unlock()
+
+	utils.Info("Executing flow %s with %d steps", flow.Name, len(flow.Steps))
 
 	// Execute the flow steps
 	outputs, err := e.executeStepsWithPersistence(ctx, flow, stepCtx, 0, runID)
@@ -340,14 +378,34 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 
 // finalizeExecution handles completion, error cases, and catch blocks
 func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event map[string]any, outputs map[string]any, err error, runID uuid.UUID) (map[string]any, error) {
+	// Determine final status and update metrics
+	executionTime := time.Since(e.metrics.LastExecutionTime)
+	e.updateMetrics(func(m *ExecutionMetrics) {
+		if err != nil {
+			if strings.Contains(err.Error(), constants.ErrAwaitEventPause) {
+				m.PausedExecutions++
+			} else {
+				m.FailedExecutions++
+			}
+		} else {
+			m.SuccessfulExecutions++
+		}
+		m.TotalExecutionTime += executionTime
+		m.AverageExecutionTime = m.TotalExecutionTime / time.Duration(m.TotalExecutions)
+	})
+
 	// Determine final status
 	status := model.RunSucceeded
 	if err != nil {
 		if strings.Contains(err.Error(), constants.ErrAwaitEventPause) {
 			status = model.RunWaiting
+			utils.Info("Flow %s paused waiting for event", flow.Name)
 		} else {
 			status = model.RunFailed
+			utils.Error("Flow %s failed: %v", flow.Name, err)
 		}
+	} else {
+		utils.Info("Flow %s completed successfully in %v", flow.Name, executionTime)
 	}
 
 	// Update final run status
@@ -482,6 +540,11 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 	// Use simple template resolution for runtime-dependent tokens
 	context := e.prepareTemplateContext(stepCtx)
 	renderedToken := cuepkg.ResolveRuntimeTemplates(tokenRaw, context)
+
+	// Check if template resolution failed (still contains {{ }})
+	if strings.Contains(renderedToken, "{{") {
+		return constants.EmptyString, utils.Errorf(constants.ErrTemplateResolutionFailed, tokenRaw)
+	}
 
 	return renderedToken, nil
 }
@@ -714,6 +777,7 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 		if !shouldExecute {
 			// Skip this step - condition not met
 			utils.Debug("Skipping step %s - condition not met: %s", stepID, step.If)
+			stepCtx.SetOutput(stepID, map[string]any{"status": "skipped"})
 			return nil
 		}
 	}
@@ -880,11 +944,16 @@ func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, erro
 	if !strings.Contains(stepID, "{{") {
 		return stepID, nil
 	}
-	
+
 	context := e.prepareTemplateContext(stepCtx)
 	rendered := cuepkg.ResolveRuntimeTemplates(stepID, context)
-	
-	// Return the resolved value (even if empty string - that's a valid result)
+
+	// If template resolution resulted in empty string, use original stepID
+	// Empty step IDs cause runtime failures as they're used as map keys
+	if rendered == "" {
+		return stepID, nil
+	}
+
 	return rendered, nil
 }
 
@@ -1054,10 +1123,28 @@ func (e *Engine) createEnvProxy() map[string]string {
 	for _, envPair := range os.Environ() {
 		pair := strings.SplitN(envPair, "=", 2)
 		if len(pair) == 2 {
-			// Filter out keys that are invalid CUE identifiers (like single "_")
 			key := pair[0]
-			if key == "_" || key == "" {
+			// Filter out keys that are invalid CUE identifiers
+			if key == "_" || key == "" || strings.HasPrefix(key, "__") {
 				continue
+			}
+			// Check if it's a valid CUE identifier (starts with letter or _, followed by alphanumeric or _)
+			if len(key) > 0 {
+				first := key[0]
+				if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+					continue // Skip keys that don't start with letter or underscore
+				}
+				valid := true
+				for i := 1; i < len(key); i++ {
+					c := key[i]
+					if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+						valid = false
+						break
+					}
+				}
+				if !valid {
+					continue
+				}
 			}
 			env[key] = pair[1]
 		}
@@ -1088,8 +1175,22 @@ func (e *Engine) createRunsContext() map[string]any {
 }
 
 // prepareTemplateContext creates a simple context map for runtime template resolution
+// prepareTemplateContext creates a template context for a step
+// Uses caching to avoid repeated context building for the same execution
 func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
+	// Create a cache key based on step context snapshot
 	snapshot := stepCtx.Snapshot()
+	cacheKey := fmt.Sprintf("%p-%d-%d", stepCtx, len(snapshot.Outputs), len(snapshot.Vars))
+
+	// Check cache first (thread-safe)
+	e.templateCacheMutex.RLock()
+	if cached, exists := e.templateCache[cacheKey]; exists {
+		e.templateCacheMutex.RUnlock()
+		return cached
+	}
+	e.templateCacheMutex.RUnlock()
+
+	// Build context if not cached
 	envStrings := e.createEnvProxy()
 
 	// Convert env map[string]string to map[string]any for CUE
@@ -1098,7 +1199,7 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 		env[k] = v
 	}
 
-	return map[string]any{
+	context := map[string]any{
 		"outputs": snapshot.Outputs,
 		"vars":    snapshot.Vars,
 		"secrets": snapshot.Secrets,
@@ -1106,6 +1207,35 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 		"env":     env,
 		"runs":    e.createRunsContext(),
 	}
+
+	// Cache the result (thread-safe)
+	e.templateCacheMutex.Lock()
+	e.templateCache[cacheKey] = context
+	e.templateCacheMutex.Unlock()
+
+	return context
+}
+
+// clearTemplateCache clears the template context cache
+// Useful for testing or when memory usage becomes too high
+func (e *Engine) clearTemplateCache() {
+	e.templateCacheMutex.Lock()
+	e.templateCache = make(map[string]map[string]any)
+	e.templateCacheMutex.Unlock()
+}
+
+// updateMetrics safely updates execution metrics
+func (e *Engine) updateMetrics(fn func(*ExecutionMetrics)) {
+	e.metricsMutex.Lock()
+	defer e.metricsMutex.Unlock()
+	fn(&e.metrics)
+}
+
+// GetMetrics returns a copy of the current execution metrics
+func (e *Engine) GetMetrics() ExecutionMetrics {
+	e.metricsMutex.RLock()
+	defer e.metricsMutex.RUnlock()
+	return e.metrics
 }
 
 // isValidIdentifier checks if a string is a valid template identifier

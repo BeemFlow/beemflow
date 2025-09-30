@@ -45,24 +45,35 @@ steps: [
 		]
 	},
 
-	// Test foreach with parallel processing using CUE comprehensions
-	for item in vars.test_data {
-		"process_data_parallel_\(item)": {
-			use: "core.echo"
-			with: {
-				text: "Processing \(item) in parallel"
+	// Test foreach with parallel processing
+	{
+		id: "process_data_parallel"
+		foreach: "{{ vars.test_data }}"
+		parallel: true
+		steps: [
+			{
+				id: "echo_parallel"
+				use: "core.echo"
+				with: {
+					text: "Processing {{ item }} in parallel"
+				}
 			}
-		}
+		]
 	},
 
 	// Test foreach with sequential processing for comparison
-	for item in vars.test_data {
-		"process_data_sequential_\(item)": {
-			use: "core.echo"
-			with: {
-				text: "Processing \(item) sequentially"
+	{
+		id: "process_data_sequential"
+		foreach: "{{ vars.test_data }}"
+		steps: [
+			{
+				id: "echo_sequential"
+				use: "core.echo"
+				with: {
+					text: "Processing {{ item }} sequentially"
+				}
 			}
-		}
+		]
 	},
 
 	// Test nested parallel within foreach
