@@ -12,12 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"cuelang.org/go/cue/cuecontext"
 	"github.com/beemflow/beemflow/adapter"
 	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/cue"
+	cuepkg "github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
@@ -482,7 +481,7 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 
 	// Use simple template resolution for runtime-dependent tokens
 	context := e.prepareTemplateContext(stepCtx)
-	renderedToken := cue.ResolveRuntimeTemplates(tokenRaw, context)
+	renderedToken := cuepkg.ResolveRuntimeTemplates(tokenRaw, context)
 
 	return renderedToken, nil
 }
@@ -794,106 +793,8 @@ func (e *Engine) executeSequentialBlock(ctx context.Context, step *model.Step, s
 
 // evaluateForeachExpression evaluates a foreach expression and returns the array directly
 func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) []any {
-	// For foreach expressions like "{{items}}" or "{{vars.items}}", extract and evaluate
-	if strings.HasPrefix(expr, "{{") && strings.HasSuffix(expr, "}}") {
-		innerExpr := strings.TrimSpace(expr[2 : len(expr)-2])
-
-		// Try to directly access the value using dot notation
-		parts := strings.Split(innerExpr, ".")
-		var val any
-
-		// Special handling: if it's a single word, check vars first
-		if len(parts) == 1 {
-			if vars, ok := context["vars"].(map[string]any); ok {
-				if v, exists := vars[innerExpr]; exists {
-					val = v
-				}
-			}
-		}
-
-		// If not found in vars, traverse from context root
-		if val == nil {
-			val = context
-			for _, part := range parts {
-				if m, ok := val.(map[string]any); ok {
-					val = m[part]
-				} else {
-					val = nil
-					break
-				}
-			}
-		}
-
-		// If we got an array, return it
-		if items, ok := val.([]any); ok {
-			return items
-		}
-
-		// Also handle []map[string]any
-		if items, ok := val.([]map[string]any); ok {
-			result := make([]any, len(items))
-			for i, item := range items {
-				result[i] = item
-			}
-			return result
-		}
-
-		// Also handle []string
-		if items, ok := val.([]string); ok {
-			result := make([]any, len(items))
-			for i, item := range items {
-				result[i] = item
-			}
-			return result
-		}
-
-		return nil
-	}
-
-	// For simple expressions like "items", try to resolve from vars first
-	if vars, ok := context["vars"].(map[string]any); ok {
-		if val, exists := vars[expr]; exists {
-			if items, ok := val.([]any); ok {
-				return items
-			}
-			// Also handle []map[string]any
-			if items, ok := val.([]map[string]any); ok {
-				result := make([]any, len(items))
-				for i, item := range items {
-					result[i] = item
-				}
-				return result
-			}
-		}
-	}
-
-	// Also try CUE evaluation as fallback
-	ctx := cuecontext.New()
-	cueData := ctx.Encode(context)
-	exprValue := ctx.CompileString(expr)
-	if exprValue.Err() != nil {
-		return nil
-	}
-
-	result := cueData.Unify(exprValue)
-	if result.Err() != nil {
-		return nil
-	}
-
-	// Try to extract as a list
-	list, err := result.List()
-	if err != nil {
-		return nil
-	}
-
-	var items []any
-	for list.Next() {
-		val := list.Value()
-		goValue := cue.ExtractCUEValue(val)
-		items = append(items, goValue)
-	}
-
-	return items
+	// Use CUE to evaluate the expression and extract the array directly
+	return cuepkg.EvaluateCUEArray(expr, context)
 }
 
 // executeForeachBlock handles foreach loop execution
@@ -906,30 +807,9 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 
 	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
 		innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
-		// For foreach, we need the actual array value, not a string representation
-		list = e.evaluateForeachExpression("{{"+innerExpr+"}}", context)
+		list = e.evaluateForeachExpression(innerExpr, context)
 	} else {
 		list = e.evaluateForeachExpression(trimmed, context)
-	}
-
-	// If evaluation failed, try legacy string parsing
-	if list == nil {
-		resolved := cue.ResolveRuntimeTemplates("{{"+trimmed+"}}", context)
-
-		// Try to parse as JSON array first, then fallback to simple string splitting
-		if strings.HasPrefix(resolved, "[") {
-			// Assume it's a JSON array
-			if err := json.Unmarshal([]byte(resolved), &list); err != nil {
-				return utils.Errorf("failed to parse foreach expression as JSON array: %w", err)
-			}
-		} else {
-			// Fallback: treat as comma-separated string
-			parts := strings.Split(resolved, ",")
-			list = make([]any, len(parts))
-			for i, part := range parts {
-				list[i] = strings.TrimSpace(part)
-			}
-		}
 	}
 
 	if len(list) == 0 {
@@ -997,7 +877,7 @@ func (e *Engine) executeIterationSteps(ctx context.Context, steps []model.Step, 
 // renderStepID renders a step ID with simple template support
 func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, error) {
 	context := e.prepareTemplateContext(stepCtx)
-	rendered := cue.ResolveRuntimeTemplates(stepID, context)
+	rendered := cuepkg.ResolveRuntimeTemplates(stepID, context)
 
 	if rendered == "" {
 		return stepID, nil // fallback to original stepID if not resolved
@@ -1202,7 +1082,13 @@ func (e *Engine) createRunsContext() map[string]any {
 // prepareTemplateContext creates a simple context map for runtime template resolution
 func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 	snapshot := stepCtx.Snapshot()
-	env := e.createEnvProxy()
+	envStrings := e.createEnvProxy()
+
+	// Convert env map[string]string to map[string]any for CUE
+	env := make(map[string]any, len(envStrings))
+	for k, v := range envStrings {
+		env[k] = v
+	}
 
 	return map[string]any{
 		"outputs": snapshot.Outputs,
@@ -1232,6 +1118,7 @@ func isValidIdentifier(s string) bool {
 }
 
 // evaluateCondition evaluates a condition expression and returns whether it's true
+// Uses CUE's native boolean evaluation instead of custom isTruthy logic
 func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool, error) {
 	trimmed := strings.TrimSpace(condition)
 
@@ -1242,43 +1129,9 @@ func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool
 
 	innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
 	context := e.prepareTemplateContext(stepCtx)
-	result := cue.ResolveRuntimeTemplates("{{"+innerExpr+"}}", context)
-	result = strings.TrimSpace(result)
-	return isTruthy(result), nil
-}
 
-// isTruthy checks if a string result represents a truthy value
-func isTruthy(result string) bool {
-	// Explicit boolean strings
-	if result == "true" {
-		return true
-	}
-	if result == "false" {
-		return false
-	}
-
-	// Empty strings are falsy
-	if result == "" {
-		return false
-	}
-
-	// The string "0" is falsy (for numeric zero)
-	if result == "0" {
-		return false
-	}
-
-	// "null" or "<nil>" is falsy
-	if result == "null" || result == "<nil>" {
-		return false
-	}
-
-	// Unresolved templates (failed evaluation) are falsy
-	if strings.HasPrefix(result, "{{") && strings.HasSuffix(result, "}}") {
-		return false
-	}
-
-	// Non-empty strings are truthy (except "0", "null", and unresolved templates)
-	return true
+	// Use CUE's native boolean evaluation
+	return cuepkg.EvaluateCUEBoolean(innerExpr, context)
 }
 
 // createIterationContext creates a new context for foreach iterations
@@ -1320,7 +1173,7 @@ func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepI
 func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) any {
 	switch v := value.(type) {
 	case string:
-		return cue.ResolveRuntimeTemplates(v, context)
+		return cuepkg.ResolveRuntimeTemplates(v, context)
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {

@@ -98,7 +98,7 @@ func TestTemplateContextPrepare(t *testing.T) {
 	}
 
 	// Check that environment variables are included
-	if env, ok := context["env"].(map[string]string); !ok || len(env) == 0 {
+	if env, ok := context["env"].(map[string]any); !ok || len(env) == 0 {
 		t.Errorf("Environment variables not included in template context")
 	}
 }
@@ -471,7 +471,7 @@ func TestExecute_ParallelForeachEdgeCases(t *testing.T) {
 		Steps: []model.Step{{
 			ID:       "s1",
 			Use:      "core.echo",
-			Foreach:  "{{list}}",
+			Foreach:  "{{ event.list }}",
 			As:       "item",
 			Parallel: true,
 			Do:       []model.Step{{ID: "d1", Use: "nonexistent.adapter"}},

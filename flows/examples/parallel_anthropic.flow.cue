@@ -55,8 +55,8 @@ steps: [
 		with: {
 			text: """
 Combined responses:
-- chat1: {{ outputs.chat1.content.0.text }}
-- chat2: {{ outputs.chat2.content.0.text }}
+- chat1: {{ outputs.chat1.content[0].text }}
+- chat2: {{ outputs.chat2.content[0].text }}
 """
 		}
 	}

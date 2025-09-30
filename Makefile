@@ -59,6 +59,7 @@ coverage:
 # ────────────────────────────────────────────────────────────────────────────
 
 e2e:
+	@rm -f .beemflow/flow.db .beemflow/flow.db-shm .beemflow/flow.db-wal
 	@for flow in $(E2E_FLOWS); do timestamp=$$(date +%s); echo "Running $$flow"; go run $(CMD_PATH) run --event-json "{\"timestamp\":\"$$timestamp\"}" $$flow || echo "Flow $$flow failed, continuing..."; done; true
 
 integration:

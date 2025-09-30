@@ -106,11 +106,11 @@ steps: [
 - Supports all HTTP methods
 
 🤖 OpenAI Manifest Tool:
-- Response: {{ outputs.test_openai_manifest.choices.0.message.content }}
+- Response: {{ outputs.test_openai_manifest.choices[0].message.content }}
 - API-specific defaults and validation
 
 🧠 Anthropic Manifest Tool:
-- Response: {{ outputs.test_anthropic_manifest.content.0.text }}
+- Response: {{ outputs.test_anthropic_manifest.content[0].text }}
 - Different response structure handled automatically
 
 📤 HTTP POST Example:

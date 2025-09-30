@@ -82,13 +82,13 @@ steps: [
 	// Add new draft to sheet
 	{
 		id: "add_draft"
-		if: "outputs.generate_draft.content.0.text != _|_"
+		if: "outputs.generate_draft.content[0].text != _|_"
 		use: "google_sheets.values.append"
 		with: {
 			spreadsheetId: vars.SPREADSHEET_ID
 			range:        vars.SHEET_NAME + "!A:E"
 			values: [[
-				outputs.generate_draft.content.0.text,
+				outputs.generate_draft.content[0].text,
 				"draft",
 				"FALSE",
 				"FALSE",

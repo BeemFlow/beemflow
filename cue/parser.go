@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -148,151 +148,187 @@ func ResolveRuntimeTemplates(text string, context map[string]any) string {
 	re := regexp.MustCompile(`\{\{\s*([^{}]+)\s*\}\}`)
 	return re.ReplaceAllStringFunc(text, func(match string) string {
 		expr := strings.TrimSpace(match[2 : len(match)-2]) // Remove {{ }}
-		return resolveRuntimeExpression(expr, context)
+		return evaluateCUEExpression(expr, context)
 	})
 }
 
-// resolveRuntimeExpression resolves complex expressions using CUE evaluation
-func resolveRuntimeExpression(expr string, context map[string]any) string {
-	// For complex expressions, use CUE evaluation
-	if strings.Contains(expr, " ") || strings.Contains(expr, ">") || strings.Contains(expr, "<") ||
-		strings.Contains(expr, "and") || strings.Contains(expr, "or") || strings.Contains(expr, "not") ||
-		strings.Contains(expr, "|") || strings.Contains(expr, "[") || strings.Contains(expr, "(") {
-		return evaluateCUEExpression(expr, context)
+// normalizeSingleQuotes converts single-quoted strings to double-quoted for CUE compatibility
+// CUE treats 'x' as bytes, not strings, so we need to convert 'str' to "str"
+func normalizeSingleQuotes(expr string) string {
+	var result strings.Builder
+	inDoubleQuote := false
+	inSingleQuote := false
+
+	for i := 0; i < len(expr); i++ {
+		ch := expr[i]
+
+		switch ch {
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+			result.WriteByte(ch)
+		case '\'':
+			if !inDoubleQuote {
+				// Convert single quote to double quote
+				result.WriteByte('"')
+				inSingleQuote = !inSingleQuote
+			} else {
+				result.WriteByte(ch)
+			}
+		case '\\':
+			// Handle escape sequences
+			result.WriteByte(ch)
+			if i+1 < len(expr) {
+				i++
+				result.WriteByte(expr[i])
+			}
+		default:
+			result.WriteByte(ch)
+		}
 	}
 
-	// For simple expressions, try direct resolution first, then fall back to CUE
-	result := resolveSimpleExpression(expr, context)
-	if result != "{{"+expr+"}}" {
-		return result
-	}
+	return result.String()
+}
 
-	// If simple resolution fails, try CUE evaluation
+// EvaluateCUEExpression evaluates expressions using CUE and returns a string (exported for engine use)
+func EvaluateCUEExpression(expr string, context map[string]any) string {
 	return evaluateCUEExpression(expr, context)
 }
 
-// resolveSimpleExpression handles basic dot-notation access
-func resolveSimpleExpression(expr string, context map[string]any) string {
-	parts := strings.Split(expr, ".")
+// EvaluateCUEBoolean evaluates a CUE expression and returns it as a boolean
+// This eliminates the need for custom isTruthy logic by using CUE's native bool evaluation
+func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
+	ctx := cuecontext.New()
 
-	if len(parts) < 1 {
-		return "{{" + expr + "}}"
+	// Normalize single quotes to double quotes
+	expr = normalizeSingleQuotes(expr)
+
+	// Create a CUE script with the context
+	contextScript := buildCUEContextScript(context)
+	if strings.HasSuffix(contextScript, "}") {
+		contextScript = contextScript[:len(contextScript)-1]
+		contextScript += "\tresult: " + expr + "\n}"
+	} else {
+		contextScript = "{\n\tresult: " + expr + "\n}"
 	}
 
-	switch parts[0] {
-	case "outputs", "steps":
-		if len(parts) >= 2 {
-			if stepOutputs, ok := context["outputs"].(map[string]any); ok {
-				if stepOutput, exists := stepOutputs[parts[1]]; exists {
-					return resolveNestedValue(stepOutput, parts[2:])
-				}
-			}
-		}
-	case "vars":
-		if vars, ok := context["vars"].(map[string]any); ok {
-			return resolveNestedValue(vars, parts[1:])
-		}
-	case "secrets":
-		if secrets, ok := context["secrets"].(map[string]any); ok {
-			return resolveNestedValue(secrets, parts[1:])
-		}
-	case "event":
-		if event, ok := context["event"].(map[string]any); ok {
-			return resolveNestedValue(event, parts[1:])
-		}
-	case "env":
-		if env, ok := context["env"].(map[string]string); ok {
-			if len(parts) >= 2 {
-				if val, ok := env[parts[1]]; ok {
-					return val
-				}
-			}
-		}
-	case "runs":
-		if runs, ok := context["runs"].(map[string]any); ok {
-			return resolveNestedValue(runs, parts[1:])
-		}
-	default:
-		// Check if it's a variable reference (e.g., "item" or "item.field")
-		// First, check if the first part is a variable in vars
-		if vars, ok := context["vars"].(map[string]any); ok {
-			// Check if the whole expression is a simple var
-			if val, exists := vars[expr]; exists {
-				if str, ok := val.(string); ok {
-					return str
-				}
-				if bytes, err := json.Marshal(val); err == nil {
-					return string(bytes)
-				}
-			}
-			// Also check if parts[0] is a variable and resolve nested
-			if val, exists := vars[parts[0]]; exists {
-				return resolveNestedValue(val, parts[1:])
-			}
-		}
-		// Also check top-level context for backwards compatibility
-		if val, ok := context[expr]; ok {
-			if str, ok := val.(string); ok {
-				return str
-			}
-			if bytes, err := json.Marshal(val); err == nil {
-				return string(bytes)
-			}
-		}
+	cueValue := ctx.CompileString(contextScript)
+	if cueValue.Err() != nil {
+		// CUE compilation errors (like undefined vars) are treated as falsy
+		return false, nil
 	}
 
-	return "{{" + expr + "}}"
+	resultField := cueValue.LookupPath(cue.ParsePath("result"))
+	if resultField.Err() != nil {
+		// CUE evaluation errors (like missing fields) are treated as falsy
+		return false, nil
+	}
+
+	// Try to get as boolean directly
+	if boolVal, err := resultField.Bool(); err == nil {
+		return boolVal, nil
+	}
+
+	// Try to get as number (non-zero numbers are truthy)
+	if numVal, err := resultField.Int64(); err == nil {
+		return numVal != 0, nil
+	}
+	if floatVal, err := resultField.Float64(); err == nil {
+		return floatVal != 0.0, nil
+	}
+
+	// Fallback: check for common truthy/falsy string representations
+	strVal, err := resultField.String()
+	if err != nil {
+		// If we can't get string, bool, or number, treat as falsy
+		return false, nil
+	}
+
+	// Apply truthiness rules for string values
+	strVal = strings.TrimSpace(strVal)
+	if strVal == "" || strVal == "false" || strVal == "0" || strVal == "null" || strVal == "<nil>" || strVal == "_|_" {
+		return false, nil
+	}
+	if strings.HasPrefix(strVal, "{{") && strings.HasSuffix(strVal, "}}") {
+		// Unresolved template
+		return false, nil
+	}
+
+	return true, nil
 }
 
-// evaluateCUEExpression evaluates complex expressions using CUE
-func evaluateCUEExpression(expr string, context map[string]any) string {
-	// Convert single quotes to double quotes for CUE compatibility
-	cueExpr := strings.ReplaceAll(expr, "'", "\"")
-
-	// First try to evaluate as a simple literal without context
+// EvaluateCUEArray evaluates a CUE expression and returns it as a Go slice
+func EvaluateCUEArray(expr string, context map[string]any) []any {
 	ctx := cuecontext.New()
-	simpleValue := ctx.CompileString(cueExpr)
-	if simpleValue.Err() == nil {
-		value := ExtractCUEValue(simpleValue)
-		if value != nil {
-			return convertToString(value)
-		}
+
+	// Create a CUE script that defines the context and evaluates the expression
+	contextScript := buildCUEContextScript(context)
+	if strings.HasSuffix(contextScript, "}") {
+		contextScript = contextScript[:len(contextScript)-1]
+		contextScript += "\tresult: " + expr + "\n}"
+	} else {
+		contextScript = "{\n\tresult: " + expr + "\n}"
 	}
 
-	// If simple evaluation fails, try with context in a single script
-	simpleContext := map[string]any{}
-	if vars, ok := context["vars"]; ok {
-		simpleContext["vars"] = vars
-		// Also add vars at the top level for easier access (e.g., "item" instead of "vars.item")
-		if varsMap, ok := vars.(map[string]any); ok {
-			for k, v := range varsMap {
-				simpleContext[k] = v
-			}
-		}
-	}
-	if outputs, ok := context["outputs"]; ok {
-		simpleContext["outputs"] = outputs
-	}
-	if secrets, ok := context["secrets"]; ok {
-		simpleContext["secrets"] = secrets
-	}
-	if event, ok := context["event"]; ok {
-		simpleContext["event"] = event
-	}
-
-	// Create a single CUE script with data and expression as fields in one object
-	cueData := buildCUEData(simpleContext)
-	// Remove the closing brace and add result field, then close
-	if strings.HasSuffix(cueData, "\n}") {
-		cueData = cueData[:len(cueData)-2] + "\tresult: " + cueExpr + "\n}"
-	}
-	cueValue := ctx.CompileString(cueData)
+	cueValue := ctx.CompileString(contextScript)
 	if cueValue.Err() != nil {
+		return nil
+	}
+
+	resultField := cueValue.LookupPath(cue.ParsePath("result"))
+	if resultField.Err() != nil {
+		return nil
+	}
+
+	// Check if it's a list
+	list, err := resultField.List()
+	if err != nil {
+		return nil
+	}
+
+	var items []any
+	for list.Next() {
+		val := list.Value()
+		goValue := ExtractCUEValue(val)
+		items = append(items, goValue)
+	}
+
+	return items
+}
+
+// evaluateCUEExpression evaluates expressions using CUE (internal)
+func evaluateCUEExpression(expr string, context map[string]any) string {
+	ctx := cuecontext.New()
+
+	// Normalize single quotes to double quotes for CUE compatibility
+	// CUE treats 'x' as bytes, not strings, so we convert 'str' to "str"
+	expr = normalizeSingleQuotes(expr)
+
+	// Create a CUE script that defines the context and evaluates the expression
+	// We need to put result inside the same struct as the context variables
+	contextScript := buildCUEContextScript(context)
+	// Remove the closing brace and add result field inside
+	if strings.HasSuffix(contextScript, "}") {
+		contextScript = contextScript[:len(contextScript)-1]
+		contextScript += "\tresult: " + expr + "\n}"
+	} else {
+		// Fallback if script format changes
+		contextScript = "{\n\tresult: " + expr + "\n}"
+	}
+
+	// DEBUG: Uncomment to see generated CUE script
+	// fmt.Printf("DEBUG CUE Script for expr '%s':\n%s\n\n", expr, contextScript)
+
+	cueValue := ctx.CompileString(contextScript)
+	if cueValue.Err() != nil {
+		// If CUE compilation fails, return the original expression wrapped in {{ }}
 		return "{{" + expr + "}}"
 	}
 
 	resultField := cueValue.LookupPath(cue.ParsePath("result"))
 	if resultField.Err() != nil {
+		// If result lookup fails, return the original expression wrapped in {{ }}
 		return "{{" + expr + "}}"
 	}
 
@@ -300,98 +336,116 @@ func evaluateCUEExpression(expr string, context map[string]any) string {
 	return convertToString(value)
 }
 
-// buildCUEData converts context map to CUE syntax
-func buildCUEData(data map[string]any) string {
+// buildCUEContextScript creates a CUE script that defines the context
+func buildCUEContextScript(context map[string]any) string {
 	var result strings.Builder
-	buildCUEValue(&result, data, 0)
+	result.WriteString("{\n")
+
+	// First, add individual vars at top level for direct access (e.g., {{ item }} instead of {{ vars.item }})
+	// This is especially important for foreach loop variables like item, item_index, item_row
+	if vars, ok := context["vars"].(map[string]any); ok && len(vars) > 0 {
+		for k, v := range vars {
+			// Add each var as a top-level field for direct access
+			if isValidCUEKey(k) {
+				result.WriteString("\t")
+				result.WriteString(k)
+				result.WriteString(": ")
+				writeCUEValue(&result, v)
+				result.WriteString("\n")
+			}
+		}
+		// Also keep vars namespace for explicit access
+		result.WriteString("\tvars: ")
+		writeCUEValue(&result, vars)
+		result.WriteString("\n")
+	}
+
+	if outputs, ok := context["outputs"].(map[string]any); ok && len(outputs) > 0 {
+		result.WriteString("\toutputs: ")
+		writeCUEValue(&result, outputs)
+		result.WriteString("\n")
+	}
+
+	if secrets, ok := context["secrets"].(map[string]any); ok && len(secrets) > 0 {
+		result.WriteString("\tsecrets: ")
+		writeCUEValue(&result, secrets)
+		result.WriteString("\n")
+	}
+
+	if event, ok := context["event"].(map[string]any); ok && len(event) > 0 {
+		result.WriteString("\tevent: ")
+		writeCUEValue(&result, event)
+		result.WriteString("\n")
+	}
+
+	if env, ok := context["env"].(map[string]any); ok && len(env) > 0 {
+		result.WriteString("\tenv: ")
+		writeCUEValue(&result, env)
+		result.WriteString("\n")
+	}
+
+	if runs, ok := context["runs"].(map[string]any); ok && len(runs) > 0 {
+		result.WriteString("\truns: ")
+		writeCUEValue(&result, runs)
+		result.WriteString("\n")
+	}
+
+	result.WriteString("}")
 	return result.String()
 }
 
-func buildCUEValue(buf *strings.Builder, val any, indent int) {
+// writeCUEValue writes a value in CUE syntax to the buffer
+func writeCUEValue(buf *strings.Builder, val any) {
+	if val == nil {
+		buf.WriteString("null")
+		return
+	}
+
+	// Use reflection to handle slice types generically
+	rv := reflect.ValueOf(val)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		buf.WriteString("[")
+		for i := 0; i < rv.Len(); i++ {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			writeCUEValue(buf, rv.Index(i).Interface())
+		}
+		buf.WriteString("]")
+		return
+	case reflect.Map:
+		if m, ok := val.(map[string]any); ok {
+			buf.WriteString("{")
+			first := true
+			for k, val := range m {
+				// Skip keys that start with _ (CUE reserved) or are not valid CUE identifiers
+				if strings.HasPrefix(k, "_") || !isValidCUEKey(k) {
+					continue
+				}
+				if !first {
+					buf.WriteString(", ")
+				}
+				first = false
+				buf.WriteString(k)
+				buf.WriteString(": ")
+				writeCUEValue(buf, val)
+			}
+			buf.WriteString("}")
+			return
+		}
+	}
+
+	// Handle primitive types
 	switch v := val.(type) {
-	case []map[string]any:
-		buf.WriteString("[")
-		for i, item := range v {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buildCUEValue(buf, item, indent)
-		}
-		buf.WriteString("]")
-	case map[string]string:
-		buf.WriteString("{\n")
-		indent++
-		i := 0
-		for k, val := range v {
-			if i > 0 {
-				buf.WriteString("\n")
-			}
-			for j := 0; j < indent; j++ {
-				buf.WriteString("\t")
-			}
-			// Always quote env var keys to avoid CUE identifier issues
-			buf.WriteString("\"")
-			buf.WriteString(k)
-			buf.WriteString("\"")
-			buf.WriteString(": ")
-			buf.WriteString("\"")
-			buf.WriteString(val)
-			buf.WriteString("\",")
-			i++
-		}
-		buf.WriteString("\n")
-		indent--
-		for j := 0; j < indent; j++ {
-			buf.WriteString("\t")
-		}
-		buf.WriteString("}")
-	case map[string]any:
-		buf.WriteString("{\n")
-		indent++
-		i := 0
-		for k, v := range v {
-			if i > 0 {
-				buf.WriteString("\n")
-			}
-			for j := 0; j < indent; j++ {
-				buf.WriteString("\t")
-			}
-			// Quote keys that are not valid CUE identifiers
-			if isValidCUEIdentifier(k) {
-				buf.WriteString(k)
-			} else {
-				buf.WriteString("\"")
-				buf.WriteString(k)
-				buf.WriteString("\"")
-			}
-			buf.WriteString(": ")
-			buildCUEValue(buf, v, indent)
-			buf.WriteString(",")
-			i++
-		}
-		buf.WriteString("\n")
-		indent--
-		for j := 0; j < indent; j++ {
-			buf.WriteString("\t")
-		}
-		buf.WriteString("}")
-	case []any:
-		buf.WriteString("[")
-		for i, item := range v {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buildCUEValue(buf, item, indent)
-		}
-		buf.WriteString("]")
 	case string:
+		// Escape all special characters for CUE strings
 		buf.WriteString("\"")
-		// Escape backslashes first, then quotes
 		escaped := strings.ReplaceAll(v, "\\", "\\\\")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
 		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-		escaped = strings.ReplaceAll(escaped, "\t", "\\t")
 		escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+		escaped = strings.ReplaceAll(escaped, "\t", "\\t")
 		buf.WriteString(escaped)
 		buf.WriteString("\"")
 	case bool:
@@ -400,13 +454,34 @@ func buildCUEValue(buf *strings.Builder, val any, indent int) {
 		} else {
 			buf.WriteString("false")
 		}
-	case nil:
-		buf.WriteString("null")
 	case int, int32, int64, float32, float64:
 		buf.WriteString(fmt.Sprintf("%v", v))
 	default:
+		// For other types, convert to string
+		buf.WriteString("\"")
 		buf.WriteString(fmt.Sprintf("%v", v))
+		buf.WriteString("\"")
 	}
+}
+
+// isValidCUEKey checks if a string is a valid CUE map key (allowing some special cases)
+func isValidCUEKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	// First character must be letter (not underscore for keys, as _ is reserved)
+	first := s[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
+		return false
+	}
+	// Rest can be letters, digits, or underscores
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // isValidCUEIdentifier checks if a string is a valid CUE identifier
@@ -450,14 +525,21 @@ func convertToString(val any) string {
 		return fmt.Sprintf("%t", v)
 	case int:
 		return fmt.Sprintf("%d", v)
+	case int64:
+		return fmt.Sprintf("%d", v)
 	case float64:
 		return fmt.Sprintf("%g", v)
+	case float32:
+		return fmt.Sprintf("%g", float64(v))
 	default:
-		// For complex types, use JSON marshaling
-		if bytes, err := json.Marshal(val); err == nil {
-			return string(bytes)
+		// For complex types (maps, arrays), always use JSON marshaling
+		bytes, err := json.Marshal(val)
+		if err != nil {
+			// If JSON marshaling fails, this is a serious issue
+			// Return error indicator instead of Go's %v format
+			return fmt.Sprintf("[marshal error: %v]", err)
 		}
-		return fmt.Sprintf("%v", val)
+		return string(bytes)
 	}
 }
 
@@ -533,28 +615,4 @@ func ExtractCUEValue(val cue.Value) any {
 	}
 
 	return nil
-}
-
-// resolveNestedValue resolves nested map access like obj.field.subfield
-func resolveNestedValue(obj any, path []string) string {
-	current := obj
-	for _, part := range path {
-		switch v := current.(type) {
-		case map[string]any:
-			if val, ok := v[part]; ok {
-				current = val
-			} else {
-				return ""
-			}
-		case []any:
-			if idx, err := strconv.Atoi(part); err == nil && idx >= 0 && idx < len(v) {
-				current = v[idx]
-			} else {
-				return ""
-			}
-		default:
-			return fmt.Sprintf("%v", current)
-		}
-	}
-	return fmt.Sprintf("%v", current)
 }

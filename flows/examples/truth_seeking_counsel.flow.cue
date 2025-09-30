@@ -56,7 +56,7 @@ steps: [
 Synthesize the following analyses of the claim "\(vars.claim)":
 \([
 	for analysis in vars.analysis_types {
-		"- \(strings.ToTitle(analysis.name)): {{ outputs.\(analysis.name)_analysis.choices.0.message.content }}"
+		"- \(strings.ToTitle(analysis.name)): {{ outputs.\(analysis.name)_analysis.choices[0].message.content }}"
 	}
 ].join("\n"))
 
@@ -76,7 +76,7 @@ Provide a balanced, evidence-based conclusion.
 		id: "output"
 		use: "core.echo"
 		with: {
-			text: "Truth-Seeking Counsel Conclusion: {{ outputs.synthesize.choices.0.message.content }}"
+			text: "Truth-Seeking Counsel Conclusion: {{ outputs.synthesize.choices[0].message.content }}"
 		}
 	}
 ]

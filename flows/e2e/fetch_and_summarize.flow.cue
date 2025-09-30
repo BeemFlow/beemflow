@@ -44,13 +44,6 @@ steps: [
 		}
 	},
 	{
-		id: "debug_output"
-		use: "core.echo"
-		with: {
-			text: "Debug outputs.summarize: {{ outputs.summarize }}"
-		}
-	},
-	{
 		id: "print"
 		use: "core.echo"
 		with: {
