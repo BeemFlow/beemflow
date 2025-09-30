@@ -627,12 +627,12 @@ steps: [{
 	}{
 		// Flow operations
 		{"flow flows list", []string{"flows", "list"}, false, "List all flows"},
-		{"flow flows get", []string{"flows", "get", "test-flow"}, false, "Get specific flow"},
+		{"flow flows get", []string{"flows", "get", "test-flow"}, true, "Get specific flow (flow doesn't exist)"},
 		{"flow flows validate", []string{"flows", "validate", "--file", testFlowFile}, false, "Validate flow (with real file)"},
 		{"flow flows graph", []string{"flows", "graph", "--file", testFlowFile}, false, "Generate flow graph (with real file)"},
 
 		// Run operations
-		{"flow runs start", []string{"runs", "start", "test-flow"}, false, "Start new run (may succeed with empty outputs)"},
+		{"flow runs start", []string{"runs", "start", "test-flow"}, true, "Start new run (flow doesn't exist)"},
 		{"flow runs get", []string{"runs", "get", "test-run-id"}, true, "Get run details (invalid UUID)"},
 		{"flow runs list", []string{"runs", "list"}, false, "List all runs"},
 

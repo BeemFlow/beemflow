@@ -297,8 +297,6 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 		m.LastExecutionTime = startTime
 	})
 
-	utils.Info("Starting flow execution: %s (run_id: %s)", flow.Name, e.currentRunID)
-
 	// Initialize outputs and handle empty flow as no-op
 	outputs := make(map[string]any)
 	if len(flow.Steps) == 0 {
@@ -313,6 +311,8 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 	// Setup execution context
 	stepCtx, runID := e.setupExecutionContext(ctx, flow, event)
+
+	utils.Info("Starting flow execution: %s (run_id: %s)", flow.Name, runID)
 
 	// Check if this is a duplicate run
 	if runID == uuid.Nil {
@@ -948,10 +948,14 @@ func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, erro
 	context := e.prepareTemplateContext(stepCtx)
 	rendered := cuepkg.ResolveRuntimeTemplates(stepID, context)
 
-	// If template resolution resulted in empty string, use original stepID
-	// Empty step IDs cause runtime failures as they're used as map keys
+	// Check if template resolution failed (still contains {{ }})
+	if strings.Contains(rendered, "{{") {
+		return "", fmt.Errorf("step ID template resolution failed: %s", stepID)
+	}
+
+	// Empty step IDs are invalid as they're used as map keys
 	if rendered == "" {
-		return stepID, nil
+		return "", fmt.Errorf("step ID template resolved to empty string: %s", stepID)
 	}
 
 	return rendered, nil
@@ -1175,22 +1179,11 @@ func (e *Engine) createRunsContext() map[string]any {
 }
 
 // prepareTemplateContext creates a simple context map for runtime template resolution
-// prepareTemplateContext creates a template context for a step
-// Uses caching to avoid repeated context building for the same execution
 func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
-	// Create a cache key based on step context snapshot
+	// Get step context snapshot
 	snapshot := stepCtx.Snapshot()
-	cacheKey := fmt.Sprintf("%p-%d-%d", stepCtx, len(snapshot.Outputs), len(snapshot.Vars))
 
-	// Check cache first (thread-safe)
-	e.templateCacheMutex.RLock()
-	if cached, exists := e.templateCache[cacheKey]; exists {
-		e.templateCacheMutex.RUnlock()
-		return cached
-	}
-	e.templateCacheMutex.RUnlock()
-
-	// Build context if not cached
+	// Build context
 	envStrings := e.createEnvProxy()
 
 	// Convert env map[string]string to map[string]any for CUE
@@ -1207,11 +1200,6 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 		"env":     env,
 		"runs":    e.createRunsContext(),
 	}
-
-	// Cache the result (thread-safe)
-	e.templateCacheMutex.Lock()
-	e.templateCache[cacheKey] = context
-	e.templateCacheMutex.Unlock()
 
 	return context
 }

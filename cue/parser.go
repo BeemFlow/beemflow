@@ -3,6 +3,8 @@ package cue
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -245,14 +247,33 @@ func isDangerousUse(use string) bool {
 }
 
 // isSuspiciousURL checks if a URL looks suspicious
-func isSuspiciousURL(url string) bool {
-	// Check for localhost/private IPs
-	suspicious := []string{"localhost", "127.0.0.1", "0.0.0.0", "169.254", "10.", "192.168.", "172."}
-	for _, s := range suspicious {
-		if strings.Contains(strings.ToLower(url), s) {
+func isSuspiciousURL(urlStr string) bool {
+	// Parse the URL to get the host
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return false // If we can't parse it, assume it's not suspicious
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+
+	// Check for localhost
+	if host == "localhost" {
+		return true
+	}
+
+	// Check for private IPs
+	ip := net.ParseIP(host)
+	if ip != nil {
+		// Check if it's a private IP
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			return true
+		}
+		// Check for 0.0.0.0
+		if ip.Equal(net.IPv4zero) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -394,6 +415,8 @@ func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
 	}
 
 	// Handle truthiness for non-boolean values
+	// nil (null in CUE) is falsy, but undefined variables should have caused evaluation errors
+
 	switch v := result.(type) {
 	case int, int64, float64:
 		return v != 0, nil
@@ -406,7 +429,7 @@ func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
 	case nil:
 		return false, nil
 	default:
-		return false, nil
+		return false, fmt.Errorf("expression does not evaluate to a boolean or truthy value: %T", result)
 	}
 }
 
@@ -447,6 +470,9 @@ func writeCUEValue(buf *strings.Builder, value any) {
 		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
 		escaped = strings.ReplaceAll(escaped, "\r", "\\r")
 		escaped = strings.ReplaceAll(escaped, "\t", "\\t")
+		escaped = strings.ReplaceAll(escaped, "\f", "\\f")
+		escaped = strings.ReplaceAll(escaped, "\b", "\\b")
+		escaped = strings.ReplaceAll(escaped, "\v", "\\v")
 		buf.WriteString(escaped)
 		buf.WriteString("\"")
 	case []any:

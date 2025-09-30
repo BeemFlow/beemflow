@@ -49,8 +49,8 @@ steps: [
 		id: "read_sheet"
 		use: "google_sheets.values.get"
 		with: {
-			spreadsheetId: {{ vars.SPREADSHEET_ID }}
-			range:        {{ vars.SHEET_NAME }} + "!A:E"
+			spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+			range:        "{{ vars.SHEET_NAME }}!A:E"
 		}
 	},
 
@@ -70,8 +70,8 @@ steps: [
 		if: "{{ outputs.read_sheet.values | length == 0 }}"
 		use: "anthropic.chat_completion"
 		with: {
-			model: {{ vars.MODEL }}
-			system: {{ vars.BASE_PROMPT }}
+			model: "{{ vars.MODEL }}"
+			system: "{{ vars.BASE_PROMPT }}"
 			messages: [{
 				role: "user"
 				content: "Generate a fresh BeemFlow post. Pick any angle that feels right today."
@@ -85,8 +85,8 @@ steps: [
 		if: "{{ outputs.generate_draft.content[0].text != \"\" }}"
 		use: "google_sheets.values.append"
 		with: {
-			spreadsheetId: {{ vars.SPREADSHEET_ID }}
-			range:        {{ vars.SHEET_NAME }} + "!A:E"
+			spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
+			range:        "{{ vars.SHEET_NAME }}!A:E"
 			values: [[
 				outputs.generate_draft.content[0].text,
 				"draft",

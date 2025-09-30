@@ -928,10 +928,10 @@ func TestExecuteForeachSequential(t *testing.T) {
 		Parallel: false,
 		Do: []model.Step{
 			{
-				ID:  "process_{{item}}",
+				ID:  "process_{{vars.item}}",
 				Use: "core.echo",
 				With: map[string]any{
-					"text": "Processing {{item}}",
+					"text": "Processing {{vars.item}}",
 				},
 			},
 		},
