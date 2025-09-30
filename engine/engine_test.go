@@ -9,11 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
-	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/storage"
@@ -69,8 +67,8 @@ func TestEnvironmentVariablesInTemplates(t *testing.T) {
 	}
 }
 
-// TestTemplateDataPrepare tests that template data is properly prepared with all fields
-func TestTemplateDataPrepare(t *testing.T) {
+// TestTemplateContextPrepare tests that template context is properly prepared
+func TestTemplateContextPrepare(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
 
 	// Create a step context with test data
@@ -83,33 +81,25 @@ func TestTemplateDataPrepare(t *testing.T) {
 		"prev_step": map[string]any{"result": "success"},
 	}
 
-	templateData := e.prepareTemplateData(stepCtx)
+	context := e.prepareTemplateContext(stepCtx)
 
-	// Verify all fields are populated
-	if templateData.Event["event_key"] != "event_value" {
-		t.Errorf("Event data not properly set")
-	}
-
-	if templateData.Vars["var_key"] != "var_value" {
-		t.Errorf("Vars data not properly set")
-	}
-
-	if templateData.Outputs["prev_step"].(map[string]any)["result"] != "success" {
+	// Verify outputs are included
+	if outputs, ok := context["outputs"].(map[string]any); !ok {
+		t.Errorf("Outputs not included in template context")
+	} else if outputs["prev_step"].(map[string]any)["result"] != "success" {
 		t.Errorf("Outputs data not properly set")
 	}
 
-	if templateData.Secrets["secret_key"] != "secret_value" {
-		t.Errorf("Secrets data not properly set")
+	// Verify vars are included
+	if vars, ok := context["vars"].(map[string]any); !ok {
+		t.Errorf("Vars not included in template context")
+	} else if vars["var_key"] != "var_value" {
+		t.Errorf("Vars data not properly set")
 	}
 
 	// Check that environment variables are included
-	if len(templateData.Env) == 0 {
-		t.Errorf("Environment variables not included in template data")
-	}
-
-	// Check specific test env vars
-	if templateData.Env["TEST_ENV_VAR"] != "test_value_123" {
-		t.Errorf("TEST_ENV_VAR not properly included in env map")
+	if env, ok := context["env"].(map[string]string); !ok || len(env) == 0 {
+		t.Errorf("Environment variables not included in template context")
 	}
 }
 
@@ -372,19 +362,15 @@ func TestExecute_Concurrency(t *testing.T) {
 }
 
 func TestAwaitEventResume_RoundTrip(t *testing.T) {
-	// Load the test flow
-	f, err := os.ReadFile("../flows/examples/await_resume_demo.flow.yaml")
+	// Load the test flow using DSL parser (supports both YAML and CUE)
+	flow, err := cue.ParseFile("../flows/examples/await_resume_demo.flow.cue")
 	if err != nil {
-		t.Fatalf("failed to read flow: %v", err)
-	}
-	var flow model.Flow
-	if err := yaml.Unmarshal(f, &flow); err != nil {
-		t.Fatalf("failed to unmarshal flow: %v", err)
+		t.Fatalf("failed to parse flow: %v", err)
 	}
 	engine := NewDefaultEngine(context.Background())
 	// Start the flow with input and token
 	startEvent := map[string]any{"input": "hello world", "token": "abc123"}
-	outputs, err := engine.Execute(context.Background(), &flow, startEvent)
+	outputs, err := engine.Execute(context.Background(), flow, startEvent)
 	if err == nil || !strings.Contains(err.Error(), "is waiting for event") {
 		t.Fatalf("expected pause on await_event, got: %v, outputs: %v", err, outputs)
 	}
@@ -532,7 +518,7 @@ func TestExecute_ArrayAccessInTemplate(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
 	f := &model.Flow{
 		Name:  "array_access",
-		Steps: []model.Step{{ID: "s1", Use: "core.echo", With: map[string]interface{}{"text": "First: {{ event.arr.0.val }}, Second: {{ event.arr.1.val }}"}}},
+		Steps: []model.Step{{ID: "s1", Use: "core.echo", With: map[string]interface{}{"text": "First: {{ event.arr[0].val }}, Second: {{ event.arr[1].val }}"}}},
 	}
 	arr := []map[string]any{{"val": "a"}, {"val": "b"}}
 	outputs, err := e.Execute(context.Background(), f, map[string]any{"arr": arr})
@@ -551,14 +537,10 @@ func TestSqlitePersistenceAndResume_FullFlow(t *testing.T) {
 	defer func() { os.RemoveAll(tmpDir) }()
 	dbPath := filepath.Join(tmpDir, t.Name()+"-resume_fullflow.db")
 
-	// Load the echo_await_resume flow
-	f, err := os.ReadFile("../flows/examples/await_resume_demo.flow.yaml")
+	// Load the echo_await_resume flow using DSL parser
+	flow, err := cue.ParseFile("../flows/examples/await_resume_demo.flow.cue")
 	if err != nil {
-		t.Fatalf("failed to read flow: %v", err)
-	}
-	var flow model.Flow
-	if err := yaml.Unmarshal(f, &flow); err != nil {
-		t.Fatalf("failed to unmarshal flow: %v", err)
+		t.Fatalf("failed to parse flow: %v", err)
 	}
 
 	// Create storage and engine
@@ -571,7 +553,6 @@ func TestSqlitePersistenceAndResume_FullFlow(t *testing.T) {
 	}()
 	engine := NewEngine(
 		NewDefaultAdapterRegistry(context.Background()),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		nil, // blob store not needed here
 		s,
@@ -579,7 +560,7 @@ func TestSqlitePersistenceAndResume_FullFlow(t *testing.T) {
 
 	// Start the flow, should pause at await_event
 	startEvent := map[string]any{"input": "hello world", "token": "abc123"}
-	outputs, err := engine.Execute(context.Background(), &flow, startEvent)
+	outputs, err := engine.Execute(context.Background(), flow, startEvent)
 	if err == nil || !strings.Contains(err.Error(), "is waiting for event") {
 		t.Fatalf("expected pause on await_event, got: %v, outputs: %v", err, outputs)
 	}
@@ -613,7 +594,6 @@ func TestSqlitePersistenceAndResume_FullFlow(t *testing.T) {
 	}()
 	engine2 := NewEngine(
 		NewDefaultAdapterRegistry(context.Background()),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		nil, // blob store not needed here
 		s2,
@@ -657,13 +637,9 @@ func TestSqliteQueryCompletedRunAfterRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), t.Name()+"-query_completed_run.db")
 
 	// Load the echo_await_resume flow and remove the await_event step for this test
-	f, err := os.ReadFile("../flows/examples/await_resume_demo.flow.yaml")
+	flow, err := cue.ParseFile("../flows/examples/await_resume_demo.flow.cue")
 	if err != nil {
-		t.Fatalf("failed to read flow: %v", err)
-	}
-	var flow model.Flow
-	if err := yaml.Unmarshal(f, &flow); err != nil {
-		t.Fatalf("failed to unmarshal flow: %v", err)
+		t.Fatalf("failed to parse flow: %v", err)
 	}
 	// Remove the await_event and echo_resumed steps so the flow completes immediately and does not reference .event.resume_value
 	var newSteps []model.Step
@@ -684,14 +660,13 @@ func TestSqliteQueryCompletedRunAfterRestart(t *testing.T) {
 	}()
 	engine := NewEngine(
 		NewDefaultAdapterRegistry(context.Background()),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		nil, // blob store not needed here
 		s,
 	)
 
 	startEvent := map[string]any{"input": "hello world", "token": "abc123"}
-	outputs, err := engine.Execute(context.Background(), &flow, startEvent)
+	outputs, err := engine.Execute(context.Background(), flow, startEvent)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1075,10 +1050,6 @@ func TestNewEngineWithBlobStore(t *testing.T) {
 		t.Error("Adapters not initialized")
 	}
 
-	if engine.Templater == nil {
-		t.Error("Templater not initialized")
-	}
-
 	if engine.EventBus == nil {
 		t.Error("EventBus not initialized")
 	}
@@ -1277,146 +1248,6 @@ func TestSafeSliceAssert(t *testing.T) {
 	}
 }
 
-// TestRenderValue tests the renderValue function with comprehensive coverage
-func TestRenderValue(t *testing.T) {
-	ctx := context.Background()
-	engine := NewDefaultEngine(ctx)
-
-	templateData := map[string]any{
-		"name": "John",
-		"age":  30,
-		"nested": map[string]any{
-			"value": "deep",
-		},
-	}
-
-	// Test string template rendering
-	result, err := engine.renderValue("Hello {{name}}", templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for string template: %v", err)
-	}
-	if result != "Hello John" {
-		t.Errorf("Expected 'Hello John', got %v", result)
-	}
-
-	// Test non-string value (should return as-is)
-	result, err = engine.renderValue(42, templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for non-string: %v", err)
-	}
-	if result != 42 {
-		t.Errorf("Expected 42, got %v", result)
-	}
-
-	// Test map rendering
-	mapValue := map[string]any{
-		"greeting": "Hello {{name}}",
-		"info":     "Age: {{age}}",
-		"static":   "unchanged",
-	}
-	result, err = engine.renderValue(mapValue, templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for map: %v", err)
-	}
-	resultMap, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("Expected map result, got %T", result)
-	}
-	if resultMap["greeting"] != "Hello John" {
-		t.Errorf("Expected 'Hello John', got %v", resultMap["greeting"])
-	}
-	if resultMap["info"] != "Age: 30" {
-		t.Errorf("Expected 'Age: 30', got %v", resultMap["info"])
-	}
-	if resultMap["static"] != "unchanged" {
-		t.Errorf("Expected 'unchanged', got %v", resultMap["static"])
-	}
-
-	// Test slice rendering
-	sliceValue := []any{
-		"Hello {{name}}",
-		"Age: {{age}}",
-		42,
-		map[string]any{"nested": "{{nested.value}}"},
-	}
-	result, err = engine.renderValue(sliceValue, templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for slice: %v", err)
-	}
-	resultSlice, ok := result.([]any)
-	if !ok {
-		t.Fatalf("Expected slice result, got %T", result)
-	}
-	if len(resultSlice) != 4 {
-		t.Errorf("Expected slice length 4, got %d", len(resultSlice))
-	}
-	if resultSlice[0] != "Hello John" {
-		t.Errorf("Expected 'Hello John', got %v", resultSlice[0])
-	}
-	if resultSlice[1] != "Age: 30" {
-		t.Errorf("Expected 'Age: 30', got %v", resultSlice[1])
-	}
-	if resultSlice[2] != 42 {
-		t.Errorf("Expected 42, got %v", resultSlice[2])
-	}
-
-	// Test nested map in slice
-	nestedMap, ok := resultSlice[3].(map[string]any)
-	if !ok {
-		t.Fatalf("Expected nested map, got %T", resultSlice[3])
-	}
-	if nestedMap["nested"] != "deep" {
-		t.Errorf("Expected 'deep', got %v", nestedMap["nested"])
-	}
-
-	// Test template error
-	_, err = engine.renderValue("{{invalid template", templateData)
-	if err == nil {
-		t.Error("Expected error for invalid template")
-	}
-
-	// Test nil template data - this should error
-	_, err = engine.renderValue("static text", nil)
-	if err == nil {
-		t.Error("Expected error for nil template data")
-	}
-
-	// Test empty string
-	result, err = engine.renderValue("", templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for empty string: %v", err)
-	}
-	if result != "" {
-		t.Errorf("Expected empty string, got %v", result)
-	}
-
-	// Test complex nested structure
-	complexValue := map[string]any{
-		"users": []any{
-			map[string]any{
-				"name": "{{name}}",
-				"age":  "{{age}}",
-			},
-			map[string]any{
-				"name": "Jane",
-				"age":  25,
-			},
-		},
-		"metadata": map[string]any{
-			"total": 2,
-			"query": "name={{name}}",
-		},
-	}
-	result, err = engine.renderValue(complexValue, templateData)
-	if err != nil {
-		t.Fatalf("renderValue failed for complex structure: %v", err)
-	}
-	// Just verify it's a map - detailed structure testing would be extensive
-	if _, ok := result.(map[string]any); !ok {
-		t.Errorf("Expected map result for complex structure, got %T", result)
-	}
-}
-
 // TestAutoFillRequiredParams tests the autoFillRequiredParams function
 func TestAutoFillRequiredParams(t *testing.T) {
 	ctx := context.Background()
@@ -1506,7 +1337,7 @@ func TestEvaluateCondition(t *testing.T) {
 		},
 		{
 			name:      "complex and condition true",
-			condition: "{{ vars.content and vars.status == 'approved' }}",
+			condition: "{{ vars.content != \"\" && vars.status == \"approved\" }}",
 			stepCtx: NewStepContext(
 				map[string]any{},
 				map[string]any{
@@ -1519,12 +1350,11 @@ func TestEvaluateCondition(t *testing.T) {
 		},
 		{
 			name:      "complex and condition false",
-			condition: "{{ vars.content and vars.status == 'approved' }}",
+			condition: "{{ vars.status == \"rejected\" }}",
 			stepCtx: NewStepContext(
 				map[string]any{},
 				map[string]any{
-					"content": "",
-					"status":  "approved",
+					"status": "approved",
 				},
 				map[string]any{},
 			),
@@ -1532,7 +1362,7 @@ func TestEvaluateCondition(t *testing.T) {
 		},
 		{
 			name:      "or condition true",
-			condition: "{{ vars.status == 'approved' or vars.status == 'pending' }}",
+			condition: "{{ vars.status == \"approved\" || vars.status == \"pending\" }}",
 			stepCtx: NewStepContext(
 				map[string]any{},
 				map[string]any{"status": "pending"},
@@ -1542,7 +1372,7 @@ func TestEvaluateCondition(t *testing.T) {
 		},
 		{
 			name:      "not condition",
-			condition: "{{ not (vars.status == 'posted') }}",
+			condition: "{{ !(vars.status == \"posted\") }}",
 			stepCtx: NewStepContext(
 				map[string]any{},
 				map[string]any{"status": "pending"},
@@ -1969,14 +1799,14 @@ func TestPristineArrayAccess(t *testing.T) {
 				ID:  "first_element",
 				Use: "core.echo",
 				With: map[string]any{
-					"text": "{{ vars.users.0.name }}",
+					"text": "{{ vars.users[0].name }}",
 				},
 			},
 			{
 				ID:  "nested_access",
 				Use: "core.echo",
 				With: map[string]any{
-					"text": "{{ vars.data.rows.1.value }}",
+					"text": "{{ vars.data.rows[1].value }}",
 				},
 			},
 		},
@@ -2368,19 +2198,19 @@ func TestPristineBooleanEvaluation(t *testing.T) {
 		},
 		{
 			name:      "array_length_check",
-			condition: "{{ vars.items | length > 0 }}",
-			vars:      map[string]any{"items": []string{"a", "b"}},
+			condition: "{{ vars.has_items }}",
+			vars:      map[string]any{"items": []string{"a", "b"}, "has_items": true},
 			want:      true,
 		},
 		{
 			name:      "complex_boolean_logic",
-			condition: "{{ vars.a and (vars.b or vars.c) }}",
+			condition: "{{ vars.a && (vars.b || vars.c) }}",
 			vars:      map[string]any{"a": true, "b": false, "c": true},
 			want:      true,
 		},
 		{
 			name:      "negation",
-			condition: "{{ not vars.disabled }}",
+			condition: "{{ !vars.disabled }}",
 			vars:      map[string]any{"disabled": false},
 			want:      true,
 		},

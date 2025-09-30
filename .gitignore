@@ -34,5 +34,8 @@ test.db
 # Build artifacts
 *.log
 
+# Test artifacts
+coverage.out
+
 # GoReleaser
 dist/

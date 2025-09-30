@@ -376,26 +376,18 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 		})
 	}
 
-	utils.Info("DEBUG: Storage found in context, creating OAuth client")
 	oauthClient := auth.NewOAuthClient(store)
 
 	// First handle OAuth patterns
 	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
 		if len(parts) != 2 {
-			utils.Error("DEBUG: Invalid OAuth pattern: %s", match)
 			return match
 		}
 		provider, integration := parts[0], parts[1]
-		utils.Info("DEBUG: Attempting to retrieve OAuth token for %s:%s", provider, integration)
 
 		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
-			utils.Info("DEBUG: OAuth token retrieved successfully, length: %d", len(token))
-			// Don't log the actual token for security reasons
-			utils.Info("DEBUG: Using OAuth token for authorization header")
 			return "Bearer " + token
-		} else {
-			utils.Error("DEBUG: OAuth token retrieval failed for %s:%s: %v", provider, integration, err)
 		}
 		return match // Keep original if OAuth token not found
 	})

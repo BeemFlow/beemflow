@@ -6,8 +6,8 @@
 
 ## 🎯 Quick Reference (Read This First!)
 
-### ✅ Valid YAML Structure
-```yaml
+### ✅ Valid CUE Structure
+```cue
 name: string                    # REQUIRED
 description: string             # optional - precise natural language representation of workflow logic
 version: string                 # optional
@@ -19,7 +19,7 @@ catch: [...]                   # optional error handler
 ```
 
 ### ✅ Valid Step Fields (ONLY THESE EXIST!)
-```yaml
+```cue
 - id: string                   # REQUIRED unique identifier
   use: tool.name               # Tool to execute
   with: {params}               # Tool input parameters
@@ -36,7 +36,7 @@ catch: [...]                   # optional error handler
 ```
 
 ### ❌ THESE DON'T EXIST (Common Hallucinations)
-```yaml
+```cue
 continue_on_error: true  # ❌ NO - Use catch blocks instead
 timeout: 30s            # ❌ NO - Only exists in await_event.timeout
 on_error: handler       # ❌ NO - Use catch blocks
@@ -48,8 +48,8 @@ ${ variable }           # ❌ NO - Use {{ variable }}
 break, continue, exit   # ❌ NO - No flow control keywords
 ```
 
-### 📝 Template Syntax (Pongo2 - Django-like)
-```yaml
+### 📝 Template Syntax (CUE - Go-like)
+```cue
 # Variables & References (Always use explicit scopes!)
 {{ vars.MY_VAR }}              # Flow variables
 {{ env.USER }}                 # Environment variables  
@@ -58,10 +58,10 @@ break, continue, exit   # ❌ NO - No flow control keywords
 {{ outputs.step_id.field }}    # Step outputs (preferred)
 {{ step_id.field }}            # Step outputs (shorthand)
 
-# Array Access (Pongo2 uses dot notation)
-{{ array.0 }}                  # First element
+# Array Access (CUE uses square brackets)
+{{ array[0] }}                 # First element
 {{ array[idx] }}               # Variable index
-{{ data.rows.0.name }}         # Nested access (dot notation throughout)
+{{ data.rows[0].name }}        # Nested access (square brackets for arrays)
 
 # Filters & Operations
 {{ text | upper }}             # Uppercase
@@ -83,7 +83,7 @@ if: "{{ not (vars.disabled) }}"               # Negation
 ```
 
 ### 🔧 Common Tools
-```yaml
+```cue
 # Core
 core.echo                      # Print text
 core.wait                      # Pause execution
@@ -111,7 +111,7 @@ mcp://server/tool             # MCP server tools
 ## 📚 Essential Patterns
 
 ### Basic Flow
-```yaml
+```cue
 name: hello_world
 on: cli.manual
 steps:
@@ -122,7 +122,7 @@ steps:
 ```
 
 ### Using Variables and Outputs
-```yaml
+```cue
 name: fetch_and_process
 on: cli.manual
 vars:
@@ -139,7 +139,7 @@ steps:
 ```
 
 ### Conditional Execution
-```yaml
+```cue
 # Simple condition
 - id: conditional_step
   if: "{{ vars.status == 'active' }}"
@@ -163,7 +163,7 @@ steps:
 ```
 
 ### Loops (Foreach)
-```yaml
+```cue
 - id: process_items
   foreach: "{{ vars.items }}"
   as: item
@@ -193,7 +193,7 @@ steps:
 ```
 
 ### Parallel Execution
-```yaml
+```cue
 - id: parallel_block
   parallel: true
   steps:
@@ -208,7 +208,7 @@ steps:
 ```
 
 ### Error Handling
-```yaml
+```cue
 name: with_error_handling
 on: cli.manual
 steps:
@@ -224,7 +224,7 @@ catch:
 ```
 
 ### API Integration
-```yaml
+```cue
 - id: api_call
   use: http
   with:
@@ -239,7 +239,7 @@ catch:
 ```
 
 ### Google Sheets Example
-```yaml
+```cue
 name: sheets_integration
 on: cli.manual
 vars:
@@ -360,7 +360,7 @@ The optional `description` field provides a precise natural language representat
 ### Writing Guidelines
 
 **✅ Good Description:**
-```yaml
+```cue
 name: social_media_approval
 description: |
   Generate social media content using AI, store it in Airtable for human review, 
@@ -369,7 +369,7 @@ description: |
 ```
 
 **❌ Poor Description:**
-```yaml
+```cue
 description: "This workflow handles social media posting"  # Too vague
 description: "Uses OpenAI and Airtable"                    # Lists tools, not logic
 ```

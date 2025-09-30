@@ -4,7 +4,7 @@
 
 BeemFlow is a **workflow protocol, runtime, and global tool registry** for the age of LLM co-workers.
 
-Define workflows with YAML, JSON, or native code → execute anywhere through CLI, HTTP, or Model Context Protocol (MCP).
+Define workflows with CUE, JSON, or native code → execute anywhere through CLI, HTTP, or Model Context Protocol (MCP).
 
 Instantly use thousands of curated MCP servers and LLM tools with zero-config -- just define the workflow, provide secrets, and execute -- complex business workflows in just a few lines of code.
 
@@ -66,7 +66,7 @@ The same universal protocol powers the BeemFlow agency, SaaS, and acquisition fl
 
 | **The Traditional Way** | **The BeemFlow Way** |
 |-----------------|----------------------|
-| **Zapier/Make.com:** Drag-and-drop GUIs that break at scale | **Text-first:** Version-controlled YAML, JSON, or native code that AI can read, write, and optimize |
+| **Zapier/Make.com:** Drag-and-drop GUIs that break at scale | **Text-first:** Version-controlled CUE, JSON, or native code that AI can read, write, and optimize |
 | **n8n/Temporal:** Complex interfaces & infrastructure | **Universal protocol:** One workflow runs in-process, CLI, HTTP, MCP—anywhere |
 | **Power Automate:** Vendor lock-in, enterprise pricing | **Open ecosystem:** Your workflows run interoperably |
 
@@ -112,7 +112,7 @@ We're building the infrastructure for the largest generational wealth transfer i
 
 ## Getting Started: BeemFlow by Example
 
-**From "Hello, World!" to real-world automations. Each example is a real, runnable YAML file.**
+**From "Hello, World!" to real-world automations. Each example is a real, runnable CUE file.**
 
 ---
 
@@ -120,25 +120,33 @@ We're building the infrastructure for the largest generational wealth transfer i
 
 **What it does:** Runs two steps, each echoing a message. Shows how outputs can be reused.
 
-```yaml
-# hello.flow.yaml
-name: hello
-description: |
-  Display a greeting message, then echo that same message again with additional text.
-  Demonstrates basic step chaining and template variable usage.
-on: cli.manual
-steps:
-  - id: greet
-    use: core.echo
-    with:
+```cue
+// hello_world.flow.cue
+name: "hello_world"
+description: """
+Display a greeting message, then echo that same message again with additional text.
+Demonstrates basic step chaining and template variable usage.
+"""
+on: "cli.manual"
+steps: [
+  {
+    id: "greet"
+    use: "core.echo"
+    with: {
       text: "Hello, world, I'm BeemFlow!"
-  - id: greet_again
-    use: core.echo
-    with:
-      text: "Aaand once more: {{ greet.text }}"
+    }
+  },
+  {
+    id: "greet_again"
+    use: "core.echo"
+    with: {
+      text: "Aaand once more: {{ outputs.greet.text }}"
+    }
+  }
+]
 ```
 ```bash
-flow run hello.flow.yaml
+flow run hello_world.flow.cue
 ```
 **Why it's powerful:**
 - Shows how easy it is to pass data between steps.
@@ -153,40 +161,57 @@ flow run hello.flow.yaml
 
 **What it does:** Fetches a web page, summarizes it with an LLM, and prints the result.
 
-```yaml
-# summarize.flow.yaml
-name: fetch_and_summarize
-description: |
-  Fetch content from a web URL using HTTP, summarize it with OpenAI into 3 bullet points,
-  and display the summary. Demonstrates HTTP fetching, AI processing, and step chaining
-  in a simple end-to-end workflow pattern.
-on: cli.manual
-vars:
+```cue
+// fetch_and_summarize.flow.cue
+name: "fetch_and_summarize"
+description: """
+Fetch content from a web URL using HTTP, summarize it with OpenAI into 3 bullet points,
+and display the summary. Demonstrates HTTP fetching, AI processing, and step chaining
+in a simple end-to-end workflow pattern.
+"""
+on: "cli.manual"
+vars: {
   fetch_url: "https://en.wikipedia.org/wiki/Artificial_intelligence"
-steps:
-  - id: fetch
-    use: http.fetch
-    with:
-      url: "{{ fetch_url }}"
-  - id: summarize
-    use: openai.chat_completion
-    with:
+}
+steps: [
+  {
+    id: "fetch"
+    use: "http.fetch"
+    with: {
+      url: "{{ vars.fetch_url }}"
+    }
+  },
+  {
+    id: "summarize"
+    use: "openai.chat_completion"
+    with: {
       model: "gpt-4o"
-      messages:
-        - role: system
+      messages: [
+        {
+          role: "system"
           content: "Summarize the following web page in 3 bullets."
-        - role: user
+        },
+        {
+          role: "user"
           content: "{{ outputs.fetch.body }}"
-  - id: print
-    use: core.echo
-    with:
-      text: "Summary: {{ summarize.choices.0.message.content }}"
+        }
+      ]
+    }
+  },
+  {
+    id: "print"
+    use: "core.echo"
+    with: {
+      text: "Summary: {{ outputs.summarize.choices[0].message.content }}"
+    }
+  }
+]
 ```
 ```bash
-flow run summarize.flow.yaml
+flow run fetch_and_summarize.flow.cue
 ```
 **Why it's powerful:**
-- Mixes HTTP, LLMs, and templating in one YAML.
+- Mixes HTTP, LLMs, and templating in one CUE file.
 - Shows how to use variables and step outputs.
 
 **What happens?**
@@ -212,45 +237,66 @@ Explore real-world automations, from parallel LLMs to human-in-the-loop and mult
 
 **What it does:** Runs two LLM prompts in parallel, then combines their answers.
 
-```yaml
-# parallel.flow.yaml
-name: parallel_facts
-description: |
-  Execute two OpenAI chat completions in parallel to generate different fun facts about
-  the Moon and Ocean, then combine results into a single output. Demonstrates parallel
-  execution with AI services and step dependency management.
-on: cli.manual
-vars:
+```cue
+// parallel_openai.flow.cue
+name: "parallel_openai"
+description: """
+Execute two OpenAI chat completions in parallel to generate different fun facts about
+the Moon and Ocean, then combine results into a single output. Demonstrates parallel
+execution with AI services and step dependency management.
+"""
+on: "cli.manual"
+vars: {
   prompt1: "Give me a fun fact about the Moon."
   prompt2: "Give me a fun fact about the Ocean."
-steps:
-  - id: fanout
+}
+steps: [
+  {
+    id: "fanout"
     parallel: true
-    steps:
-      - id: moon_fact
-        use: openai.chat_completion
-        with:
+    steps: [
+      {
+        id: "moon_fact"
+        use: "openai.chat_completion"
+        with: {
           model: "gpt-4o"
-          messages:
-            - role: user
-              content: "{{ prompt1 }}"
-      - id: ocean_fact
-        use: openai.chat_completion
-        with:
+          messages: [
+            {
+              role: "user"
+              content: "{{ vars.prompt1 }}"
+            }
+          ]
+        }
+      },
+      {
+        id: "ocean_fact"
+        use: "openai.chat_completion"
+        with: {
           model: "gpt-4o"
-          messages:
-            - role: user
-              content: "{{ prompt2 }}"
-  - id: combine
-    depends_on: [fanout]
-    use: core.echo
-    with:
-      text: |
-        🌕 Moon: {{ moon_fact.choices.0.message.content }}
-        🌊 Ocean: {{ ocean_fact.choices.0.message.content }}
+          messages: [
+            {
+              role: "user"
+              content: "{{ vars.prompt2 }}"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    id: "combine"
+    use: "core.echo"
+    with: {
+      text: """
+        🌕 Moon: {{ outputs.moon_fact.choices[0].message.content }}
+        🌊 Ocean: {{ outputs.ocean_fact.choices[0].message.content }}
+        """
+    }
+  }
+]
 ```
 ```bash
-flow run parallel.flow.yaml
+flow run parallel_openai.flow.cue
 ```
 **Why it's powerful:**
 - Effortless parallelism, LLM orchestration, and output composition.
@@ -265,48 +311,70 @@ flow run parallel.flow.yaml
 
 **What it does:** Drafts a message, sends it for human approval via SMS (using an MCP tool), and acts on the reply.
 
-```yaml
-# human_approval.flow.yaml
-name: human_approval
-on: cli.manual
-vars:
-  phone_number: "+15551234567"  # <-- Replace with your test number
+```cue
+// tweet_approval_workflow.flow.cue
+name: "tweet_approval_workflow"
+on: "cli.manual"
+vars: {
+  phone_number: "+15551234567"  // <-- Replace with your test number
   approval_token: "demo-approval-123"
-steps:
-  - id: draft_message
-    use: openai.chat_completion
-    with:
+}
+steps: [
+  {
+    id: "draft_message"
+    use: "openai.chat_completion"
+    with: {
       model: "gpt-4o"
-      messages:
-        - role: system
+      messages: [
+        {
+          role: "system"
           content: "Draft a short, friendly reminder for a team meeting at 3pm."
-  - id: send_sms
-    use: mcp://twilio/send_sms
-    with:
-      to: "{{ phone_number }}"
-      body: |
-        {{ draft_message.choices.0.message.content }}
+        }
+      ]
+    }
+  },
+  {
+    id: "send_sms"
+    use: "mcp://twilio/send_sms"
+    with: {
+      to: "{{ vars.phone_number }}"
+      body: """
+        {{ outputs.draft_message.choices[0].message.content }}
         Reply YES to approve, NO to reject.
-      token: "{{ approval_token }}"
-  - id: wait_for_approval
-    await_event:
-      source: twilio
-      match:
-        token: "{{ approval_token }}"
-      timeout: 1h
-  - id: check_approval
+        """
+      token: "{{ vars.approval_token }}"
+    }
+  },
+  {
+    id: "wait_for_approval"
+    await_event: {
+      source: "twilio"
+      match: {
+        token: "{{ vars.approval_token }}"
+      }
+      timeout: "1h"
+    }
+  },
+  {
+    id: "check_approval"
     if: "{{ event.body | toLower | trim == 'yes' }}"
-    use: core.echo
-    with:
+    use: "core.echo"
+    with: {
       text: "✅ Approved! Message sent."
-  - id: check_rejection
+    }
+  },
+  {
+    id: "check_rejection"
     if: "{{ event.body | toLower | trim == 'no' }}"
-    use: core.echo
-    with:
+    use: "core.echo"
+    with: {
       text: "❌ Rejected by human."
+    }
+  }
+]
 ```
 ```bash
-flow run human_approval.flow.yaml
+flow run tweet_approval_workflow.flow.cue
 ```
 **Why it's powerful:**
 - Brings in external tools (MCP), durable waits, and human-in-the-loop automation.
@@ -327,81 +395,127 @@ flow run human_approval.flow.yaml
 - Sends the drafts to a Slack channel for team review/approval.
 - Waits for Slack feedback/approval before posting to the socials (simulated as echo steps for safety, but can be swapped for real posting tools).
 
-```yaml
-# marketing_agent.flow.yaml
-name: marketing_agent
-on: cli.manual
-vars:
+```cue
+// social_media_publisher.flow.cue
+name: "social_media_publisher"
+on: "cli.manual"
+vars: {
   feature_update: "BeemFlow now supports human-in-the-loop approvals via SMS and Slack!"
   approval_token: "approved!"
   slack_channel: "#marketing"
-steps:
-  - id: generate_content
+}
+steps: [
+  {
+    id: "generate_content"
     parallel: true
-    steps:
-      - id: tweet
-        use: openai.chat_completion
-        with:
+    steps: [
+      {
+        id: "tweet"
+        use: "openai.chat_completion"
+        with: {
           model: "gpt-4o"
-          messages:
-            - role: system
-              content: "Write a catchy tweet announcing this product update: '{{ feature_update }}'"
-      - id: linkedin
-        use: openai.chat_completion
-        with:
+          messages: [
+            {
+              role: "system"
+              content: "Write a catchy tweet announcing this product update: '{{ vars.feature_update }}'"
+            }
+          ]
+        }
+      },
+      {
+        id: "linkedin"
+        use: "openai.chat_completion"
+        with: {
           model: "gpt-4o"
-          messages:
-            - role: system
-              content: "Write a LinkedIn post (max 300 words) for this update: '{{ feature_update }}'"
-      - id: blog
-        use: openai.chat_completion
-        with:
+          messages: [
+            {
+              role: "system"
+              content: "Write a LinkedIn post (max 300 words) for this update: '{{ vars.feature_update }}'"
+            }
+          ]
+        }
+      },
+      {
+        id: "blog"
+        use: "openai.chat_completion"
+        with: {
           model: "gpt-4o"
-          messages:
-            - role: system
-              content: "Write a short blog post (max 500 words) about: '{{ feature_update }}'"
-  - id: send_to_slack
-    use: mcp://slack/chat.postMessage
-    with:
-      channel: "{{ slack_channel }}"
-      text: |
+          messages: [
+            {
+              role: "system"
+              content: "Write a short blog post (max 500 words) about: '{{ vars.feature_update }}'"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    id: "send_to_slack"
+    use: "mcp://slack/chat.postMessage"
+    with: {
+      channel: "{{ vars.slack_channel }}"
+      text: """
         :mega: *Feature Update Drafts for Review*
-        *Tweet:* {{ tweet.choices.0.message.content }}
-        *LinkedIn:* {{ linkedin.choices.0.message.content }}
-        *Blog:* {{ blog.choices.0.message.content }}
-        
+        *Tweet:* {{ outputs.tweet.choices[0].message.content }}
+        *LinkedIn:* {{ outputs.linkedin.choices[0].message.content }}
+        *Blog:* {{ outputs.blog.choices[0].message.content }}
+
         Reply with 'approve' to post, or 'edit: ...' to suggest changes.
-      token: "{{ approval_token }}"
-  - id: wait_for_slack_approval
-    await_event:
-      source: slack
-      match:
-        token: "{{ approval_token }}"
-      timeout: 2h
-  - id: handle_edits
+        """
+      token: "{{ vars.approval_token }}"
+    }
+  },
+  {
+    id: "wait_for_slack_approval"
+    await_event: {
+      source: "slack"
+      match: {
+        token: "{{ vars.approval_token }}"
+      }
+      timeout: "2h"
+    }
+  },
+  {
+    id: "handle_edits"
     if: "{{ event.text | toLower | hasPrefix 'edit:' }}"
-    use: core.echo
-    with:
+    use: "core.echo"
+    with: {
       text: "Edits requested: {{ event.text }} (flow would branch to editing here)"
-  - id: post_to_socials
+    }
+  },
+  {
+    id: "post_to_socials"
     if: "{{ event.text | toLower | trim == 'approve' }}"
     parallel: true
-    steps:
-      - id: x_post
-        use: mcp://x/post
-        with:
-          text: "[POSTED to X]: {{ tweet.choices.0.message.content }}"
-      - id: post_linkedin
-        use: mcp://linkedin/post
-        with:
-          text: "[POSTED to LinkedIn]: {{ linkedin.choices.0.message.content }}"
-      - id: post_blog
-        use: mcp://blog/post
-        with:
-          text: "[POSTED to Blog]: {{ blog.choices.0.message.content }}"
+    steps: [
+      {
+        id: "x_post"
+        use: "mcp://x/post"
+        with: {
+          text: "[POSTED to X]: {{ outputs.tweet.choices[0].message.content }}"
+        }
+      },
+      {
+        id: "post_linkedin"
+        use: "mcp://linkedin/post"
+        with: {
+          text: "[POSTED to LinkedIn]: {{ outputs.linkedin.choices[0].message.content }}"
+        }
+      },
+      {
+        id: "post_blog"
+        use: "mcp://blog/post"
+        with: {
+          text: "[POSTED to Blog]: {{ outputs.blog.choices[0].message.content }}"
+        }
+      }
+    ]
+  }
+]
 ```
 ```bash
-flow run marketing_agent.flow.yaml
+flow run social_media_publisher.flow.cue
 ```
 **Why it's powerful:**
 - Orchestrates multiple LLMs, parallel content generation, and human-in-the-loop review across channels.
@@ -424,54 +538,76 @@ flow run marketing_agent.flow.yaml
 - Converts the summary to a PowerPoint slide.
 - Sends the slide to Slack.
 
-```yaml
-name: cfo_daily_cash
-on: schedule.cron
-cron: "0 7 * * *"          # 07:00 every day
+```cue
+name: "cfo_daily_cash"
+on: "schedule.cron"
+cron: "0 7 * * *"          // 07:00 every day
 
-vars:
+vars: {
   ALERT_THRESHOLD: 20000
+}
 
-steps:
-  - id: pull_stripe
-    use: stripe.balance.retrieve
-    with: { api_key: "{{ secrets.STRIPE_KEY }}" }
-
-  - id: pull_qbo
-    use: quickbooks.reports.balanceSheet
-    with: { token: "{{ secrets.QBO_TOKEN }}" }
-
-  - id: analyze
-    use: openai.chat_completion
-    with:
-      model: gpt-4o
-      messages:
-        - role: system
-          content: |
+steps: [
+  {
+    id: "pull_stripe"
+    use: "stripe.balance.retrieve"
+    with: {
+      api_key: "{{ secrets.STRIPE_KEY }}"
+    }
+  },
+  {
+    id: "pull_qbo"
+    use: "quickbooks.reports.balanceSheet"
+    with: {
+      token: "{{ secrets.QBO_TOKEN }}"
+    }
+  },
+  {
+    id: "analyze"
+    use: "openai.chat_completion"
+    with: {
+      model: "gpt-4o"
+      messages: [
+        {
+          role: "system"
+          content: """
             Combine the Stripe and QuickBooks JSON below.
             1. Report total cash & AR.
             2. If cash < ${{ vars.ALERT_THRESHOLD }}, add ⚠️.
             3. Format as a single PowerPoint slide in Markdown.
-        - role: user
-          content: |
-            Stripe: {{ pull_stripe }}
-            QuickBooks: {{ pull_qbo }}
-
-  - id: ppt
-    use: cloudconvert.md_to_pptx
-    with:
-      markdown: "{{ analyze.choices.0.message.content }}"
-
-  - id: send
-    use: slack.files.upload
-    with:
+            """
+        },
+        {
+          role: "user"
+          content: """
+            Stripe: {{ outputs.pull_stripe }}
+            QuickBooks: {{ outputs.pull_qbo }}
+            """
+        }
+      ]
+    }
+  },
+  {
+    id: "ppt"
+    use: "cloudconvert.md_to_pptx"
+    with: {
+      markdown: "{{ outputs.analyze.choices[0].message.content }}"
+    }
+  },
+  {
+    id: "send"
+    use: "slack.files.upload"
+    with: {
       token: "{{ secrets.SLACK_TOKEN }}"
       channels: ["#finance"]
-      file: "{{ ppt.file_url }}"
+      file: "{{ outputs.ppt.file_url }}"
       title: "Daily Cash Snapshot"
+    }
+  }
+]
 ```
 ```bash
-flow run cfo_daily_cash.flow.yaml
+flow run cfo_daily_cash.flow.cue
 ```
 **Why it's powerful:**
 - Shows multi-source data, LLM analysis, file conversion, and Slack integration in one flow.
@@ -488,43 +624,54 @@ flow run cfo_daily_cash.flow.yaml
 - Updates Shopify product prices based on margin and competitor data.
 - Adjusts Google Ads campaigns based on price changes.
 
-```yaml
-name: ecommerce_autopilot
-on: schedule.cron
-cron: "0 * * * *"  # Every hour
+```cue
+name: "conditional_logic"
+on: "schedule.cron"
+cron: "0 * * * *"  // Every hour
 
-vars:
+vars: {
   MIN_MARGIN_PCT: 20
+}
 
-steps:
-  - id: scrape_prices
-    use: browserless.scrape
-    with:
+steps: [
+  {
+    id: "scrape_prices"
+    use: "browserless.scrape"
+    with: {
       url: "https://competitor.com/product/{{ event.sku }}"
       selector: ".price"
-      format: json
-
-  - id: update_shopify
-    use: shopify.product.updatePrice
-    with:
+      format: "json"
+    }
+  },
+  {
+    id: "update_shopify"
+    use: "shopify.product.updatePrice"
+    with: {
       api_key: "{{ secrets.SHOPIFY_KEY }}"
       product_id: "{{ event.product_id }}"
-      new_price: |
+      new_price: """
         {{ math.max(
              event.cost * (1 + vars.MIN_MARGIN_PCT/100),
              outputs.scrape_prices.price * 0.98
            ) }}
-
-  - id: adjust_ads
-    use: googleads.campaigns.update
-    with:
+        """
+    }
+  },
+  {
+    id: "adjust_ads"
+    use: "googleads.campaigns.update"
+    with: {
       token: "{{ secrets.GADS_TOKEN }}"
       campaign_id: "{{ event.campaign_id }}"
-      target_roas: |
+      target_roas: """
         {{ 1.3 if outputs.update_shopify.changed else 1.1 }}
+        """
+    }
+  }
+]
 ```
 ```bash
-flow run ecommerce_autopilot.flow.yaml
+flow run conditional_logic.flow.cue
 ```
 **Why it's powerful:**
 - Shows event-driven automation, dynamic pricing, and multi-system orchestration.
@@ -541,46 +688,68 @@ flow run ecommerce_autopilot.flow.yaml
 - Sends reminder emails and waits 24h.
 - Checks if paid; if not, escalates with a Twilio SMS.
 
-```yaml
-name: invoice_chaser
-on: schedule.cron
-cron: "0 9 * * 1-5"  # every weekday 09:00
+```cue
+name: "await_resume_demo"
+on: "schedule.cron"
+cron: "0 9 * * 1-5"  // every weekday 09:00
 
-steps:
-  - id: fetch_overdue
-    use: quickbooks.reports.aging
-    with: { token: "{{ secrets.QBO_TOKEN }}" }
-
-  - id: foreach_invoice
-    foreach: "{{ fetch_overdue.invoices }}"
-    as: inv
-    do:
-      - id: email_first
-        use: postmark.email.send
-        with:
+steps: [
+  {
+    id: "fetch_overdue"
+    use: "quickbooks.reports.aging"
+    with: {
+      token: "{{ secrets.QBO_TOKEN }}"
+    }
+  },
+  {
+    id: "foreach_invoice"
+    foreach: "{{ outputs.fetch_overdue.invoices }}"
+    as: "inv"
+    do: [
+      {
+        id: "email_first"
+        use: "postmark.email.send"
+        with: {
           api_key: "{{ secrets.EMAIL_KEY }}"
           to: "{{ inv.customer_email }}"
           template: "overdue_reminder"
-          vars: { days: "{{ inv.days_overdue }}", amount: "{{ inv.balance }}" }
-
-      - id: wait_24h
-        wait: { hours: 24 }
-
-      - id: check_paid
-        use: quickbooks.invoice.get
-        with: { id: "{{ inv.id }}", token: "{{ secrets.QBO_TOKEN }}" }
-
-      - id: escalate
+          vars: {
+            days: "{{ inv.days_overdue }}"
+            amount: "{{ inv.balance }}"
+          }
+        }
+      },
+      {
+        id: "wait_24h"
+        wait: {
+          hours: 24
+        }
+      },
+      {
+        id: "check_paid"
+        use: "quickbooks.invoice.get"
+        with: {
+          id: "{{ inv.id }}"
+          token: "{{ secrets.QBO_TOKEN }}"
+        }
+      },
+      {
+        id: "escalate"
         if: "{{ outputs.check_paid.status != 'Paid' }}"
-        use: twilio.sms.send
-        with:
+        use: "twilio.sms.send"
+        with: {
           sid: "{{ secrets.TWILIO_SID }}"
           auth: "{{ secrets.TWILIO_AUTH }}"
           to: "{{ inv.customer_phone }}"
           body: "Friendly nudge: Invoice #{{ inv.id }} is now {{ inv.days_overdue+1 }} days overdue."
+        }
+      }
+    ]
+  }
+]
 ```
 ```bash
-flow run invoice_chaser.flow.yaml
+flow run await_resume_demo.flow.cue
 ```
 **Why it's powerful:**
 - Shows foreach loops, waits, conditional logic, and escalation.
@@ -593,41 +762,57 @@ flow run invoice_chaser.flow.yaml
 **Next Steps:**
 - Try running or editing any of these flows.
 - Build your own automations by remixing steps.
-- See [SPEC.md](./docs/SPEC.md) for the full YAML grammar and advanced features.
+- See [SPEC.md](./docs/SPEC.md) for the full CUE grammar and advanced features.
 
 ---
 
 ## Anatomy of a Flow
 
-```yaml
-name: fetch_and_summarize
-description: |
-  Fetch content from a web URL, summarize it with OpenAI into 3 bullet points,
-  and post the summary to Slack. Demonstrates HTTP fetching, AI processing, 
-  and Slack integration in a complete workflow.
-on: cli.manual
-vars:
+```cue
+name: "fetch_and_summarize"
+description: """
+Fetch content from a web URL, summarize it with OpenAI into 3 bullet points,
+and post the summary to Slack. Demonstrates HTTP fetching, AI processing,
+and Slack integration in a complete workflow.
+"""
+on: "cli.manual"
+vars: {
   TOPIC: "Artificial_intelligence"
-steps:
-  - id: search
-    use: http.fetch
-    with:
-      url: "{{ TOPIC }}"
-  - id: summarize
-    use: openai.chat_completion
-    with:
-      model: gpt-4o
-      messages:
-        - role: system
+}
+steps: [
+  {
+    id: "search"
+    use: "http.fetch"
+    with: {
+      url: "{{ vars.TOPIC }}"
+    }
+  },
+  {
+    id: "summarize"
+    use: "openai.chat_completion"
+    with: {
+      model: "gpt-4o"
+      messages: [
+        {
+          role: "system"
           content: "Summarize the following text in 3 bullets."
-        - role: user
+        },
+        {
+          role: "user"
           content: "{{ outputs.search.body }}"
-
-  - id: announce
-    use: slack.chat.postMessage
-    with:
+        }
+      ]
+    }
+  },
+  {
+    id: "announce"
+    use: "slack.chat.postMessage"
+    with: {
       channel: "#ai-updates"
-      text: "{{ summarize.choices.0.message.content }}"
+      text: "{{ outputs.summarize.choices[0].message.content }}"
+    }
+  }
+]
 ```
 
 ✨ **Templating:** `{{…}}` gives you outputs, vars, secrets, helper funcs.
@@ -650,21 +835,30 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 
 **Best for:** Simple APIs, getting started, common services
 
-```yaml
-# Simple HTTP fetching
-- id: fetch_page
-  use: http.fetch
-  with:
+```cue
+// Simple HTTP fetching
+{
+  id: "fetch_page"
+  use: "http.fetch"
+  with: {
     url: "https://api.example.com/data"
+  }
+}
 
-# AI services with smart defaults
-- id: chat
-  use: openai.chat_completion
-  with:
+// AI services with smart defaults
+{
+  id: "chat"
+  use: "openai.chat_completion"
+  with: {
     model: "gpt-4o"
-    messages:
-      - role: user
+    messages: [
+      {
+        role: "user"
         content: "Hello, world!"
+      }
+    ]
+  }
+}
 ```
 
 **How it works:**
@@ -677,18 +871,20 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 
 **Best for:** Complex APIs, custom authentication, non-standard requests
 
-```yaml
-# Full HTTP control
-- id: api_call
-  use: http
-  with:
+```cue
+// Full HTTP control
+{
+  id: "api_call"
+  use: "http"
+  with: {
     url: "https://api.example.com/data"
     method: "POST"
-    headers:
+    headers: {
       Authorization: "Bearer {{ secrets.API_KEY }}"
-      Content-Type: "application/json"
-      X-Custom-Header: "my-value"
-    body: |
+      "Content-Type": "application/json"
+      "X-Custom-Header": "my-value"
+    }
+    body: """
       {
         "query": "{{ user_input }}",
         "options": {
@@ -696,6 +892,9 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
           "limit": 100
         }
       }
+      """
+  }
+}
 ```
 
 **How it works:**
@@ -708,18 +907,24 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 
 **Best for:** Databases, file systems, stateful services, complex workflows
 
-```yaml
-# Database operations
-- id: query_db
-  use: mcp://postgres/query
-  with:
+```cue
+// Database operations
+{
+  id: "query_db"
+  use: "mcp://postgres/query"
+  with: {
     sql: "SELECT * FROM users WHERE active = true"
+  }
+}
 
-# File operations  
-- id: process_files
-  use: mcp://filesystem/read
-  with:
+// File operations
+{
+  id: "process_files"
+  use: "mcp://filesystem/read"
+  with: {
     path: "/data/reports/*.csv"
+  }
+}
 ```
 
 **How it works:**
@@ -744,7 +949,7 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 
 ### Testing All Patterns
 
-Want to see all patterns in action? Check out [http_patterns.flow.yml](./flows/integration/http_patterns.flow.yaml).
+Want to see all patterns in action? Check out [http_patterns.flow.cue](./flows/integration/http_patterns.flow.cue).
 
 This demonstrates registry tools, generic HTTP, manifest-based APIs, and POST requests all working together.
 
@@ -778,39 +983,50 @@ Instead of repeating the same `http` configuration across multiple flows, create
 ```
 
 **Then use it simply across all your flows:**
-```yaml
-# Flow 1: Product search
-- id: search_products
-  use: my_api.search
-  with:
+```cue
+// Flow 1: Product search
+{
+  id: "search_products"
+  use: "my_api.search"
+  with: {
     query: "{{ product_name }}"
     category: "products"
+  }
+}
 
-# Flow 2: User search  
-- id: find_users
-  use: my_api.search
-  with:
+// Flow 2: User search
+{
+  id: "find_users"
+  use: "my_api.search"
+  with: {
     query: "{{ email_domain }}"
     category: "users"
     limit: 5
+  }
+}
 ```
 
 **Compare this to repeating the same HTTP config everywhere:**
-```yaml
-# ❌ Bad: Repetitive and error-prone
-- id: search_products
-  use: http
-  with:
+```cue
+// ❌ Bad: Repetitive and error-prone
+{
+  id: "search_products"
+  use: "http"
+  with: {
     url: "https://my-api.com/search"
     method: "POST"
-    headers:
+    headers: {
       Authorization: "Bearer {{ secrets.MY_API_KEY }}"
-      Content-Type: "application/json"
-    body: |
+      "Content-Type": "application/json"
+    }
+    body: """
       {
         "query": "{{ product_name }}",
         "category": "products"
       }
+      """
+  }
+}
 
 # ❌ Same config repeated in every flow...
 ```
@@ -889,14 +1105,17 @@ curl -s https://api.example.com/openapi.json | flow convert
 ```
 
 **Then use it immediately in your flows:**
-```yaml
-# products_search.flow.yaml
-- id: find_electronics
-  use: products_api.search
-  with:
+```cue
+// products_search.flow.cue
+{
+  id: "find_electronics"
+  use: "products_api.search"
+  with: {
     query: "smartphones"
     category: "electronics"
     limit: 5
+  }
+}
 ```
 
 **Why this is game-changing:**
@@ -909,13 +1128,16 @@ curl -s https://api.example.com/openapi.json | flow convert
 
 For more sophisticated custom API integrations, consider creating an MCP server instead:
 
-```yaml
-# Advanced: MCP server with business logic
-- id: search_products
-  use: mcp://my-api/search
-  with:
+```cue
+// Advanced: MCP server with business logic
+{
+  id: "search_products"
+  use: "mcp://my-api/search"
+  with: {
     query: "{{ product_name }}"
-    # MCP server handles caching, retries, rate limiting, etc.
+    // MCP server handles caching, retries, rate limiting, etc.
+  }
+}
 ```
 
 **MCP servers are better when you need:**
@@ -928,7 +1150,7 @@ For more sophisticated custom API integrations, consider creating an MCP server 
 - **Retries & circuit breakers** - Robust error handling
 
 **Example: Shopify MCP Server**
-```yaml
+```cue
 # Instead of 20+ JSON manifests for different Shopify endpoints,
 # create one MCP server that handles:
 # - Authentication refresh
@@ -937,12 +1159,15 @@ For more sophisticated custom API integrations, consider creating an MCP server 
 # - Inventory sync logic
 # - Order processing workflows
 
-# Use it simply:
-- id: sync_inventory
-  use: mcp://shopify/sync_inventory
-  with:
+// Use it simply:
+{
+  id: "sync_inventory"
+  use: "mcp://shopify/sync_inventory"
+  with: {
     store_id: "{{ store.id }}"
-    # Server handles all the complexity
+    // Server handles all the complexity
+  }
+}
 ```
 
 **The progression:**
@@ -1018,7 +1243,7 @@ Tools can be qualified (`smithery:airtable`) when ambiguous.
 >Most automation tools were built for humans, then awkwardly retrofitted for AI. BeemFlow was designed by humans *and* AI, for humans *and* AI. The result? Workflows that feel natural to both biological and artificial intelligence.
 >
 >**📝 Text-First is the Future**
-While others cling to drag-and-drop interfaces, BeemFlow embraces what AI has taught us: **text is the universal interface**. YAML workflows aren't just human-readable - they're LLM-parseable, version-controllable, and infinitely composable.
+While others cling to drag-and-drop interfaces, BeemFlow embraces what AI has taught us: **text is the universal interface**. CUE workflows aren't just human-readable - they're LLM-parseable, version-controllable, and infinitely composable.
 >
 >**🔄 The Meta-Loop**
 >The most mind-bending part? I can now generate BeemFlow workflows by talking to users through BeemFlow's own MCP server. We've created a system that creates systems. It's recursive creativity at its finest.
@@ -1037,7 +1262,7 @@ While others cling to drag-and-drop interfaces, BeemFlow embraces what AI has ta
 
 ## Flows as Functions: Universal, Protocolized, and Language-Native
 
-> **BeemFlow is a protocol, not a YAML format. Build flows as native structs in any language—no YAML marshaling required.**
+> **BeemFlow is a protocol, not a CUE format. Build flows as native structs in any language—no CUE marshaling required.**
 
 The true power of BeemFlow isn't in YAML files—it's in the **universal protocol** that lets you define workflows as native data structures in any language. Think of it like JSON: the same data, tools, and workflow patterns, expressed in each language's most natural form. Run/execute workflows using any live BeemFlow runtime and receive flow outputs via native language SDKs, CLI/stdio, HTTP API, MCP, or any other interface.
 
@@ -1047,23 +1272,35 @@ The true power of BeemFlow isn't in YAML files—it's in the **universal protoco
 
 ### Protocol Language Implementation Comparison
 
-**YAML-Native (Template-Centric):**
-```yaml
-name: research_flow
-steps:
-  - id: search
-    use: http.fetch
-    with:
+**CUE-Native (Template-Centric):**
+```cue
+name: "research_flow"
+steps: [
+  {
+    id: "search"
+    use: "http.fetch"
+    with: {
       url: "{{ topic }}"
-  - id: summarize
-    use: openai.chat_completion
-    with:
+    }
+  },
+  {
+    id: "summarize"
+    use: "openai.chat_completion"
+    with: {
       model: "gpt-4o"
-      messages:
-        - role: system
+      messages: [
+        {
+          role: "system"
           content: "Summarize in 3 bullets."
-        - role: user
+        },
+        {
+          role: "user"
           content: "{{ outputs.search.body }}"
+        }
+      ]
+    }
+  }
+]
 ```
 
 **JSON-Native (Wire Protocol):**
@@ -1225,7 +1462,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 **🚀 IDE Support**: Full autocomplete, refactoring, go-to-definition  
 **⚡ Dynamic Generation**: Build workflows programmatically based on business logic  
 **🔄 Cross-Language**: All approaches produce identical JSON protocol  
-**📦 Zero YAML**: Direct execution via `/runs/inline` endpoint  
+**📦 Zero CUE**: Direct execution via `/runs/inline` endpoint  
 **📋 Schema Validation**: Runtime validation via [JSON Schema](./docs/beemflow.schema.json) ensures protocol compliance
 
 ```go

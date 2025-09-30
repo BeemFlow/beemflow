@@ -87,14 +87,19 @@ func TestMainCommands(t *testing.T) {
 
 func TestMain_LintValidateCommands(t *testing.T) {
 	// Valid flow file
-	valid := `name: test
-on: cli.manual
-steps:
-  - id: s1
-    use: core.echo
-    with: {text: hi}`
+	valid := `package beemflow
+
+name: "test"
+on: "cli.manual"
+steps: [{
+	id: "s1"
+	use: "core.echo"
+	with: {
+		text: "hi"
+	}
+}]`
 	tmpDir := t.TempDir()
-	tmpPath := filepath.Join(tmpDir, t.Name()+"-valid.flow.yaml")
+	tmpPath := filepath.Join(tmpDir, t.Name()+"-valid.flow.cue")
 	tmp, err := os.Create(tmpPath)
 	if err != nil {
 		t.Fatalf("create temp: %v", err)
@@ -240,15 +245,18 @@ func TestRunFlowExecution_NoArgs(t *testing.T) {
 func TestRunFlowExecution_WithFile(t *testing.T) {
 	// Create a temporary flow file
 	tmpDir := t.TempDir()
-	flowPath := filepath.Join(tmpDir, "test.flow.yaml")
-	flowContent := `name: test
-on: cli.manual
-steps:
-  - id: echo_step
-    use: core.echo
-    with:
-      text: "hello world"
-`
+	flowPath := filepath.Join(tmpDir, "test.flow.cue")
+	flowContent := `package beemflow
+
+name: "test"
+on: "cli.manual"
+steps: [{
+	id: "echo_step"
+	use: "core.echo"
+	with: {
+		text: "hello world"
+	}
+}]`
 	if err := os.WriteFile(flowPath, []byte(flowContent), 0644); err != nil {
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
@@ -271,8 +279,8 @@ func TestRunFlowExecution_InvalidFile(t *testing.T) {
 		t.Errorf("Expected exit code 1, got %d", code)
 	}
 
-	if !strings.Contains(stderr, "YAML parse error") {
-		t.Errorf("Expected YAML parse error, got: %s", stderr)
+	if !strings.Contains(stderr, "Flow parse error") {
+		t.Errorf("Expected Flow parse error, got: %s", stderr)
 	}
 }
 
@@ -540,15 +548,16 @@ func TestUnifiedCommandIntegration(t *testing.T) {
 func TestCLISubcommandStructure(t *testing.T) {
 	// Create temporary directory and test files
 	tmpDir := t.TempDir()
-	testFlowFile := filepath.Join(tmpDir, "test.yaml")
-	testFlowContent := `name: test-flow
-on: cli.manual
-steps:
-  - id: echo_step
-    use: core.echo
-    with:
-      text: "hello world"
-`
+	testFlowFile := filepath.Join(tmpDir, "test.flow.cue")
+	testFlowContent := `name: "test-flow"
+on: "cli.manual"
+steps: [{
+	id: "echo_step"
+	use: "core.echo"
+	with: {
+		text: "hello world"
+	}
+}]`
 	if err := os.WriteFile(testFlowFile, []byte(testFlowContent), 0644); err != nil {
 		t.Fatalf("Failed to create test flow file: %v", err)
 	}

@@ -6,8 +6,8 @@ BINARY := flow
 CMD_PATH := ./cmd/flow
 
 # Auto-discover flow files
-INTEGRATION_FLOWS := $(shell find flows/integration -name "*.flow.yaml" 2>/dev/null)
-E2E_FLOWS := $(shell find flows/e2e -name "*.flow.yaml" 2>/dev/null)
+INTEGRATION_FLOWS := $(shell find flows/integration -name "*.flow.cue" 2>/dev/null)
+E2E_FLOWS := $(shell find flows/e2e -name "*.flow.cue" 2>/dev/null)
 
 # ────────────────────────────────────────────────────────────────────────────
 .PHONY: all clean build build-static install test test-race coverage e2e integration test-all check fmt vet lint tidy fix release

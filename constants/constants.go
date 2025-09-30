@@ -86,7 +86,7 @@ const (
 
 // Command descriptions
 const (
-	DescRunFlow       = "Run a flow from a YAML file"
+	DescRunFlow       = "Run a flow from a CUE file"
 	DescMCPCommands   = "MCP server management commands"
 	DescToolsCommands = "Tool manifest management commands"
 	DescSearchServers = "Search for MCP servers in the registry"
@@ -167,7 +167,6 @@ const (
 const (
 	ContentTypeJSON = "application/json"
 	ContentTypeText = "text/plain"
-	ContentTypeYAML = "application/x-yaml"
 	ContentTypeForm = "application/x-www-form-urlencoded"
 )
 
@@ -218,16 +217,6 @@ const (
 	DefaultToolPageSize = 100
 	DefaultRetryCount   = 3
 	DefaultTimeoutSec   = 30
-)
-
-// Template Field Names
-const (
-	TemplateFieldEvent   = "event"
-	TemplateFieldVars    = "vars"
-	TemplateFieldOutputs = "outputs"
-	TemplateFieldSecrets = "secrets"
-	TemplateFieldSteps   = "steps"
-	TemplateFieldEnv     = "env"
 )
 
 // Engine error messages
@@ -394,20 +383,12 @@ const (
 
 // Flow file extensions
 const (
-	FlowFileExtension = ".flow.yaml"
+	FlowFileExtension = ".flow.cue"
 )
 
 // ============================================================================
 // ENGINE TEMPLATE CONSTANTS
 // ============================================================================
-
-// Template syntax markers
-const (
-	TemplateOpenDelim    = "{{"
-	TemplateCloseDelim   = "}}"
-	TemplateControlOpen  = "{%"
-	TemplateControlClose = "%}"
-)
 
 // Paused run map keys
 const (

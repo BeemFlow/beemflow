@@ -17,7 +17,7 @@ import (
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
-	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/cue"
 	beemhttp "github.com/beemflow/beemflow/http"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/storage"
@@ -168,9 +168,9 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 	}
 
 	// Parse the flow file
-	flow, err := dsl.Parse(args[0])
+	flow, err := cue.ParseFile(args[0])
 	if err != nil {
-		utils.Error("YAML parse error: %v", err)
+		utils.Error("Flow parse error: %v", err)
 		exit(1)
 	}
 

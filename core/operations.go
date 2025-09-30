@@ -14,8 +14,8 @@ import (
 
 	"github.com/beemflow/beemflow/adapter"
 	"github.com/beemflow/beemflow/constants"
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/docs"
-	"github.com/beemflow/beemflow/dsl"
 	"github.com/beemflow/beemflow/graph"
 	"github.com/beemflow/beemflow/mcp"
 	"github.com/beemflow/beemflow/registry"
@@ -186,12 +186,13 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	var err error
 	if file != "" {
 		// Parse and validate file directly
-		flow, parseErr := dsl.Parse(file)
+		flow, parseErr := cue.ParseFile(file)
 		if parseErr != nil {
 			utils.Error("YAML parse error: %v\n", parseErr)
 			return fmt.Errorf("YAML parse error: %w", parseErr)
 		}
-		err = dsl.Validate(flow)
+		parser := cue.NewParser()
+		err = parser.Validate(flow)
 		if err != nil {
 			utils.Error("Schema validation error: %v\n", err)
 			return fmt.Errorf("schema validation error: %w", err)
@@ -223,11 +224,12 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	var err error
 	if a.File != "" {
 		// Parse and validate file directly
-		flow, parseErr := dsl.Parse(a.File)
+		flow, parseErr := cue.ParseFile(a.File)
 		if parseErr != nil {
 			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
 		}
-		err = dsl.Validate(flow)
+		parser := cue.NewParser()
+		err = parser.Validate(flow)
 		if err != nil {
 			return nil, fmt.Errorf("schema validation error: %w", err)
 		}
@@ -259,7 +261,7 @@ func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
 
 	if file != "" {
 		// Parse file directly and generate diagram
-		flow, parseErr := dsl.Parse(file)
+		flow, parseErr := cue.ParseFile(file)
 		if parseErr != nil {
 			utils.Error("YAML parse error: %v\n", parseErr)
 			return fmt.Errorf("YAML parse error: %w", parseErr)
@@ -303,7 +305,7 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 
 	if a.File != "" {
 		// Parse file directly and generate diagram
-		flow, parseErr := dsl.Parse(a.File)
+		flow, parseErr := cue.ParseFile(a.File)
 		if parseErr != nil {
 			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
 		}
@@ -326,12 +328,13 @@ func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("exactly one file argument required")
 	}
 	file := args[0]
-	flow, err := dsl.Parse(file)
+	flow, err := cue.ParseFile(file)
 	if err != nil {
 		utils.Error("YAML parse error: %v\n", err)
 		return fmt.Errorf("YAML parse error: %w", err)
 	}
-	err = dsl.Validate(flow)
+	parser := cue.NewParser()
+	err = parser.Validate(flow)
 	if err != nil {
 		utils.Error("Schema validation error: %v\n", err)
 		return fmt.Errorf("schema validation error: %w", err)
@@ -342,11 +345,12 @@ func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 
 func lintFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*FlowFileArgs)
-	flow, err := dsl.Parse(a.File)
+	flow, err := cue.ParseFile(a.File)
 	if err != nil {
 		return nil, fmt.Errorf("YAML parse error: %w", err)
 	}
-	err = dsl.Validate(flow)
+	parser := cue.NewParser()
+	err = parser.Validate(flow)
 	if err != nil {
 		return nil, fmt.Errorf("schema validation error: %w", err)
 	}

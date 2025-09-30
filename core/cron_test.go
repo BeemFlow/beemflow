@@ -59,13 +59,14 @@ func TestCronPathTraversal(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a valid workflow
-	testFlow := `name: test_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo`
+	testFlow := `name: "test_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+}]`
 
-	flowPath := filepath.Join(tmpDir, "test_workflow.flow.yaml")
+	flowPath := filepath.Join(tmpDir, "test_workflow.flow.cue")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
 
@@ -199,50 +200,54 @@ func TestCron_GlobalEndpoint(t *testing.T) {
 	// Test workflows
 	testFlows := []struct {
 		name          string
-		yaml          string
+		cue           string
 		shouldTrigger bool
 	}{
 		{
 			name: "scheduled_workflow",
-			yaml: `name: scheduled_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "Scheduled task"`,
+			cue: `name: "scheduled_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "Scheduled task"
+	}
+}]`,
 			shouldTrigger: true,
 		},
 		{
 			name: "http_workflow",
-			yaml: `name: http_workflow
-on: http.request
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "HTTP triggered"`,
+			cue: `name: "http_workflow"
+on: "http.request"
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "HTTP triggered"
+	}
+}]`,
 			shouldTrigger: false,
 		},
 		{
 			name: "multi_trigger_with_cron",
-			yaml: `name: multi_trigger_with_cron
-on:
-  - schedule.cron
-  - http.request
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "Multi-trigger"`,
+			cue: `name: "multi_trigger_with_cron"
+on: ["schedule.cron", "http.request"]
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "Multi-trigger"
+	}
+}]`,
 			shouldTrigger: true,
 		},
 	}
 
 	// Create test workflow files
 	for _, tf := range testFlows {
-		filePath := filepath.Join(tempDir, tf.name+".flow.yaml")
-		if err := os.WriteFile(filePath, []byte(tf.yaml), 0644); err != nil {
+		filePath := filepath.Join(tempDir, tf.name+".flow.cue")
+		if err := os.WriteFile(filePath, []byte(tf.cue), 0644); err != nil {
 			t.Fatalf("Failed to write test flow %s: %v", tf.name, err)
 		}
 	}
@@ -300,17 +305,18 @@ func TestCron_TriggerWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: test_cron_workflow
-on: schedule.cron
+	testFlow := `name: "test_cron_workflow"
+on: "schedule.cron"
 cron: "0 9 * * *"
 
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Hello from cron!"
-`
-	flowPath := filepath.Join(tmpDir, "test_cron_workflow.flow.yaml")
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Hello from cron!"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "test_cron_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -349,17 +355,18 @@ func TestCron_SpecificWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: specific_workflow
-on: schedule.cron
+	testFlow := `name: "specific_workflow"
+on: "schedule.cron"
 cron: "0 * * * *"
 
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Specific workflow triggered!"
-`
-	flowPath := filepath.Join(tmpDir, "specific_workflow.flow.yaml")
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Specific workflow triggered!"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "specific_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -435,13 +442,13 @@ func TestCron_ErrorHandling(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow that will fail (missing required step)
-	testFlow := `name: failing_workflow
-on: schedule.cron
-steps:
-  - id: fail_step
-    use: non.existent.tool
-`
-	flowPath := filepath.Join(tmpDir, "failing_workflow.flow.yaml")
+	testFlow := `name: "failing_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "fail_step"
+	use: "non.existent.tool"
+}]`
+	flowPath := filepath.Join(tmpDir, "failing_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -483,13 +490,14 @@ func TestCron_Security(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow
-	testFlow := `name: secure_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo`
+	testFlow := `name: "secure_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+}]`
 
-	flowPath := filepath.Join(tmpDir, "secure_workflow.flow.yaml")
+	flowPath := filepath.Join(tmpDir, "secure_workflow.flow.cue")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
 

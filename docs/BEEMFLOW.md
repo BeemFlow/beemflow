@@ -32,7 +32,7 @@ BeemFlow is **GitHub Actions for every business process** — a text-first, AI-n
 
 ### Key Principles
 
-1. **Text > GUI**: Workflows are defined in human and AI-readable YAML/JSON, not drag-and-drop interfaces
+1. **Text > GUI**: Workflows are defined in human and AI-readable CUE/JSON, not drag-and-drop interfaces
 2. **Universal Protocol**: One workflow runs everywhere — CLI, HTTP API, or Model Context Protocol
 3. **AI-Native**: LLMs can read, write, and execute BeemFlow workflows as first-class citizens
 4. **Open Ecosystem**: No vendor lock-in, fully open-source, community-driven
@@ -60,7 +60,7 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 ├───────────────┬──────────────┬──────────────┬───────────┤
 │   Protocol    │    Engine    │   Registry   │    MCP    │
 ├───────────────┼──────────────┼──────────────┼───────────┤
-│ YAML/JSON     │ Executor     │ Tool Store   │ Servers   │
+│ CUE/JSON      │ Executor     │ Tool Store   │ Servers   │
 │ Validation    │ Scheduler    │ Manifests    │ Bridge    │
 │ Templating    │ State Mgmt   │ Resolution   │ Protocol  │
 └───────────────┴──────────────┴──────────────┴───────────┘
@@ -491,7 +491,7 @@ The generic HTTP adapter provides full control:
 
 ### Execution Flow
 
-1. **Parse**: YAML/JSON → Internal flow structure
+1. **Parse**: CUE/JSON → Internal flow structure
 2. **Validate**: Schema validation & constraint checking
 3. **Template**: Initial variable expansion
 4. **Execute**: Step-by-step execution with state tracking

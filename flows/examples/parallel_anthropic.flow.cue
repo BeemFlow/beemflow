@@ -1,0 +1,63 @@
+// Parallel Anthropic Flow in CUE
+// Execute two AI chat completions in parallel to generate different fun facts,
+// then combine the results into a single output. Demonstrates parallel execution
+// patterns and dependency management between sequential and parallel steps.
+
+package beemflow
+
+name: "parallel_anthropic"
+description: """
+Execute two AI chat completions in parallel to generate different fun facts,
+then combine the results into a single output. Demonstrates parallel execution
+patterns and dependency management between sequential and parallel steps.
+"""
+
+on: "cli.manual"
+
+vars: {
+	prompt1: "Generate a fun fact about cats"
+	prompt2: "Generate a fun fact about dogs"
+}
+
+steps: [
+	{
+		id: "fanout"
+		parallel: true
+		steps: [
+			{
+				id: "chat1"
+				use: "anthropic.chat_completion"
+				with: {
+					model: "claude-3-7-sonnet-20250219"
+					messages: [{
+						role: "user"
+						content: vars.prompt1
+					}]
+				}
+			},
+			{
+				id: "chat2"
+				use: "anthropic.chat_completion"
+				with: {
+					model: "claude-3-7-sonnet-20250219"
+					messages: [{
+						role: "user"
+						content: vars.prompt2
+					}]
+				}
+			}
+		]
+	},
+	{
+		id: "combine"
+		depends_on: ["fanout"]
+		use: "core.echo"
+		with: {
+			text: """
+Combined responses:
+- chat1: {{ outputs.chat1.content.0.text }}
+- chat2: {{ outputs.chat2.content.0.text }}
+"""
+		}
+	}
+]

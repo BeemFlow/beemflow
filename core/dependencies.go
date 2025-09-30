@@ -6,7 +6,6 @@ import (
 
 	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
-	"github.com/beemflow/beemflow/dsl"
 	beemengine "github.com/beemflow/beemflow/engine"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/utils"
@@ -50,8 +49,7 @@ func InitializeDependencies(cfg *config.Config) (func(), error) {
 
 	// Create engine
 	adapters := beemengine.NewDefaultAdapterRegistry(context.Background())
-	templ := dsl.NewTemplater()
-	engine := beemengine.NewEngine(adapters, templ, bus, blobStore, store)
+	engine := beemengine.NewEngine(adapters, bus, blobStore, store)
 
 	// Return cleanup function
 	cleanup := func() {

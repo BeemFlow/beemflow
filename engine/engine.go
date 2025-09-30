@@ -12,11 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"cuelang.org/go/cue/cuecontext"
 	"github.com/beemflow/beemflow/adapter"
 	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
@@ -85,7 +86,7 @@ type StepResult struct {
 	Error   error
 }
 
-// Template data structure for type safety
+// Template data structure for type safety (simplified)
 type TemplateData struct {
 	Event   EventData
 	Vars    map[string]any
@@ -155,10 +156,9 @@ func (r *RunsAccess) Previous() map[string]any {
 // validIdentifierRegex matches valid Go-style identifiers
 var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// Engine is the core runtime for executing BeemFlow flows. It manages adapters, templating, event bus, and in-memory state.
+// Engine is the core runtime for executing BeemFlow flows. It manages adapters, event bus, and execution state.
 type Engine struct {
 	Adapters  *adapter.Registry
-	Templater *dsl.Templater
 	EventBus  event.EventBus
 	BlobStore blob.BlobStore
 	Storage   storage.Storage
@@ -240,7 +240,6 @@ func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
 func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engine {
 	return &Engine{
 		Adapters:         NewDefaultAdapterRegistry(ctx),
-		Templater:        dsl.NewTemplater(),
 		EventBus:         event.NewInProcEventBus(),
 		BlobStore:        blobStore,
 		waiting:          make(map[string]*PausedRun),
@@ -252,14 +251,12 @@ func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engi
 // NewEngine creates a new Engine with all dependencies injected.
 func NewEngine(
 	adapters *adapter.Registry,
-	templater *dsl.Templater,
 	eventBus event.EventBus,
 	blobStore blob.BlobStore,
 	storage storage.Storage,
 ) *Engine {
 	return &Engine{
 		Adapters:         adapters,
-		Templater:        templater,
 		EventBus:         eventBus,
 		BlobStore:        blobStore,
 		Storage:          storage,
@@ -483,14 +480,9 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 		return constants.EmptyString, utils.Errorf(constants.ErrAwaitEventMissingToken)
 	}
 
-	// Prepare template data and render token
-	data := e.prepareTemplateDataAsMap(stepCtx)
-	utils.Debug("About to render template for step %s: data = %#v", step.ID, data)
-
-	renderedToken, err := e.Templater.Render(tokenRaw, data)
-	if err != nil {
-		return constants.EmptyString, utils.Errorf(constants.ErrFailedToRenderToken, err)
-	}
+	// Use simple template resolution for runtime-dependent tokens
+	context := e.prepareTemplateContext(stepCtx)
+	renderedToken := cue.ResolveRuntimeTemplates(tokenRaw, context)
 
 	return renderedToken, nil
 }
@@ -800,36 +792,144 @@ func (e *Engine) executeSequentialBlock(ctx context.Context, step *model.Step, s
 	return nil
 }
 
-// executeForeachBlock handles foreach loop execution
-func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
-	// Prepare template data for expression evaluation
-	data := e.prepareTemplateDataAsMap(stepCtx)
+// evaluateForeachExpression evaluates a foreach expression and returns the array directly
+func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) []any {
+	// For foreach expressions like "{{items}}" or "{{vars.items}}", extract and evaluate
+	if strings.HasPrefix(expr, "{{") && strings.HasSuffix(expr, "}}") {
+		innerExpr := strings.TrimSpace(expr[2 : len(expr)-2])
 
-	// Evaluate the foreach expression to get the actual value (not rendered as string)
-	rendered, err := e.Templater.EvaluateExpression(step.Foreach, data)
-	if err != nil {
-		return utils.Errorf(constants.ErrTemplateErrorForeach, err)
+		// Try to directly access the value using dot notation
+		parts := strings.Split(innerExpr, ".")
+		var val any
+
+		// Special handling: if it's a single word, check vars first
+		if len(parts) == 1 {
+			if vars, ok := context["vars"].(map[string]any); ok {
+				if v, exists := vars[innerExpr]; exists {
+					val = v
+				}
+			}
+		}
+
+		// If not found in vars, traverse from context root
+		if val == nil {
+			val = context
+			for _, part := range parts {
+				if m, ok := val.(map[string]any); ok {
+					val = m[part]
+				} else {
+					val = nil
+					break
+				}
+			}
+		}
+
+		// If we got an array, return it
+		if items, ok := val.([]any); ok {
+			return items
+		}
+
+		// Also handle []map[string]any
+		if items, ok := val.([]map[string]any); ok {
+			result := make([]any, len(items))
+			for i, item := range items {
+				result[i] = item
+			}
+			return result
+		}
+
+		// Also handle []string
+		if items, ok := val.([]string); ok {
+			result := make([]any, len(items))
+			for i, item := range items {
+				result[i] = item
+			}
+			return result
+		}
+
+		return nil
 	}
 
-	// The rendered result should be a list - handle different slice types
+	// For simple expressions like "items", try to resolve from vars first
+	if vars, ok := context["vars"].(map[string]any); ok {
+		if val, exists := vars[expr]; exists {
+			if items, ok := val.([]any); ok {
+				return items
+			}
+			// Also handle []map[string]any
+			if items, ok := val.([]map[string]any); ok {
+				result := make([]any, len(items))
+				for i, item := range items {
+					result[i] = item
+				}
+				return result
+			}
+		}
+	}
+
+	// Also try CUE evaluation as fallback
+	ctx := cuecontext.New()
+	cueData := ctx.Encode(context)
+	exprValue := ctx.CompileString(expr)
+	if exprValue.Err() != nil {
+		return nil
+	}
+
+	result := cueData.Unify(exprValue)
+	if result.Err() != nil {
+		return nil
+	}
+
+	// Try to extract as a list
+	list, err := result.List()
+	if err != nil {
+		return nil
+	}
+
+	var items []any
+	for list.Next() {
+		val := list.Value()
+		goValue := cue.ExtractCUEValue(val)
+		items = append(items, goValue)
+	}
+
+	return items
+}
+
+// executeForeachBlock handles foreach loop execution
+func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
+	context := e.prepareTemplateContext(stepCtx)
+
+	// Handle both {{ }} wrapped expressions and direct expressions
+	trimmed := strings.TrimSpace(step.Foreach)
 	var list []any
-	switch v := rendered.(type) {
-	case []any:
-		list = v
-	case []map[string]any:
-		// Convert []map[string]any to []any
-		list = make([]any, len(v))
-		for i, item := range v {
-			list[i] = item
+
+	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+		innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		// For foreach, we need the actual array value, not a string representation
+		list = e.evaluateForeachExpression("{{"+innerExpr+"}}", context)
+	} else {
+		list = e.evaluateForeachExpression(trimmed, context)
+	}
+
+	// If evaluation failed, try legacy string parsing
+	if list == nil {
+		resolved := cue.ResolveRuntimeTemplates("{{"+trimmed+"}}", context)
+
+		// Try to parse as JSON array first, then fallback to simple string splitting
+		if strings.HasPrefix(resolved, "[") {
+			// Assume it's a JSON array
+			if err := json.Unmarshal([]byte(resolved), &list); err != nil {
+				return utils.Errorf("failed to parse foreach expression as JSON array: %w", err)
+			}
+		} else {
+			// Fallback: treat as comma-separated string
+			parts := strings.Split(resolved, ",")
+			list = make([]any, len(parts))
+			for i, part := range parts {
+				list[i] = strings.TrimSpace(part)
+			}
 		}
-	case []string:
-		// Convert []string to []any
-		list = make([]any, len(v))
-		for i, item := range v {
-			list[i] = item
-		}
-	default:
-		return utils.Errorf(constants.ErrForeachNotList, rendered)
 	}
 
 	if len(list) == 0 {
@@ -894,19 +994,15 @@ func (e *Engine) executeIterationSteps(ctx context.Context, steps []model.Step, 
 	return nil
 }
 
-// renderStepID renders a step ID with templating support
+// renderStepID renders a step ID with simple template support
 func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, error) {
-	data := e.prepareTemplateDataAsMap(stepCtx)
-	rendered, err := e.renderValue(stepID, data)
-	if err != nil {
-		return constants.EmptyString, utils.Errorf(constants.ErrTemplateErrorStepID, stepID, err)
-	}
+	context := e.prepareTemplateContext(stepCtx)
+	rendered := cue.ResolveRuntimeTemplates(stepID, context)
 
-	renderedStr, ok := utils.SafeStringAssert(rendered)
-	if !ok {
-		return stepID, nil // fallback to original stepID if not a string
+	if rendered == "" {
+		return stepID, nil // fallback to original stepID if not resolved
 	}
-	return renderedStr, nil
+	return rendered, nil
 }
 
 // copyIterationOutput safely copies output from iteration context to main context
@@ -1066,40 +1162,6 @@ func (e *Engine) handleToolExecution(ctx context.Context, toolName, stepID strin
 	return nil
 }
 
-// prepareTemplateData creates template data from step context
-func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
-	snapshot := stepCtx.Snapshot()
-
-	// Get environment variables but with lazy loading for security
-	// We create a proxy map that loads values on demand
-	env := e.createEnvProxy()
-
-	// Get current execution context
-	e.mu.Lock()
-	currentFlow := e.currentFlow
-	currentRunID := e.currentRunID
-	e.mu.Unlock()
-
-	flowName := ""
-	if currentFlow != nil {
-		flowName = currentFlow.Name
-	}
-
-	return TemplateData{
-		Event:   snapshot.Event,
-		Vars:    snapshot.Vars,
-		Outputs: snapshot.Outputs,
-		Secrets: snapshot.Secrets,
-		Env:     env,
-		Runs: &RunsAccess{
-			storage:      e.Storage,
-			ctx:          context.Background(),
-			currentRunID: currentRunID,
-			flowName:     flowName,
-		},
-	}
-}
-
 // createEnvProxy creates a map that loads environment variables on demand
 // We load all environment variables since users control their own environment.
 // The selective loading approach was removed for simplicity - env vars are inherently
@@ -1115,10 +1177,37 @@ func (e *Engine) createEnvProxy() map[string]string {
 	return env
 }
 
-// prepareTemplateDataAsMap creates template data as map for templating system
-func (e *Engine) prepareTemplateDataAsMap(stepCtx *StepContext) map[string]any {
-	templateData := e.prepareTemplateData(stepCtx)
-	return flattenTemplateDataToMap(templateData)
+// createRunsContext creates a simple runs context for template access
+func (e *Engine) createRunsContext() map[string]any {
+	flowName := ""
+	if e.currentFlow != nil {
+		flowName = e.currentFlow.Name
+	}
+
+	runs := &RunsAccess{
+		storage:      e.Storage,
+		ctx:          context.Background(),
+		flowName:     flowName,
+		currentRunID: e.currentRunID,
+	}
+	return map[string]any{
+		"Previous": runs.Previous(),
+	}
+}
+
+// prepareTemplateContext creates a simple context map for runtime template resolution
+func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
+	snapshot := stepCtx.Snapshot()
+	env := e.createEnvProxy()
+
+	return map[string]any{
+		"outputs": snapshot.Outputs,
+		"vars":    snapshot.Vars,
+		"secrets": snapshot.Secrets,
+		"event":   snapshot.Event,
+		"env":     env,
+		"runs":    e.createRunsContext(),
+	}
 }
 
 // isValidIdentifier checks if a string is a valid template identifier
@@ -1140,28 +1229,52 @@ func isValidIdentifier(s string) bool {
 
 // evaluateCondition evaluates a condition expression and returns whether it's true
 func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool, error) {
-	// Condition MUST be in {{ }} format
 	trimmed := strings.TrimSpace(condition)
+
+	// Only accept expressions wrapped in {{ }}
 	if !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
-		return false, utils.Errorf("condition must use template syntax: {{ expression }}, got: %s", condition)
+		return false, fmt.Errorf("condition must use template syntax")
 	}
 
-	// Extract the inner expression
 	innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+	context := e.prepareTemplateContext(stepCtx)
+	result := cue.ResolveRuntimeTemplates("{{"+innerExpr+"}}", context)
+	result = strings.TrimSpace(result)
+	return isTruthy(result), nil
+}
 
-	// Prepare template data
-	data := e.prepareTemplateDataAsMap(stepCtx)
-
-	// Use {% if %} to evaluate as boolean
-	wrappedCondition := fmt.Sprintf("{%% if %s %%}true{%% else %%}false{%% endif %%}", innerExpr)
-
-	// Render and return result
-	rendered, err := e.Templater.Render(wrappedCondition, data)
-	if err != nil {
-		return false, err
+// isTruthy checks if a string result represents a truthy value
+func isTruthy(result string) bool {
+	// Explicit boolean strings
+	if result == "true" {
+		return true
+	}
+	if result == "false" {
+		return false
 	}
 
-	return strings.TrimSpace(rendered) == "true", nil
+	// Empty strings are falsy
+	if result == "" {
+		return false
+	}
+
+	// The string "0" is falsy (for numeric zero)
+	if result == "0" {
+		return false
+	}
+
+	// "null" or "<nil>" is falsy
+	if result == "null" || result == "<nil>" {
+		return false
+	}
+
+	// Unresolved templates (failed evaluation) are falsy
+	if strings.HasPrefix(result, "{{") && strings.HasSuffix(result, "}}") {
+		return false
+	}
+
+	// Non-empty strings are truthy (except "0", "null", and unresolved templates)
+	return true
 }
 
 // createIterationContext creates a new context for foreach iterations
@@ -1188,30 +1301,43 @@ func (e *Engine) createIterationContext(stepCtx *StepContext, asVar string, item
 
 // prepareToolInputs prepares inputs for tool execution
 func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepID string) (map[string]any, error) {
-	data := e.prepareTemplateDataAsMap(stepCtx)
+	context := e.prepareTemplateContext(stepCtx)
 	inputs := make(map[string]any)
 
-	// Log debug information for template context
-	e.logTemplateDebugInfo(data, stepID)
-
-	// Render each input parameter
+	// Apply template resolution recursively to each input parameter
 	for k, v := range step.With {
-		rendered, err := e.renderValue(v, data)
-		if err != nil {
-			return nil, utils.Errorf(constants.ErrTemplateError, stepID, err)
-		}
-		inputs[k] = rendered
+		inputs[k] = e.resolveTemplatesRecursively(v, context)
 	}
 
 	return inputs, nil
 }
 
-// logTemplateDebugInfo logs debug information about template context
-func (e *Engine) logTemplateDebugInfo(data map[string]any, stepID string) {
-	varsKeys := extractVarsKeysForDebug(data)
-	utils.Debug("Template context keys: %v, vars keys: %v, vars: %+v",
-		mapKeys(data), varsKeys, data[constants.TemplateFieldVars])
-	utils.Debug("About to render template for step %s: data = %#v", stepID, data)
+// resolveTemplatesRecursively applies template resolution to all string values in a nested structure
+func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) any {
+	switch v := value.(type) {
+	case string:
+		return cue.ResolveRuntimeTemplates(v, context)
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = e.resolveTemplatesRecursively(item, context)
+		}
+		return result
+	case []map[string]any:
+		result := make([]map[string]any, len(v))
+		for i, item := range v {
+			result[i] = e.resolveTemplatesRecursively(item, context).(map[string]any)
+		}
+		return result
+	case map[string]any:
+		result := make(map[string]any)
+		for k, val := range v {
+			result[k] = e.resolveTemplatesRecursively(val, context)
+		}
+		return result
+	default:
+		return value
+	}
 }
 
 // autoFillRequiredParams fills missing required parameters from manifest defaults
@@ -1471,39 +1597,7 @@ func (e *Engine) createMCPServerConfig(entry registry.RegistryEntry) *MCPServerW
 	}
 }
 
-// renderValue recursively renders template strings in nested values.
-func (e *Engine) renderValue(val any, data map[string]any) (any, error) {
-	switch x := val.(type) {
-	case string:
-		return e.Templater.Render(x, data)
-	case []any:
-		// Create a copy to avoid race conditions
-		result := make([]any, len(x))
-		for i, elem := range x {
-			rendered, err := e.renderValue(elem, data)
-			if err != nil {
-				return nil, err
-			}
-			result[i] = rendered
-		}
-		return result, nil
-	case map[string]any:
-		// Create a copy to avoid race conditions
-		result := make(map[string]any, len(x))
-		for k, elem := range x {
-			rendered, err := e.renderValue(elem, data)
-			if err != nil {
-				return nil, err
-			}
-			result[k] = rendered
-		}
-		return result, nil
-	default:
-		return val, nil
-	}
-}
-
-// NewDefaultEngine creates a new Engine with default dependencies (adapter registry, templater, in-process event bus, default blob store, in-memory storage).
+// NewDefaultEngine creates a new Engine with default dependencies (adapter registry, in-process event bus, default blob store, in-memory storage).
 func NewDefaultEngine(ctx context.Context) *Engine {
 	// Default BlobStore
 	bs, err := blob.NewDefaultBlobStore(ctx, nil)
@@ -1513,7 +1607,6 @@ func NewDefaultEngine(ctx context.Context) *Engine {
 	}
 	return NewEngine(
 		NewDefaultAdapterRegistry(ctx),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		bs,
 		storage.NewMemoryStorage(),
@@ -1618,56 +1711,4 @@ func logToolOutputs(stepID string, outputs map[string]any) {
 	masked := maskSensitiveFields(outputs)
 	utils.Debug("Writing outputs for step %s: %+v", stepID, masked)
 	utils.Debug("Outputs map after step %s: %+v", stepID, masked)
-}
-
-// flattenTemplateDataToMap creates a flattened map for template rendering
-// This encapsulates complex template data preparation logic
-func flattenTemplateDataToMap(templateData TemplateData) map[string]any {
-	data := make(map[string]any)
-
-	// Set structured template fields
-	data[constants.TemplateFieldEvent] = templateData.Event
-	data[constants.TemplateFieldVars] = templateData.Vars
-	data[constants.TemplateFieldOutputs] = templateData.Outputs
-	data[constants.TemplateFieldSecrets] = templateData.Secrets
-	data[constants.TemplateFieldSteps] = templateData.Outputs // Add steps namespace for step output access
-	data[constants.TemplateFieldEnv] = templateData.Env
-	data["runs"] = templateData.Runs // Add runs access for history
-
-	// Flatten vars and event into context for template rendering
-	for k, v := range templateData.Vars {
-		data[k] = v
-	}
-	for k, v := range templateData.Event {
-		data[k] = v // For foreach expressions like {{list}}
-	}
-
-	// Only flatten outputs that have valid identifier names (no template syntax)
-	for k, v := range templateData.Outputs {
-		if isValidIdentifier(k) {
-			data[k] = v
-		}
-	}
-
-	return data
-}
-
-// extractVarsKeysForDebug extracts variable keys for debug logging
-func extractVarsKeysForDebug(data map[string]any) []string {
-	varsKeys := []string{}
-	if vars, ok := data[constants.TemplateFieldVars].(map[string]any); ok {
-		for key := range vars {
-			varsKeys = append(varsKeys, key)
-		}
-	}
-	return varsKeys
-}
-
-// mapKeys returns all keys from a map for debug logging
-func mapKeys(m map[string]any) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

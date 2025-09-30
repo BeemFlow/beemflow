@@ -1,0 +1,63 @@
+// Parallel OpenAI Flow in CUE
+// Execute two OpenAI chat completions in parallel to generate different fun facts about
+// space and oceans, then combine results into a single output. Demonstrates parallel
+// execution with AI services and step dependency management.
+
+package beemflow
+
+name: "parallel_openai_nested"
+description: """
+Execute two OpenAI chat completions in parallel to generate different fun facts about
+space and oceans, then combine results into a single output. Demonstrates parallel
+execution with AI services and step dependency management.
+"""
+
+on: "cli.manual"
+
+vars: {
+	prompt1: "Generate a fun fact about space"
+	prompt2: "Generate a fun fact about oceans"
+}
+
+steps: [
+	{
+		id: "fanout"
+		parallel: true
+		steps: [
+			{
+				id: "chat1"
+				use: "openai.chat_completion"
+				with: {
+					model: "gpt-3.5-turbo"
+					messages: [{
+						role: "user"
+						content: vars.prompt1
+					}]
+				}
+			},
+			{
+				id: "chat2"
+				use: "openai.chat_completion"
+				with: {
+					model: "gpt-3.5-turbo"
+					messages: [{
+						role: "user"
+						content: vars.prompt2
+					}]
+				}
+			}
+		]
+	},
+	{
+		id: "combine"
+		depends_on: ["fanout"]
+		use: "core.echo"
+		with: {
+			text: """
+Combined responses:
+- chat1: {{ outputs.chat1.choices.0.message.content }}
+- chat2: {{ outputs.chat2.choices.0.message.content }}
+"""
+		}
+	}
+]

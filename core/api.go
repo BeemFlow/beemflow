@@ -10,7 +10,7 @@ import (
 
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/engine"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/graph"
@@ -163,7 +163,7 @@ func ListFlows(ctx context.Context) ([]string, error) {
 // GetFlow returns the parsed flow definition for the given name.
 func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	flow, err := cue.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return model.Flow{}, nil
@@ -176,20 +176,21 @@ func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 // ValidateFlow validates the given flow by name.
 func ValidateFlow(ctx context.Context, name string) error {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	flow, err := cue.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // treat missing as valid for test robustness
 		}
 		return err
 	}
-	return dsl.Validate(flow)
+	parser := cue.NewParser()
+	return parser.Validate(flow)
 }
 
 // GraphFlow returns the Mermaid diagram for the given flow.
 func GraphFlow(ctx context.Context, name string) (string, error) {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	flow, err := cue.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -205,7 +206,6 @@ func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 	if store := GetStoreFromContext(ctx); store != nil {
 		return engine.NewEngine(
 			engine.NewDefaultAdapterRegistry(ctx),
-			dsl.NewTemplater(),
 			event.NewInProcEventBus(),
 			nil, // blob store not needed here
 			store,
@@ -224,7 +224,6 @@ func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 
 	return engine.NewEngine(
 		engine.NewDefaultAdapterRegistry(ctx),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		nil, // blob store not needed here
 		store,
@@ -239,7 +238,7 @@ func buildFlowPath(flowName string) string {
 // parseFlowByName loads and parses a flow file by name
 func parseFlowByName(flowName string) (*model.Flow, error) {
 	path := buildFlowPath(flowName)
-	flow, err := dsl.Parse(path)
+	flow, err := cue.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -372,9 +371,10 @@ func ResumeRun(ctx context.Context, token string, eventData map[string]any) (map
 	return outputs, nil
 }
 
-// ParseFlowFromString parses a flow YAML string into a Flow struct.
-func ParseFlowFromString(yamlStr string) (*model.Flow, error) {
-	return dsl.ParseFromString(yamlStr)
+// ParseFlowFromString parses a flow CUE string into a Flow struct.
+func ParseFlowFromString(cueStr string) (*model.Flow, error) {
+	parser := cue.NewParser()
+	return parser.ParseString(cueStr)
 }
 
 // RunSpec validates and runs a flow spec inline, returning run ID and outputs.
