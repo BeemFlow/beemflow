@@ -48,7 +48,10 @@ ${ variable }           # ❌ NO - Use {{ variable }}
 break, continue, exit   # ❌ NO - No flow control keywords
 ```
 
-### 📝 Template Syntax (CUE - Go-like)
+### 📝 Template Syntax (Consistent `{{ }}` for all runtime values)
+
+**Note:** BeemFlow uses `{{ }}` for ALL runtime template resolution. While CUE also supports `\(expr)` for static interpolation, we recommend using `{{ }}` consistently for better readability and a unified syntax.
+
 ```cue
 # Variables & References (Always use explicit scopes!)
 {{ vars.MY_VAR }}              # Flow variables

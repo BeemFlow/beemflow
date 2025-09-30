@@ -22,7 +22,7 @@ steps: [
 		id: "echo_start"
 		use: "core.echo"
 		with: {
-			text: "Started (token: \(vars.token))"
+			text: "Started (token: {{ vars.token }})"
 		}
 	},
 
@@ -41,7 +41,7 @@ steps: [
 		id: "echo_resumed"
 		use: "core.echo"
 		with: {
-			text: "Resumed with: {{ event.resume_value }} (token: \(vars.token))"
+			text: "Resumed with: {{ event.resume_value }} (token: {{ vars.token }})"
 		}
 	}
 ]
