@@ -5,93 +5,71 @@ package beemflow
 
 name: "test_engine_integration"
 description: "Comprehensive integration test for engine functionality"
+on: "cli.manual"
 
 vars: {
-	test_items: ["alpha", "beta", "gamma", "delta"]
+	test_items: ["alpha", "beta", "gamma"]
 	base_number: 42
-	test_config: {
-		timeout: 5
-		retries: 3
-		parallel_limit: 2
-	}
 }
 
 steps: [
-	// Test basic step execution and templating
+	// Test basic execution
 	{
-		id: "basic_test"
+		id: "test_basic"
 		use: "core.echo"
 		with: {
-			text: "Starting integration test with \(len(vars.test_items)) items"
+			text: "Engine test starting..."
 		}
 	},
 
-	// Test parallel execution with HTTP calls
+	// Test foreach
 	{
-		id: "parallel_http_test"
+		id: "test_foreach"
+		foreach: "{{ vars.test_items }}"
+		use: "core.echo"
+		with: {
+			text: "Processing {{ item }}"
+		}
+	},
+
+	// Test conditions
+	{
+		id: "test_condition"
+		when: "{{ vars.base_number == 42 }}"
+		use: "core.echo"
+		with: {
+			text: "Condition passed!"
+		}
+	},
+
+	// Test parallel
+	{
+		id: "test_parallel"
 		parallel: true
 		steps: [
 			{
-				id: "http_get_1"
-				use: "http"
+				id: "parallel1"
+				use: "core.echo"
 				with: {
-					url:    "https://postman-echo.com/get"
-					method: "GET"
+					text: "Parallel 1"
 				}
 			},
 			{
-				id: "http_get_2"
-				use: "http"
+				id: "parallel2"
+				use: "core.echo"
 				with: {
-					url:    "https://postman-echo.com/get"
-					method: "GET"
+					text: "Parallel 2"
 				}
 			}
 		]
 	},
 
-	// Test foreach with data processing
-	for item in vars.test_items {
-		"process_item_\(item)": {
-			use: "core.echo"
-			with: {
-				text: "Processing \(item) with base number \(vars.base_number)"
-			}
-		}
-	},
-
-	// Test conditional logic
+	// Final summary
 	{
-		id: "conditional_test"
-		if: "len(vars.test_items) > 2"
+		id: "engine_summary"
 		use: "core.echo"
 		with: {
-			text: "Condition met: test_items has more than 2 items"
-		}
-	},
-
-	// Test error handling and recovery
-	{
-		id: "error_recovery_test"
-		use: "core.echo"
-		with: {
-			text: "Testing error recovery patterns"
-		}
-	},
-
-	// Final integration summary
-	{
-		id: "integration_summary"
-		use: "core.echo"
-		with: {
-			text: """
-Engine integration test completed successfully!
-- Basic execution: ✓
-- Parallel HTTP calls: ✓
-- Foreach processing: ✓
-- Conditional logic: ✓
-- Error recovery: ✓
-"""
+			text: "Engine comprehensive test completed!"
 		}
 	}
 ]

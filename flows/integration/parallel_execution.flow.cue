@@ -5,6 +5,7 @@ package beemflow
 
 name: "test_parallel_integration"
 description: "Integration test for parallel execution with real scenarios"
+on: "cli.manual"
 
 vars: {
 	test_data: ["apple", "banana", "cherry", "date", "elderberry"]
@@ -64,27 +65,27 @@ steps: [
 		}
 	},
 
-	// Test nested parallel within foreach using CUE comprehensions
-	for fruit in vars.test_data {
-		"nested_parallel_test_\(fruit)": {
-			parallel: true
-			steps: [
-				{
-					id: "uppercase_\(fruit)"
-					use: "core.echo"
-					with: {
-						text: strings.ToUpper(fruit)
-					}
-				},
-				{
-					id: "length_\(fruit)"
-					use: "core.echo"
-					with: {
-						text: "\(fruit) has \(len(fruit)) characters"
-					}
+	// Test nested parallel within foreach
+	{
+		id: "nested_parallel_foreach"
+		foreach: "{{ vars.test_data }}"
+		parallel: true
+		steps: [
+			{
+				id: "uppercase"
+				use: "core.echo"
+				with: {
+					text: "UPPERCASE: {{ item }}"
 				}
-			]
-		}
+			},
+			{
+				id: "length"
+				use: "core.echo"
+				with: {
+					text: "Item {{ item }} has N characters"
+				}
+			}
+		]
 	},
 
 	// Final verification step

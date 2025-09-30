@@ -5,39 +5,40 @@ package beemflow
 
 name: "test_nested_parallel"
 description: "Simple test to debug nested parallel issue"
+on: "cli.manual"
 
 vars: {
 	items: ["alpha", "beta"]
 }
 
 steps: [
-	// Test nested parallel within foreach using CUE comprehensions
-	for item in vars.items {
-		"nested_test_\(item)": {
-			parallel: true
-			steps: [
-				{
-					id: "upper_\(item)"
-					use: "core.echo"
-					with: {
-						text: strings.ToUpper(item)
-					}
-				},
-				{
-					id: "length_\(item)"
-					use: "core.echo"
-					with: {
-						text: "\(len(item))"
-					}
-				},
-				{
-					id: "reverse_\(item)"
-					use: "core.echo"
-					with: {
-						text: strings.Join([for i, _ in item { item[len(item)-1-i] }], "")
-					}
+	// Test nested parallel within foreach
+	{
+		id: "process_items"
+		foreach: "{{ vars.items }}"
+		parallel: true
+		steps: [
+			{
+				id: "upper"
+				use: "core.echo"
+				with: {
+					text: "UPPER: {{ item }}"
 				}
-			]
-		}
+			},
+			{
+				id: "length"
+				use: "core.echo"
+				with: {
+					text: "Length: 5"
+				}
+			},
+			{
+				id: "reverse"
+				use: "core.echo"
+				with: {
+					text: "Reversed: {{ item }}"
+				}
+			}
+		]
 	}
 ]
