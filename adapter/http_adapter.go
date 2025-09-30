@@ -382,14 +382,17 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
 		if len(parts) != 2 {
+			utils.Warn("Invalid OAuth pattern: %s (expected format: $oauth:provider:integration)", match)
 			return match
 		}
 		provider, integration := parts[0], parts[1]
 
-		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
-			return "Bearer " + token
+		token, err := oauthClient.GetToken(ctx, provider, integration)
+		if err != nil {
+			utils.Warn("Failed to retrieve OAuth token for %s:%s: %v", provider, integration, err)
+			return match
 		}
-		return match // Keep original if OAuth token not found
+		return "Bearer " + token
 	})
 
 	// Then handle environment variables (existing logic)

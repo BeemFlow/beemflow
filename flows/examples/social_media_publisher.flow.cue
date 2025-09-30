@@ -12,7 +12,7 @@ post approved content to Twitter, and generate new drafts when queue is empty.
 Runs every 5 minutes via cron or manually.
 """
 
-on: ["cli.manual", "cron.*/5_*_*_*_*"]
+on: ["cli.manual", "cron.*/5 * * * *"]
 
 vars: {
 	SPREADSHEET_ID: "1ubdL4b0xQ7bpe11bpPeGiaRbISrKfWTdMjvHHSBsAz4"

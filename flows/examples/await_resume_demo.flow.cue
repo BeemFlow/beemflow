@@ -11,7 +11,7 @@ wait up to 1 hour for a test event with matching token, then resume and echo the
 received event data. Shows human-in-the-loop patterns and event matching.
 """
 
-on: ["event: test.manual"]
+on: "event: test.manual"
 
 vars: {
 	token: "abc123"

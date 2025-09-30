@@ -876,12 +876,15 @@ func (e *Engine) executeIterationSteps(ctx context.Context, steps []model.Step, 
 
 // renderStepID renders a step ID with simple template support
 func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, error) {
+	// If no template syntax, return original stepID
+	if !strings.Contains(stepID, "{{") {
+		return stepID, nil
+	}
+	
 	context := e.prepareTemplateContext(stepCtx)
 	rendered := cuepkg.ResolveRuntimeTemplates(stepID, context)
-
-	if rendered == "" {
-		return stepID, nil // fallback to original stepID if not resolved
-	}
+	
+	// Return the resolved value (even if empty string - that's a valid result)
 	return rendered, nil
 }
 
@@ -1051,7 +1054,12 @@ func (e *Engine) createEnvProxy() map[string]string {
 	for _, envPair := range os.Environ() {
 		pair := strings.SplitN(envPair, "=", 2)
 		if len(pair) == 2 {
-			env[pair[0]] = pair[1]
+			// Filter out keys that are invalid CUE identifiers (like single "_")
+			key := pair[0]
+			if key == "_" || key == "" {
+				continue
+			}
+			env[key] = pair[1]
 		}
 	}
 	return env

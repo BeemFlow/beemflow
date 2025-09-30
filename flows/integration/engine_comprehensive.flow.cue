@@ -35,7 +35,7 @@ steps: [
 	// Test conditions
 	{
 		id: "test_condition"
-		when: "{{ vars.base_number == 42 }}"
+		if: "{{ vars.base_number == 42 }}"
 		use: "core.echo"
 		with: {
 			text: "Condition passed!"

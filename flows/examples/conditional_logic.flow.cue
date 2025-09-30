@@ -31,7 +31,7 @@ steps: [
 	// Conditional logic
 	{
 		id: "conditional_step"
-		when: "{{ vars.should_process }}"
+		if: "{{ vars.should_process }}"
 		use: "core.echo"
 		with: {
 			text: "Processing is enabled!"
@@ -60,7 +60,7 @@ steps: [
 	// Conditional based on count
 	{
 		id: "check_count"
-		when: "{{ vars.count > 2 }}"
+		if: "{{ vars.count > 2 }}"
 		use: "core.echo"
 		with: {
 			text: "We have many items: {{ vars.count }}"

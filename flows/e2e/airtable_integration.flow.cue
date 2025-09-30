@@ -10,7 +10,7 @@ List available Airtable bases using MCP server integration. Demonstrates MCP ser
 connectivity and external service integration patterns for database operations.
 """
 
-on: ["cli.manual"]
+on: "cli.manual"
 
 steps: [
 	{

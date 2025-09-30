@@ -318,7 +318,9 @@ func evaluateCUEExpression(expr string, context map[string]any) string {
 	}
 
 	// DEBUG: Uncomment to see generated CUE script
-	// fmt.Printf("DEBUG CUE Script for expr '%s':\n%s\n\n", expr, contextScript)
+	// if os.Getenv("BEEMFLOW_DEBUG_CUE") != "" {
+	// 	fmt.Printf("DEBUG CUE Script for expr '%s':\n%s\n\n", expr, contextScript)
+	// }
 
 	cueValue := ctx.CompileString(contextScript)
 	if cueValue.Err() != nil {
@@ -419,8 +421,8 @@ func writeCUEValue(buf *strings.Builder, val any) {
 			buf.WriteString("{")
 			first := true
 			for k, val := range m {
-				// Skip keys that start with _ (CUE reserved) or are not valid CUE identifiers
-				if strings.HasPrefix(k, "_") || !isValidCUEKey(k) {
+				// Skip invalid CUE keys (isValidCUEKey already filters reserved patterns like __)
+				if !isValidCUEKey(k) {
 					continue
 				}
 				if !first {
@@ -464,17 +466,23 @@ func writeCUEValue(buf *strings.Builder, val any) {
 	}
 }
 
-// isValidCUEKey checks if a string is a valid CUE map key (allowing some special cases)
+// isValidCUEKey checks if a string can be used as a CUE map key
+// CUE allows identifiers (letter/underscore + alphanumeric/underscore), but we filter out
+// reserved patterns like double underscores which CUE uses for internal purposes
 func isValidCUEKey(s string) bool {
 	if s == "" {
 		return false
 	}
-	// First character must be letter (not underscore for keys, as _ is reserved)
-	first := s[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
+	// Filter out reserved double-underscore patterns
+	if strings.HasPrefix(s, "__") {
 		return false
 	}
-	// Rest can be letters, digits, or underscores
+	// Allow any valid identifier (CUE supports quoted keys for non-identifiers, but we keep it simple)
+	// Valid identifier: starts with letter or _, followed by letters, digits, or _
+	first := s[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		return false
+	}
 	for i := 1; i < len(s); i++ {
 		c := s[i]
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
