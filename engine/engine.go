@@ -1179,16 +1179,20 @@ func (e *Engine) createEnvProxy() map[string]string {
 
 // createRunsContext creates a simple runs context for template access
 func (e *Engine) createRunsContext() map[string]any {
+	// Atomically read current execution context
+	e.mu.Lock()
 	flowName := ""
 	if e.currentFlow != nil {
 		flowName = e.currentFlow.Name
 	}
+	runID := e.currentRunID
+	e.mu.Unlock()
 
 	runs := &RunsAccess{
 		storage:      e.Storage,
 		ctx:          context.Background(),
 		flowName:     flowName,
-		currentRunID: e.currentRunID,
+		currentRunID: runID,
 	}
 	return map[string]any{
 		"Previous": runs.Previous(),
