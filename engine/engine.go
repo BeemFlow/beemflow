@@ -539,11 +539,9 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 
 	// Use simple template resolution for runtime-dependent tokens
 	context := e.prepareTemplateContext(stepCtx)
-	renderedToken := cuepkg.ResolveRuntimeTemplates(tokenRaw, context)
-
-	// Check if template resolution failed (still contains {{ }})
-	if strings.Contains(renderedToken, "{{") {
-		return constants.EmptyString, utils.Errorf(constants.ErrTemplateResolutionFailed, tokenRaw)
+	renderedToken, err := cuepkg.ResolveRuntimeTemplates(tokenRaw, context)
+	if err != nil {
+		return constants.EmptyString, utils.Errorf("await token template resolution failed: %w", err)
 	}
 
 	return renderedToken, nil
@@ -856,7 +854,7 @@ func (e *Engine) executeSequentialBlock(ctx context.Context, step *model.Step, s
 }
 
 // evaluateForeachExpression evaluates a foreach expression and returns the array directly
-func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) []any {
+func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) ([]any, error) {
 	// Use CUE to evaluate the expression and extract the array directly
 	return cuepkg.EvaluateCUEArray(expr, context)
 }
@@ -868,12 +866,16 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 	// Handle both {{ }} wrapped expressions and direct expressions
 	trimmed := strings.TrimSpace(step.Foreach)
 	var list []any
+	var err error
 
 	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
 		innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
-		list = e.evaluateForeachExpression(innerExpr, context)
+		list, err = e.evaluateForeachExpression(innerExpr, context)
 	} else {
-		list = e.evaluateForeachExpression(trimmed, context)
+		list, err = e.evaluateForeachExpression(trimmed, context)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to evaluate foreach expression %q: %w", trimmed, err)
 	}
 
 	if len(list) == 0 {
@@ -946,11 +948,9 @@ func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, erro
 	}
 
 	context := e.prepareTemplateContext(stepCtx)
-	rendered := cuepkg.ResolveRuntimeTemplates(stepID, context)
-
-	// Check if template resolution failed (still contains {{ }})
-	if strings.Contains(rendered, "{{") {
-		return "", fmt.Errorf("step ID template resolution failed: %s", stepID)
+	rendered, err := cuepkg.ResolveRuntimeTemplates(stepID, context)
+	if err != nil {
+		return "", fmt.Errorf("step ID template resolution failed: %w", err)
 	}
 
 	// Empty step IDs are invalid as they're used as map keys
@@ -1128,29 +1128,10 @@ func (e *Engine) createEnvProxy() map[string]string {
 		pair := strings.SplitN(envPair, "=", 2)
 		if len(pair) == 2 {
 			key := pair[0]
-			// Filter out keys that are invalid CUE identifiers
-			if key == "_" || key == "" || strings.HasPrefix(key, "__") {
-				continue
+			// Include all environment variables - buildCUEContextScript will handle quoting invalid keys
+			if key != "" && key != "_" { // Skip empty keys and underscore (special in CUE)
+				env[key] = pair[1]
 			}
-			// Check if it's a valid CUE identifier (starts with letter or _, followed by alphanumeric or _)
-			if len(key) > 0 {
-				first := key[0]
-				if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
-					continue // Skip keys that don't start with letter or underscore
-				}
-				valid := true
-				for i := 1; i < len(key); i++ {
-					c := key[i]
-					if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-						valid = false
-						break
-					}
-				}
-				if !valid {
-					continue
-				}
-			}
-			env[key] = pair[1]
 		}
 	}
 	return env
@@ -1289,37 +1270,57 @@ func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepI
 
 	// Apply template resolution recursively to each input parameter
 	for k, v := range step.With {
-		inputs[k] = e.resolveTemplatesRecursively(v, context)
+		resolved, err := e.resolveTemplatesRecursively(v, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve templates in input %q: %w", k, err)
+		}
+		inputs[k] = resolved
 	}
 
 	return inputs, nil
 }
 
 // resolveTemplatesRecursively applies template resolution to all string values in a nested structure
-func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) any {
+func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) (any, error) {
 	switch v := value.(type) {
 	case string:
 		return cuepkg.ResolveRuntimeTemplates(v, context)
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = e.resolveTemplatesRecursively(item, context)
+			resolved, err := e.resolveTemplatesRecursively(item, context)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = resolved
 		}
-		return result
+		return result, nil
 	case []map[string]any:
 		result := make([]map[string]any, len(v))
 		for i, item := range v {
-			result[i] = e.resolveTemplatesRecursively(item, context).(map[string]any)
+			resolved, err := e.resolveTemplatesRecursively(item, context)
+			if err != nil {
+				return nil, err
+			}
+			resolvedMap, ok := resolved.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("expected map[string]any, got %T", resolved)
+			}
+			result[i] = resolvedMap
 		}
-		return result
+		return result, nil
 	case map[string]any:
 		result := make(map[string]any)
 		for k, val := range v {
-			result[k] = e.resolveTemplatesRecursively(val, context)
+			resolved, err := e.resolveTemplatesRecursively(val, context)
+			if err != nil {
+				return nil, err
+			}
+			result[k] = resolved
 		}
-		return result
+		return result, nil
 	default:
-		return value
+		return value, nil
 	}
 }
 

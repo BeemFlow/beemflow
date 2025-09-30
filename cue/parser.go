@@ -268,8 +268,8 @@ func isSuspiciousURL(urlStr string) bool {
 		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
 			return true
 		}
-		// Check for 0.0.0.0
-		if ip.Equal(net.IPv4zero) {
+		// Check for 0.0.0.0 or :: (IPv6 unspecified)
+		if ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero) {
 			return true
 		}
 	}
@@ -308,9 +308,9 @@ func (p *Parser) Validate(flow *model.Flow) error {
 }
 
 // ResolveRuntimeTemplates resolves {{ }} template expressions in a string using CUE evaluation
-func ResolveRuntimeTemplates(template string, context map[string]any) string {
+func ResolveRuntimeTemplates(template string, context map[string]any) (string, error) {
 	if !strings.Contains(template, "{{") {
-		return template
+		return template, nil
 	}
 
 	// Build CUE context script once
@@ -349,14 +349,17 @@ func ResolveRuntimeTemplates(template string, context map[string]any) string {
 		cueScript := contextScript + "\nresult: " + expr
 		cueValue := ctx.CompileString(cueScript)
 
-		replacement := template[start:end] // Keep original if evaluation fails
-		if cueValue.Err() == nil {
-			resultField := cueValue.LookupPath(cue.ParsePath("result"))
-			if resultField.Err() == nil {
-				value := ExtractCUEValue(resultField)
-				replacement = convertToString(value)
-			}
+		if cueValue.Err() != nil {
+			return "", fmt.Errorf("CUE compilation error in template %q: %w", expr, cueValue.Err())
 		}
+
+		resultField := cueValue.LookupPath(cue.ParsePath("result"))
+		if resultField.Err() != nil {
+			return "", fmt.Errorf("CUE evaluation error in template %q: %w", expr, resultField.Err())
+		}
+
+		value := ExtractCUEValue(resultField)
+		replacement := convertToString(value)
 
 		// Append the replacement
 		result.WriteString(replacement)
@@ -365,11 +368,11 @@ func ResolveRuntimeTemplates(template string, context map[string]any) string {
 		lastEnd = end
 	}
 
-	return result.String()
+	return result.String(), nil
 }
 
 // EvaluateCUEArray evaluates a CUE expression and returns it as a Go []any
-func EvaluateCUEArray(expr string, context map[string]any) []any {
+func EvaluateCUEArray(expr string, context map[string]any) ([]any, error) {
 	contextScript := buildCUEContextScript(context)
 
 	cueScript := contextScript + "\nresult: " + normalizeSingleQuotes(expr)
@@ -377,19 +380,19 @@ func EvaluateCUEArray(expr string, context map[string]any) []any {
 	ctx := cuecontext.New()
 	cueValue := ctx.CompileString(cueScript)
 	if cueValue.Err() != nil {
-		return []any{}
+		return nil, fmt.Errorf("CUE compilation error in array expression %q: %w", expr, cueValue.Err())
 	}
 
 	resultField := cueValue.LookupPath(cue.ParsePath("result"))
 	if resultField.Err() != nil {
-		return []any{}
+		return nil, fmt.Errorf("CUE evaluation error in array expression %q: %w", expr, resultField.Err())
 	}
 
 	result := ExtractCUEValue(resultField)
 	if arr, ok := result.([]any); ok {
-		return arr
+		return arr, nil
 	}
-	return []any{}
+	return nil, fmt.Errorf("expression %q does not evaluate to an array: %T", expr, result)
 }
 
 // EvaluateCUEBoolean evaluates a CUE expression and returns a boolean result
@@ -418,7 +421,11 @@ func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
 	// nil (null in CUE) is falsy, but undefined variables should have caused evaluation errors
 
 	switch v := result.(type) {
-	case int, int64, float64:
+	case int:
+		return v != 0, nil
+	case int64:
+		return v != 0, nil
+	case float64:
 		return v != 0, nil
 	case string:
 		return v != "", nil
@@ -438,10 +445,16 @@ func buildCUEContextScript(context map[string]any) string {
 	var buf strings.Builder
 
 	for key, value := range context {
-		if !isValidCUEKey(key) {
-			continue // Skip invalid keys
+		if isValidCUEKey(key) {
+			buf.WriteString(key)
+		} else {
+			// Use quoted string for invalid identifiers
+			buf.WriteByte('"')
+			// Escape quotes in key
+			escapedKey := strings.ReplaceAll(key, `"`, `\"`)
+			buf.WriteString(escapedKey)
+			buf.WriteByte('"')
 		}
-		buf.WriteString(key)
 		buf.WriteString(": ")
 		writeCUEValue(&buf, value)
 		buf.WriteString("\n")
@@ -510,9 +523,8 @@ func writeCUEValue(buf *strings.Builder, value any) {
 
 // normalizeSingleQuotes converts single quotes to double quotes for CUE compatibility
 func normalizeSingleQuotes(expr string) string {
-	// Simple conversion - replace single quotes with double quotes in expressions
-	// This is a basic implementation; a full parser would be more robust
-	return strings.ReplaceAll(expr, "'", "\"")
+	// CUE accepts both single and double quotes, so no normalization needed
+	return expr
 }
 
 // isValidCUEKey checks if a string is a valid CUE map key
