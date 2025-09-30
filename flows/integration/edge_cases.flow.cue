@@ -112,7 +112,7 @@ steps: [
 	// Test boolean evaluation edge cases
 	{
 		id: "test_boolean_edge_cases"
-		if: "{{ vars.has_items | length > 0 }}"
+		if: "{{ len(vars.has_items) > 0 }}"
 		use: "core.echo"
 		with: {
 			text: "Array length check works"
