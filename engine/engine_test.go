@@ -525,8 +525,8 @@ func TestExecute_ArrayAccessInTemplate(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error for array access, got %v", err)
 	}
-	if out, ok := outputs["s1"].(map[string]any); !ok || out["text"] != "First: {{ event.arr[0].val }}, Second: {{ event.arr[1].val }}" {
-		t.Errorf("expected unresolved template output, got %v", outputs["s1"])
+	if out, ok := outputs["s1"].(map[string]any); !ok || out["text"] != "First: a, Second: b" {
+		t.Errorf("expected resolved template output, got %v", outputs["s1"])
 	}
 }
 
@@ -1655,8 +1655,8 @@ func TestPristineConditionSyntax(t *testing.T) {
 				},
 			},
 			event:   map[string]any{"vars": map[string]any{"enabled": true}},
-			wantErr: true, // Template resolution may fail in unit tests
-			errMsg:  "CUE evaluation error",
+			wantErr: false, // Template resolution now works correctly
+			errMsg:  "",
 		},
 		{
 			name: "invalid_no_braces",
@@ -1803,8 +1803,8 @@ func TestPristineArrayAccess(t *testing.T) {
 
 	// Check first element access
 	if out, ok := outputs["first_element"].(map[string]any); ok {
-		if out["text"] != "{{ vars.users[0].name }}" {
-			t.Errorf("Expected '{{ vars.users[0].name }}', got %v", out["text"])
+		if out["text"] != "Alice" {
+			t.Errorf("Expected 'Alice', got %v", out["text"])
 		}
 	} else {
 		t.Error("first_element output not found or wrong type")
@@ -1812,8 +1812,8 @@ func TestPristineArrayAccess(t *testing.T) {
 
 	// Check nested access
 	if out, ok := outputs["nested_access"].(map[string]any); ok {
-		if out["text"] != "{{ vars.data.rows[1].value }}" {
-			t.Errorf("Expected '{{ vars.data.rows[1].value }}', got %v", out["text"])
+		if out["text"] != "second" {
+			t.Errorf("Expected 'second', got %v", out["text"])
 		}
 	} else {
 		t.Error("nested_access output not found or wrong type")

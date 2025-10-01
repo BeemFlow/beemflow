@@ -397,7 +397,7 @@ func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event 
 	// Determine final status
 	status := model.RunSucceeded
 	if err != nil {
-		if strings.Contains(err.Error(), constants.ErrAwaitEventPause) {
+		if strings.Contains(err.Error(), "is waiting for event") {
 			status = model.RunWaiting
 			utils.Info("Flow %s paused waiting for event", flow.Name)
 		} else {
@@ -1182,6 +1182,21 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 		"runs":    e.createRunsContext(),
 	}
 
+	// Merge event variables into top level for backward compatibility
+	for k, v := range snapshot.Event {
+		context[k] = v
+	}
+
+	// Merge flow vars into top level for backward compatibility
+	for k, v := range snapshot.Vars {
+		context[k] = v
+	}
+
+	// Merge step outputs into top level for backward compatibility
+	for k, v := range snapshot.Outputs {
+		context[k] = v
+	}
+
 	return context
 }
 
@@ -1284,7 +1299,11 @@ func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepI
 func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) (any, error) {
 	switch v := value.(type) {
 	case string:
-		return cuepkg.ResolveRuntimeTemplates(v, context)
+		resolved, err := cuepkg.ResolveRuntimeTemplates(v, context)
+		if err != nil {
+			return "", err
+		}
+		return resolved, nil
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {

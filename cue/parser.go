@@ -497,6 +497,24 @@ func writeCUEValue(buf *strings.Builder, value any) {
 			writeCUEValue(buf, item)
 		}
 		buf.WriteString("]")
+	case []map[string]any:
+		buf.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			writeCUEValue(buf, item)
+		}
+		buf.WriteString("]")
+	case []string:
+		buf.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			writeCUEValue(buf, item)
+		}
+		buf.WriteString("]")
 	case map[string]any:
 		buf.WriteString("{")
 		first := true
@@ -523,8 +541,8 @@ func writeCUEValue(buf *strings.Builder, value any) {
 
 // normalizeSingleQuotes converts single quotes to double quotes for CUE compatibility
 func normalizeSingleQuotes(expr string) string {
-	// CUE accepts both single and double quotes, so no normalization needed
-	return expr
+	// Convert single quotes to double quotes to avoid CUE treating them as bytes
+	return strings.ReplaceAll(expr, "'", "\"")
 }
 
 // isValidCUEKey checks if a string is a valid CUE map key

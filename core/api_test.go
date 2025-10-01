@@ -1071,22 +1071,22 @@ steps: [{
 
 	ctx := context.Background()
 
-	// Test with nil event
+	// Test with nil event - should fail due to undefined template variables
 	runID, err := StartRun(ctx, "edge_test_flow", nil)
-	if err != nil {
-		t.Errorf("StartRun with nil event failed: %v", err)
+	if err == nil {
+		t.Error("StartRun with nil event should fail due to undefined template variables")
 	}
-	if runID == uuid.Nil {
-		t.Error("Expected non-nil run ID")
+	if runID != uuid.Nil {
+		t.Error("Expected nil run ID for failed execution")
 	}
 
-	// Test with empty event
+	// Test with empty event - should fail due to undefined template variables
 	runID, err = StartRun(ctx, "edge_test_flow", map[string]any{})
-	if err != nil {
-		t.Errorf("StartRun with empty event failed: %v", err)
+	if err == nil {
+		t.Error("StartRun with empty event should fail due to undefined template variables")
 	}
-	if runID == uuid.Nil {
-		t.Error("Expected non-nil run ID")
+	if runID != uuid.Nil {
+		t.Error("Expected nil run ID for failed execution")
 	}
 
 	// Test with complex event

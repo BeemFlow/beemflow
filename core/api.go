@@ -256,16 +256,39 @@ func parseFlowByName(flowName string) (*model.Flow, error) {
 func findLatestRunForFlow(runs []*model.Run, flowName string) *model.Run {
 	var latest *model.Run
 	for _, r := range runs {
-		if r.FlowName == flowName && (latest == nil || r.StartedAt.After(latest.StartedAt)) {
-			latest = r
+		if r.FlowName == flowName {
+			if latest == nil ||
+				r.StartedAt.After(latest.StartedAt) ||
+				(r.StartedAt.Equal(latest.StartedAt) && isBetterRunStatus(r.Status, latest.Status)) {
+				latest = r
+			}
 		}
 	}
 	return latest
 }
 
+// isBetterRunStatus determines if status1 is better than status2
+func isBetterRunStatus(status1, status2 model.RunStatus) bool {
+	// Prefer successful runs over failed runs
+	if status1 == model.RunSucceeded && status2 != model.RunSucceeded {
+		return true
+	}
+	if status1 != model.RunSucceeded && status2 == model.RunSucceeded {
+		return false
+	}
+	// Prefer waiting runs over failed runs
+	if status1 == model.RunWaiting && status2 == model.RunFailed {
+		return true
+	}
+	if status1 == model.RunFailed && status2 == model.RunWaiting {
+		return false
+	}
+	return false
+}
+
 // tryFindPausedRun attempts to find a paused run when await_event is involved
 func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
-	if execErr == nil || !strings.Contains(execErr.Error(), constants.ErrorAwaitEventPause) {
+	if execErr == nil || !strings.Contains(execErr.Error(), "is waiting for event") {
 		return uuid.Nil, execErr
 	}
 
@@ -289,6 +312,11 @@ func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
 
 // handleExecutionResult processes the result of flow execution, handling paused runs
 func handleExecutionResult(store storage.Storage, flowName string, execErr error) (uuid.UUID, error) {
+	// If there's an execution error (except await_event pause), return nil ID with error
+	if execErr != nil && !strings.Contains(execErr.Error(), "is waiting for event") {
+		return uuid.Nil, execErr
+	}
+
 	runs, err := store.ListRuns(context.Background())
 	if err != nil || len(runs) == 0 {
 		return tryFindPausedRun(store, execErr)
@@ -296,15 +324,33 @@ func handleExecutionResult(store storage.Storage, flowName string, execErr error
 
 	latest := findLatestRunForFlow(runs, flowName)
 	if latest == nil {
+		utils.Debug("No runs found for flow %s", flowName)
 		return tryFindPausedRun(store, execErr)
 	}
+	utils.Debug("Found latest run for flow %s: ID=%s, Status=%v, StartedAt=%v", flowName, latest.ID, latest.Status, latest.StartedAt)
 
-	// If the only error is await_event pause, treat as success
-	if execErr != nil && strings.Contains(execErr.Error(), constants.ErrorAwaitEventPause) {
+	// For paused flows, look for the current run that should be saved
+	if execErr != nil && strings.Contains(execErr.Error(), "is waiting for event") {
+		if latest.Status != model.RunWaiting {
+			return uuid.Nil, execErr
+		}
 		return latest.ID, nil
 	}
 
-	return latest.ID, execErr
+	// For successful flows, look for the run
+	if latest.Status != model.RunSucceeded {
+		// If there's no execution error but the run status is not succeeded,
+		// it might be a timing issue or the run wasn't saved properly
+		if execErr == nil {
+			utils.Debug("No execution error but run status is %v, expected RunSucceeded", latest.Status)
+			return uuid.Nil, fmt.Errorf("run completed but status is %v", latest.Status)
+		}
+		utils.Debug("Latest run status is %v, expected RunSucceeded", latest.Status)
+		return uuid.Nil, execErr
+	}
+
+	utils.Debug("Found successful run with ID: %s", latest.ID)
+	return latest.ID, nil
 }
 
 // StartRun starts a new run for the given flow and event.
@@ -323,6 +369,12 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 	}
 
 	_, execErr := eng.Execute(ctx, flow, eventData)
+
+	// For await_event pause, return the run ID instead of error
+	if execErr != nil && strings.Contains(execErr.Error(), "is waiting for event") {
+		return handleExecutionResult(eng.Storage, flowName, execErr)
+	}
+
 	return handleExecutionResult(eng.Storage, flowName, execErr)
 }
 
