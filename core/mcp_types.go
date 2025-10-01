@@ -58,7 +58,7 @@ type MCPFlowFileArgs struct {
 
 // MCPServeArgs represents arguments for MCP serve
 type MCPServeArgs struct {
-	Stdio bool   `json:"stdio" flag:"stdio" description:"Run in stdio mode instead of HTTP"`
-	Addr  string `json:"addr" flag:"addr" description:"HTTP server address"`
-	Debug bool   `json:"debug" flag:"debug" description:"Enable debug mode"`
+	Transport string `json:"transport" flag:"transport" description:"Transport mode: stdio or http" default:"stdio"`
+	Addr      string `json:"addr" flag:"addr" description:"HTTP server address (used with http transport)"`
+	Debug     bool   `json:"debug" flag:"debug" description:"Enable debug mode"`
 }

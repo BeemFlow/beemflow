@@ -995,13 +995,27 @@ func init() {
 		SkipMCP:     true, // Can't expose serve via MCP
 		ArgsType:    reflect.TypeOf(MCPServeArgs{}),
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
-			stdio, _ := cmd.Flags().GetBool("stdio")
-			addr, _ := cmd.Flags().GetString("addr")
-			debugFlag, _ := cmd.Flags().GetBool("debug")
+			// Get base configuration from environment
+			config := mcp.GetServerConfig()
+
+			// Override with explicit CLI flags if provided
+			if cmd.Flags().Changed("transport") {
+				transport, _ := cmd.Flags().GetString("transport")
+				config.Transport = transport
+			}
+
+			if cmd.Flags().Changed("addr") {
+				addr, _ := cmd.Flags().GetString("addr")
+				config.Address = addr
+			}
+
+			if cmd.Flags().Changed("debug") {
+				config.Debug = true
+			}
 
 			tools := GenerateMCPTools()
-			utils.Info("Starting MCP server with %d tools (stdio=%v, addr=%s)", len(tools), stdio, addr)
-			return mcp.Serve(debugFlag, stdio, addr, tools)
+			utils.Info("Starting MCP server with %d tools (%s mode on %s)", len(tools), config.Transport, config.Address)
+			return mcp.ServeWithConfig(config, tools)
 		},
 	})
 

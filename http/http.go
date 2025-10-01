@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
@@ -172,17 +174,30 @@ func StartServer(cfg *config.Config) error {
 	return startServerWithGracefulShutdown(addr, handler)
 }
 
-// getServerAddress determines the server address from config
+// getServerAddress determines the server address from config and environment variables
 func getServerAddress(cfg *config.Config) string {
-	addr := ":3333" // default
+	// Check environment variable first
+	if portStr := os.Getenv(constants.EnvHTTPServerPort); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			host := constants.DefaultServerHost
+			if cfg.HTTP != nil && cfg.HTTP.Host != "" {
+				host = cfg.HTTP.Host
+			}
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+	}
+
+	// Fall back to config file
 	if cfg.HTTP != nil && cfg.HTTP.Port != 0 {
 		host := cfg.HTTP.Host
 		if host == "" {
 			host = "0.0.0.0"
 		}
-		addr = fmt.Sprintf("%s:%d", host, cfg.HTTP.Port)
+		return fmt.Sprintf("%s:%d", host, cfg.HTTP.Port)
 	}
-	return addr
+
+	// Default fallback
+	return fmt.Sprintf("%s:%d", constants.DefaultServerHost, constants.DefaultHTTPServerPort)
 }
 
 // startServerWithGracefulShutdown starts the HTTP server and handles graceful shutdown

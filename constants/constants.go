@@ -202,10 +202,19 @@ const (
 	MCPMissingParam = "missing required parameter: %s"
 )
 
-// MCP Defaults
+// Environment Variables
 const (
-	DefaultMCPAddr     = "localhost:3001"
-	DefaultMCPPageSize = 50
+	EnvHTTPServerPort = "BEEMFLOW_HTTP_PORT"
+	EnvMCPServerPort  = "BEEMFLOW_MCP_PORT"
+	EnvMCPTransport   = "BEEMFLOW_MCP_TRANSPORT" // "stdio" or "http"
+)
+
+// Server Configuration Defaults
+const (
+	DefaultHTTPServerPort = 3333
+	DefaultMCPServerPort  = 3001
+	DefaultMCPTransport   = "stdio"
+	DefaultServerHost     = "localhost"
 )
 
 // ============================================================================

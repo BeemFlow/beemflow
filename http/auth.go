@@ -398,7 +398,7 @@ func setSliceField(field reflect.Value, arr []interface{}) error {
 
 // getOAuthIssuerURL determines the OAuth issuer URL from config
 func getOAuthIssuerURL(cfg *config.Config) string {
-	baseURL := "http://localhost:3333" // default
+	baseURL := "http://localhost:3333" // default HTTP server port
 
 	if cfg.HTTP != nil {
 		host := "localhost"
@@ -555,7 +555,8 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	// Allow HTTP for localhost development
 	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" ||
-		r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
+		r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" ||
+		r.Host == "localhost:3001" || r.Host == "127.0.0.1:3001" {
 		return true
 	}
 
