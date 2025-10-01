@@ -52,6 +52,45 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 
 ## Architecture Overview
 
+### The Big Picture: CUE + BeemFlow
+
+**BeemFlow uses CUE as an evaluation engine, not a templating system.**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        Your Workflow                           │
+│  (Valid CUE file with {{ }} templates for runtime values)     │
+└─────────────────────────┬──────────────────────────────────────┘
+                          ↓
+         ┌────────────────────────────────────┐
+         │      BeemFlow Runtime Layer        │
+         │  • Extracts {{ expr }} patterns    │
+         │  • Injects runtime context         │
+         │  • Uses CUE to evaluate            │
+         │  • Orchestrates execution          │
+         └────────┬───────────────────────────┘
+                  ↓
+    ┌─────────────────────────────┐
+    │      CUE Evaluation         │
+    │  • Native operators         │
+    │  • Built-in functions       │
+    │  • Standard library         │
+    │  • Type system              │
+    └─────────────────────────────┘
+```
+
+**What's CUE vs BeemFlow?**
+
+| Feature | Who Provides It |
+|---------|-----------------|
+| Operators (`+`, `>`, `&&`, `!`) | Native CUE |
+| `len()`, `strings.ToUpper()` | Native CUE (built-in & stdlib) |
+| `{{ }}` template extraction | BeemFlow runtime layer |
+| `vars`, `env`, `secrets`, `outputs` | BeemFlow runtime context |
+| `item_index`, `item_row` in loops | BeemFlow loop orchestration |
+| `if`, `foreach`, `parallel` fields | BeemFlow workflow features |
+| Step execution & state management | BeemFlow engine |
+
 ### System Components
 
 ```
@@ -300,11 +339,19 @@ type WaitSpec struct {
 
 ## Template System (CUE-based)
 
-BeemFlow uses **CUE** for template resolution with custom filter support for variable interpolation and logic.
+### Architecture: Native CUE + BeemFlow Runtime
 
-### Variable Scopes
+BeemFlow uses **CUE's evaluation engine** for all template expressions. The `{{ }}` syntax is BeemFlow's runtime layer that:
+1. Extracts expressions from your workflow at runtime
+2. Injects runtime context (vars, env, secrets, outputs)
+3. Evaluates expressions using native CUE
+4. Replaces `{{ expr }}` with the result
 
-Always use explicit scopes for clarity:
+**This means:** You get CUE's full power (operators, functions, type system) plus BeemFlow's workflow-specific features (runtime context, loops, orchestration).
+
+### Variable Scopes (BeemFlow Runtime Context)
+
+BeemFlow injects these namespaces for accessing runtime data:
 
 ```cue
 package beemflow
@@ -401,7 +448,9 @@ steps: [
 ]
 ```
 
-### Filters (Currently Supported)
+### Native CUE Operations
+
+All these features come from **CUE itself** (not custom BeemFlow code):
 
 ```cue
 package beemflow
@@ -411,38 +460,68 @@ steps: [
     id: length_example
     use: core.echo
     with: {
-      text: "{{ len(array) }}"              // ✅ Array/string length
+      text: "{{ len(array) }}"              // ✅ CUE built-in len() function
     }
   },
   {
-    id: len_example
+    id: string_ops
     use: core.echo
     with: {
-      text: "{{ len(array) }}"              // ✅ Alternative length syntax
+      text: "{{ 'Hello' + ' ' + 'World' }}" // ✅ CUE string concatenation
+    }
+  },
+  {
+    id: comparison
+    use: core.echo
+    with: {
+      text: "{{ value > 10 }}"              // ✅ CUE comparison operators
+    }
+  },
+  {
+    id: default_value
+    use: core.echo
+    with: {
+      text: "{{ value | 'default' }}"       // ✅ CUE disjunction (default values)
     }
   }
 ]
 ```
 
-### Default Values
+### CUE Standard Library
 
-Use the `||` operator:
+BeemFlow auto-imports CUE's standard library packages when you reference them:
 
 ```cue
 package beemflow
 
 steps: [
   {
-    id: default_example
+    id: uppercase
     use: core.echo
     with: {
-      text: "{{ value || 'default' }}"       // ✅ Default/fallback
+      text: "{{ strings.ToUpper('hello') }}"     // ✅ CUE strings package
+    }
+  },
+  {
+    id: lowercase
+    use: core.echo
+    with: {
+      text: "{{ strings.ToLower('HELLO') }}"     // ✅ CUE strings package
+    }
+  },
+  {
+    id: contains
+    use: core.echo
+    with: {
+      text: "{{ strings.Contains(text, 'sub') }}" // ✅ CUE strings package
     }
   }
 ]
 ```
 
-### Conditionals
+### Conditionals (BeemFlow Feature)
+
+The `if` field is a **BeemFlow feature** that evaluates expressions using CUE:
 
 ```cue
 package beemflow
@@ -450,7 +529,7 @@ package beemflow
 steps: [
   {
     id: conditional_example1
-    if: "{{ vars.status == 'active' }}"
+    if: "{{ vars.status == 'active' }}"    // BeemFlow evaluates using CUE
     use: core.echo
     with: {
       text: "Status is active"
@@ -458,7 +537,7 @@ steps: [
   },
   {
     id: conditional_example2
-    if: "{{ vars.count > 5 && env.DEBUG }}"
+    if: "{{ vars.count > 5 && env.DEBUG }}" // CUE operators in BeemFlow condition
     use: core.echo
     with: {
       text: "Complex condition met"
@@ -466,7 +545,7 @@ steps: [
   },
   {
     id: conditional_example3
-    if: "{{ !vars.disabled }}"
+    if: "{{ !vars.disabled }}"              // CUE negation in BeemFlow condition
     use: core.echo
     with: {
       text: "Not disabled"
@@ -475,32 +554,13 @@ steps: [
 ]
 ```
 
-### Loops in Foreach Steps
+### Foreach Loops (BeemFlow Feature)
 
-```cue
-package beemflow
+The `foreach` field is a **BeemFlow orchestration feature**. BeemFlow automatically provides loop variables:
 
-steps: [
-  {
-    id: loop_example
-    foreach: "{{ vars.items }}"
-    as: item
-    do: [
-      {
-        id: process_item
-        use: core.echo
-        with: {
-          text: "Processing {{ item }} at index {{ item_index }}"
-        }
-      }
-    ]
-  }
-]
-```
-
-### In Foreach Steps
-
-BeemFlow automatically provides these variables:
+- `{{ item }}` - Current item (or custom name via `as`)
+- `{{ item_index }}` - 0-based index (BeemFlow extension)
+- `{{ item_row }}` - 1-based row number (BeemFlow extension)
 
 ```cue
 package beemflow
@@ -508,20 +568,20 @@ package beemflow
 steps: [
   {
     id: process_items
-    foreach: "{{ vars.items }}"
-    as: item
+    foreach: "{{ vars.items }}"  // BeemFlow evaluates this using CUE
+    as: item                      // BeemFlow sets loop variable name
     do: [
       {
         id: process_item
         use: core.echo
         with: {
+          // BeemFlow auto-provides: item, item_index, item_row
           text: "Item: {{ item }}, Index: {{ item_index }}, Row: {{ item_row }}"
         }
       }
     ]
   }
 ]
-```
 ```
 
 ---

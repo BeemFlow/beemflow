@@ -60,6 +60,8 @@ The same universal protocol powers the BeemFlow agency, SaaS, and acquisition fl
 
 📖 **[Read & Feed the Comprehensive Guide](./docs/BEEMFLOW.md)** — The exhaustive, LLM-ingestible reference for BeemFlow, suitable for training, implementation, and integration by AI agents and developers worldwide.
 
+**Architecture Note:** BeemFlow uses **CUE as an evaluation engine**, not a custom templating language. The `{{ }}` syntax is BeemFlow's runtime layer that extracts expressions and evaluates them using native CUE. This gives you CUE's full power (operators, functions, type system) plus BeemFlow's workflow-specific features (runtime context, orchestration, state management).
+
 ---
 
 ## Why BeemFlow?

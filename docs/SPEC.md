@@ -50,52 +50,53 @@ ${ variable }           # ❌ NO - Use {{ variable }}
 break, continue, exit   # ❌ NO - No flow control keywords
 ```
 
-### 📝 Template Syntax (Consistent `{{ }}` for all runtime values)
+### 📝 Template Syntax (Native CUE + BeemFlow Runtime)
 
-**Note:** BeemFlow uses `{{ }}` for ALL runtime template resolution. While CUE also supports `\(expr)` for static interpolation, we recommend using `{{ }}` consistently for better readability and a unified syntax.
+**Architecture:** BeemFlow uses `{{ }}` to extract and evaluate expressions at runtime using CUE's native evaluation engine. This gives you the full power of CUE's type system and operators, plus BeemFlow-specific runtime context.
 
 ```cue
-# Variables & References (Always use explicit scopes!)
-{{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables
-{{ secrets.API_KEY }}          # Secrets
-{{ event.field }}              # Event data
-{{ outputs.step_id.field }}    # Step outputs (preferred)
-{{ step_id.field }}            # Step outputs (shorthand)
+# Runtime Context (BeemFlow injects these namespaces)
+{{ vars.MY_VAR }}              # Flow variables (BeemFlow)
+{{ env.USER }}                 # Environment variables (BeemFlow)
+{{ secrets.API_KEY }}          # Secrets (BeemFlow)
+{{ event.field }}              # Event data (BeemFlow)
+{{ outputs.step_id.field }}    # Step outputs (BeemFlow)
+{{ step_id.field }}            # Step outputs shorthand (BeemFlow)
 
-# Array Access (CUE uses square brackets)
+# Array Access (Native CUE syntax)
 {{ array[0] }}                 # First element
 {{ array[idx] }}               # Variable index
-{{ data.rows[0].name }}        # Nested access (square brackets for arrays)
+{{ data.rows[0].name }}        # Nested access
 
-# CUE Native Operations (Fully Supported)
-{{ len(array) }}                          # ✅ Length of arrays/strings
-{{ text + "!" }}                          # ✅ String concatenation
-{{ a > b }}                               # ✅ Comparison operations
-{{ a && b }}                              # ✅ Boolean operations
-{{ !a }}                                  # ✅ Negation
-{{ value | "default" }}                   # ✅ Default values (CUE's disjunction)
-{{ if a > b { a } else { b } }}           # ✅ Conditionals (CUE if/else)
+# Operators & Built-ins (Native CUE)
+{{ len(array) }}               # Length function
+{{ text + "!" }}               # String concatenation
+{{ a > b }}, {{ a == b }}      # Comparisons
+{{ a && b }}, {{ a || b }}     # Boolean logic
+{{ !a }}                       # Negation
+{{ value | "default" }}        # Default values (CUE disjunction)
 
-# CUE Standard Library (strings package)
-{{ strings.ToUpper(text) }}               # ✅ UPPERCASE
-{{ strings.ToLower(text) }}               # ✅ lowercase  
-{{ strings.TrimSpace(text) }}             # ✅ Trim whitespace
-{{ strings.Contains(text, "sub") }}       # ✅ Contains substring
-{{ strings.HasPrefix(text, "pre") }}      # ✅ Starts with
-{{ strings.HasSuffix(text, "suf") }}      # ✅ Ends with
-{{ strings.Replace(text, "old", "new", -1) }} # ✅ Replace all
+# CUE Standard Library (Auto-imported when used)
+{{ strings.ToUpper(text) }}              # UPPERCASE
+{{ strings.ToLower(text) }}              # lowercase  
+{{ strings.TrimSpace(text) }}            # Trim whitespace
+{{ strings.Contains(text, "sub") }}      # Contains substring
+{{ strings.HasPrefix(text, "pre") }}     # Starts with
+{{ strings.HasSuffix(text, "suf") }}     # Ends with
+{{ strings.Replace(text, "old", "new", -1) }}  # Replace all
 
-# In Loops (BeemFlow provides these automatically)
+# Loop Variables (BeemFlow auto-provides in foreach)
 {{ item }}                     # Current item (with 'as: item')
-{{ item_index }}               # 0-based index (BeemFlow extension)
-{{ item_row }}                 # 1-based index (BeemFlow extension)
+{{ item_index }}               # 0-based index
+{{ item_row }}                 # 1-based row number
 
-# Conditions (MUST use template syntax)
-if: "{{ vars.status == 'active' }}"           # ✅ Required format
-if: "{{ vars.count > 5 && env.DEBUG }}"       # ✅ Complex conditions
-if: "{{ !vars.disabled }}"                    # ✅ Negation
+# Conditions (BeemFlow evaluates the if field)
+if: "{{ vars.status == 'active' }}"      # ✅ Required format
+if: "{{ vars.count > 5 && env.DEBUG }}"  # ✅ Complex conditions
+if: "{{ !vars.disabled }}"               # ✅ Negation
 ```
+
+**Key Insight:** BeemFlow doesn't reimplement CUE. It uses CUE as the evaluation engine, adding workflow-specific runtime context (`vars`, `env`, `secrets`, `outputs`) and orchestration features (loops, conditions, parallelism) on top.
 
 ### 🔧 Common Tools
 ```cue
