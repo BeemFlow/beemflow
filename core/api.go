@@ -301,7 +301,7 @@ func isBetterRunStatus(status1, status2 model.RunStatus) bool {
 
 // tryFindPausedRun attempts to find a paused run when await_event is involved
 func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
-	if execErr == nil || !strings.Contains(execErr.Error(), constants.ErrAwaitEventPause) {
+	if execErr == nil || !constants.IsAwaitEventPause(execErr) {
 		return uuid.Nil, execErr
 	}
 
@@ -326,7 +326,7 @@ func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
 // handleExecutionResult processes the result of flow execution, handling paused runs
 func handleExecutionResult(store storage.Storage, flowName string, execErr error) (uuid.UUID, error) {
 	// If there's an execution error (except await_event pause), return nil ID with error
-	if execErr != nil && !strings.Contains(execErr.Error(), "is waiting for event") {
+	if execErr != nil && !constants.IsAwaitEventPause(execErr) {
 		return uuid.Nil, execErr
 	}
 
@@ -343,7 +343,7 @@ func handleExecutionResult(store storage.Storage, flowName string, execErr error
 	utils.Debug("Found latest run for flow %s: ID=%s, Status=%v, StartedAt=%v", flowName, latest.ID, latest.Status, latest.StartedAt)
 
 	// For paused flows, look for the current run that should be saved
-	if execErr != nil && strings.Contains(execErr.Error(), "is waiting for event") {
+	if execErr != nil && constants.IsAwaitEventPause(execErr) {
 		if latest.Status != model.RunWaiting {
 			return uuid.Nil, execErr
 		}
@@ -390,7 +390,7 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 	_, execErr := eng.Execute(ctx, flow, eventData)
 
 	// For await_event pause, return the run ID along with the pause error
-	if execErr != nil && strings.Contains(execErr.Error(), "is waiting for event") {
+	if execErr != nil && constants.IsAwaitEventPause(execErr) {
 		runID, _ := handleExecutionResult(eng.Storage, flowName, execErr)
 		return runID, execErr
 	}

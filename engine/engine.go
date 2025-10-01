@@ -382,7 +382,7 @@ func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event 
 	executionTime := time.Since(e.metrics.LastExecutionTime)
 	e.updateMetrics(func(m *ExecutionMetrics) {
 		if err != nil {
-			if strings.Contains(err.Error(), constants.ErrAwaitEventPause) {
+			if constants.IsAwaitEventPause(err) {
 				m.PausedExecutions++
 			} else {
 				m.FailedExecutions++
@@ -397,7 +397,7 @@ func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event 
 	// Determine final status
 	status := model.RunSucceeded
 	if err != nil {
-		if strings.Contains(err.Error(), "is waiting for event") {
+		if constants.IsAwaitEventPause(err) {
 			status = model.RunWaiting
 			utils.Info("Flow %s paused waiting for event", flow.Name)
 		} else {
@@ -530,7 +530,7 @@ func (e *Engine) handleAwaitEventStep(ctx context.Context, step *model.Step, flo
 	// Setup event subscription for resume
 	e.setupResumeEventSubscription(ctx, token)
 
-	return nil, utils.Errorf(constants.ErrStepWaitingForEvent, step.ID)
+	return nil, constants.NewAwaitEventPauseError(step.ID, token)
 }
 
 // extractAndRenderAwaitToken validates and renders the await event token

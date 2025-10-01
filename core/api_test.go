@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
@@ -567,7 +568,7 @@ steps: [{
 	event := map[string]any{"token": "tok123"}
 	runID, err := StartRun(context.Background(), "resumeflow", event)
 	if err != nil {
-		if !strings.Contains(err.Error(), "is waiting for event") {
+		if !constants.IsAwaitEventPause(err) {
 			t.Fatalf("StartRun error: %v", err)
 		}
 		// If we get the pause error, that's expected - the test should pass
@@ -983,7 +984,7 @@ steps: [{
 	ctx := context.Background()
 	runID, err := StartRun(ctx, "pause_flow", map[string]any{})
 	if err != nil {
-		if !strings.Contains(err.Error(), "is waiting for event") {
+		if !constants.IsAwaitEventPause(err) {
 			t.Errorf("StartRun failed with unexpected error: %v", err)
 		}
 		// If we get the pause error, that's expected

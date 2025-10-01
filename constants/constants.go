@@ -1,5 +1,10 @@
 package constants
 
+import (
+	"errors"
+	"fmt"
+)
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -230,12 +235,10 @@ const (
 
 // Engine error messages
 const (
-	ErrAwaitEventPause         = "step is waiting for event"
 	ErrSaveRunFailed           = "failed to save run"
 	ErrFailedToPersistStep     = "failed to persist step"
 	ErrAwaitEventMissingToken  = "await_event step missing token in match"
 	ErrFailedToRenderToken     = "failed to render token: %v"
-	ErrStepWaitingForEvent     = "step '%s' is waiting for event"
 	ErrFailedToDeletePausedRun = "failed to delete paused run"
 	// New engine error messages
 	ErrMCPAdapterNotRegistered  = "MCPAdapter not registered"
@@ -248,6 +251,33 @@ const (
 	ErrTemplateErrorForeach     = "template error in foreach expression: %w"
 	ErrTemplateResolutionFailed = "template resolution failed for: %s"
 )
+
+// AwaitEventPauseError is a sentinel error type for await_event pauses
+type AwaitEventPauseError struct {
+	StepID string
+	Token  string
+}
+
+func (e *AwaitEventPauseError) Error() string {
+	return fmt.Sprintf("step '%s' is waiting for event (token: %s)", e.StepID, e.Token)
+}
+
+// NewAwaitEventPauseError creates a new AwaitEventPauseError
+func NewAwaitEventPauseError(stepID, token string) error {
+	return &AwaitEventPauseError{
+		StepID: stepID,
+		Token:  token,
+	}
+}
+
+// IsAwaitEventPause checks if an error is an await_event pause
+func IsAwaitEventPause(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pauseErr *AwaitEventPauseError
+	return errors.As(err, &pauseErr)
+}
 
 // Engine constants
 const (
@@ -385,10 +415,9 @@ const (
 
 // Error patterns and identifiers
 const (
-	ErrorAwaitEventPause = "await_event pause"
-	RunIDKey             = "run_id"
-	MCPServerKind        = "mcp_server"
-	ToolType             = "tool"
+	RunIDKey      = "run_id"
+	MCPServerKind = "mcp_server"
+	ToolType      = "tool"
 )
 
 // Flow file extensions
