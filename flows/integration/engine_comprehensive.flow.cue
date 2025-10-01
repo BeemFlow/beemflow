@@ -10,6 +10,13 @@ on: "cli.manual"
 vars: {
 	test_items: ["alpha", "beta", "gamma"]
 	base_number: 42
+	text: "hello world"
+	array: ["a", "b", "c"]
+	nested: {
+		level1: {
+			level2: "deep value"
+		}
+	}
 }
 
 steps: [
@@ -42,6 +49,43 @@ steps: [
 		}
 	},
 
+	// Test complex conditions
+	{
+		id: "test_complex_condition"
+		if: "{{ vars.base_number > 40 && len(vars.test_items) > 2 }}"
+		use: "core.echo"
+		with: {
+			text: "Complex condition passed!"
+		}
+	},
+
+	// Test template operations
+	{
+		id: "test_template_ops"
+		use: "core.echo"
+		with: {
+			text: "Text: {{ vars.text }}, Length: {{ len(vars.text) }}, Array length: {{ len(vars.array) }}"
+		}
+	},
+
+	// Test nested access
+	{
+		id: "test_nested_access"
+		use: "core.echo"
+		with: {
+			text: "Nested value: {{ vars.nested.level1.level2 }}"
+		}
+	},
+
+	// Test existing variables only (CUE doesn't support || operator for defaults)
+	{
+		id: "test_existing_vars"
+		use: "core.echo"
+		with: {
+			text: "Existing var: {{ vars.text }}"
+		}
+	},
+
 	// Test parallel
 	{
 		id: "test_parallel"
@@ -59,6 +103,22 @@ steps: [
 				use: "core.echo"
 				with: {
 					text: "Parallel 2"
+				}
+			}
+		]
+	},
+
+	// Test nested parallel in foreach
+	{
+		id: "test_nested_parallel"
+		foreach: "{{ vars.test_items }}"
+		parallel: true
+		steps: [
+			{
+				id: "nested_parallel_{{ item_index }}"
+				use: "core.echo"
+				with: {
+					text: "Processing {{ item }} in parallel"
 				}
 			}
 		]

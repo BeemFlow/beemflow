@@ -61,29 +61,6 @@ func getEnvWithDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// Serve starts an MCP server with the given configuration.
-// Deprecated: Use ServeWithConfig for better configuration management
-func Serve(debug, stdio bool, addr string, tools []ToolRegistration) error {
-	config := GetServerConfig()
-
-	// Override config with explicit parameters if provided
-	if debug {
-		config.Debug = true
-	}
-	if stdio {
-		config.Transport = "stdio"
-	}
-	if addr != "" {
-		config.Address = addr
-		// If address is provided, likely want HTTP mode
-		if config.Transport == "stdio" {
-			config.Transport = "http"
-		}
-	}
-
-	return ServeWithConfig(config, tools)
-}
-
 // ServeWithConfig starts an MCP server with the provided configuration
 func ServeWithConfig(config *ServerConfig, tools []ToolRegistration) error {
 	// Validate and normalize transport mode

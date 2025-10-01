@@ -57,7 +57,7 @@ break, continue, exit   # ❌ NO - No flow control keywords
 ```cue
 # Variables & References (Always use explicit scopes!)
 {{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables  
+{{ env.USER }}                 # Environment variables
 {{ secrets.API_KEY }}          # Secrets
 {{ event.field }}              # Event data
 {{ outputs.step_id.field }}    # Step outputs (preferred)
@@ -68,13 +68,23 @@ break, continue, exit   # ❌ NO - No flow control keywords
 {{ array[idx] }}               # Variable index
 {{ data.rows[0].name }}        # Nested access (square brackets for arrays)
 
-# Filters & Operations
-{{ text | upper }}             # Uppercase
-{{ text | lower }}             # Lowercase
-{{ array | length }}           # Length
-{{ array | join:", " }}        # Join array
-{{ value || 'default' }}       # Default/fallback (NOT |default)
-{{ num + 10 }}                 # Math operations
+# CUE Native Operations (Fully Supported)
+{{ len(array) }}                          # ✅ Length of arrays/strings
+{{ text + "!" }}                          # ✅ String concatenation
+{{ a > b }}                               # ✅ Comparison operations
+{{ a && b }}                              # ✅ Boolean operations
+{{ !a }}                                  # ✅ Negation
+{{ value | "default" }}                   # ✅ Default values (CUE's disjunction)
+{{ if a > b { a } else { b } }}           # ✅ Conditionals (CUE if/else)
+
+# CUE Standard Library (strings package)
+{{ strings.ToUpper(text) }}               # ✅ UPPERCASE
+{{ strings.ToLower(text) }}               # ✅ lowercase  
+{{ strings.TrimSpace(text) }}             # ✅ Trim whitespace
+{{ strings.Contains(text, "sub") }}       # ✅ Contains substring
+{{ strings.HasPrefix(text, "pre") }}      # ✅ Starts with
+{{ strings.HasSuffix(text, "suf") }}      # ✅ Ends with
+{{ strings.Replace(text, "old", "new", -1) }} # ✅ Replace all
 
 # In Loops (BeemFlow provides these automatically)
 {{ item }}                     # Current item (with 'as: item')
@@ -82,9 +92,9 @@ break, continue, exit   # ❌ NO - No flow control keywords
 {{ item_row }}                 # 1-based index (BeemFlow extension)
 
 # Conditions (MUST use template syntax)
-if: "{{ vars.status == 'active' }}"           # Required format
-if: "{{ vars.count > 5 and env.DEBUG }}"      # Complex conditions
-if: "{{ not (vars.disabled) }}"               # Negation
+if: "{{ vars.status == 'active' }}"           # ✅ Required format
+if: "{{ vars.count > 5 && env.DEBUG }}"       # ✅ Complex conditions
+if: "{{ !vars.disabled }}"                    # ✅ Negation
 ```
 
 ### 🔧 Common Tools
@@ -158,7 +168,7 @@ steps:
 
 # Complex conditions
 - id: complex_check
-  if: "{{ vars.count > 10 and env.NODE_ENV == 'production' }}"
+  if: "{{ vars.count > 10 && env.NODE_ENV == 'production' }}"
   use: core.echo
   with:
     text: "Multiple conditions"
@@ -195,7 +205,7 @@ steps:
   as: row
   do:
     - id: check_row_{{ row_index }}
-      if: "{{ row.0 and row.1 == 'approved' }}"
+      if: "{{ row.0 && row.1 == 'approved' }}"
       use: core.echo
       with:
         text: "Processing: {{ row.0 }}"
@@ -280,9 +290,9 @@ steps:
 
 | Wrong | Right | Explanation |
 |-------|-------|-------------|
-| `${ var }` | `{{ var }}` | BeemFlow uses Pongo2 syntax |
+| `${ var }` | `{{ var }}` | BeemFlow uses CUE-based templates |
 | `if: "status == 'active'"` | `if: "{{ vars.status == 'active' }}"` | Must use template syntax & explicit scopes |
-| `{{ data.rows[0].name }}` | `{{ data.rows.0.name }}` | Pongo2 uses dot notation throughout |
+| `{{ data.rows.0.name }}` | `{{ data.rows[0].name }}` | CUE uses bracket notation for arrays |
 | `continue_on_error: true` | Use `catch` blocks | Field doesn't exist |
 | `{{ now() }}` | Use a variable | No function calls |
 | `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator |

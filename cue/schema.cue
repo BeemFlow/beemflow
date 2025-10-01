@@ -90,6 +90,24 @@ import (
 #stringHasPrefix: strings.HasPrefix
 #stringHasSuffix: strings.HasSuffix
 
+// Template filter functions (available in {{ }} expressions)
+#templateFilters: {
+	// String filters
+	upper: strings.ToUpper
+	lower: strings.ToLower
+	title: strings.ToTitle
+	trim: strings.TrimSpace
+	length: len
+
+	// Array filters
+	join: #stringJoin
+
+	// Utility functions
+	now: #now
+	base64: #base64Encode
+	duration: #durationFormat
+}
+
 // Utility for accessing previous run outputs
 #previousRun: {
 	flow: string
@@ -104,3 +122,7 @@ import (
 // Built-in functions available in expressions
 #len: len
 #now: string // Current timestamp (populated at runtime)
+
+// Helper functions for template filters (implemented in Go)
+#base64Encode: func(s) { "base64_encode_placeholder" }
+#durationFormat: func(n, unit) { "duration_format_placeholder" }

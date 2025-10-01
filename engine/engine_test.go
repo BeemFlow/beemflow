@@ -1757,7 +1757,7 @@ func TestPristineForeachSyntax(t *testing.T) {
 	_ = outputs // Avoid unused variable warning
 }
 
-// TestPristineArrayAccess tests Pongo2's dot notation for arrays
+// TestPristineArrayAccess tests CUE's bracket notation for arrays
 func TestPristineArrayAccess(t *testing.T) {
 	ctx := context.Background()
 	engine := NewDefaultEngine(ctx)

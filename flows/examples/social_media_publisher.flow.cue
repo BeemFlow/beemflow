@@ -57,17 +57,17 @@ steps: [
 	// Simplified processing - focus on core patterns
 	{
 		id: "check_queue"
-		if: "{{ outputs.read_sheet.values | length > 0 }}"
+		if: "{{ len(outputs.read_sheet.values) > 0 }}"
 		use: "core.echo"
 		with: {
-			text: "Found {{ outputs.read_sheet.values | length }} rows to process"
+			text: "Found {{ len(outputs.read_sheet.values) }} rows to process"
 		}
 	},
 
 	// Generate new draft if needed
 	{
 		id: "generate_draft"
-		if: "{{ outputs.read_sheet.values | length == 0 }}"
+		if: "{{ len(outputs.read_sheet.values) == 0 }}"
 		use: "anthropic.chat_completion"
 		with: {
 			model: "{{ vars.MODEL }}"

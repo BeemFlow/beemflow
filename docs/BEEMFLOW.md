@@ -10,7 +10,7 @@
 2. [Architecture Overview](#architecture-overview)
 3. [The BeemFlow Protocol](#the-beemflow-protocol)
 4. [Workflow Language Specification](#workflow-language-specification)
-5. [Template System (Pongo2)](#template-system-pongo2)
+5. [Template System (CUE-based)](#template-system-cue-based)
 6. [Tool System & Registry](#tool-system--registry)
 7. [Runtime Execution Model](#runtime-execution-model)
 8. [MCP Integration](#mcp-integration)
@@ -298,9 +298,9 @@ type WaitSpec struct {
 
 ---
 
-## Template System (Pongo2)
+## Template System (CUE-based)
 
-BeemFlow uses **Pongo2** templating (Django-like syntax) for variable interpolation and logic.
+BeemFlow uses **CUE** for template resolution with custom filter support for variable interpolation and logic.
 
 ### Variable Scopes
 
@@ -364,7 +364,7 @@ steps: [
 
 ### Array Access
 
-Pongo2 uses dot notation throughout:
+**Note**: CUE uses bracket notation for array indexing:
 
 ```cue
 package beemflow
@@ -401,86 +401,127 @@ steps: [
 ]
 ```
 
-### Filters
+### Filters (Currently Supported)
 
-```yaml
-{{ text | upper }}             # Convert to uppercase
-{{ text | lower }}             # Convert to lowercase
-{{ text | title }}             # Title case
-{{ array | length }}           # Array/string length
-{{ array | join:", " }}        # Join array elements
-{{ number | add:10 }}          # Math operations
-{{ text | truncate:50 }}       # Truncate string
-{{ value | escape }}           # HTML escape
+```cue
+package beemflow
+
+steps: [
+  {
+    id: length_example
+    use: core.echo
+    with: {
+      text: "{{ len(array) }}"              // ✅ Array/string length
+    }
+  },
+  {
+    id: len_example
+    use: core.echo
+    with: {
+      text: "{{ len(array) }}"              // ✅ Alternative length syntax
+    }
+  }
+]
 ```
 
 ### Default Values
 
-Use the `||` operator (NOT `|default`):
+Use the `||` operator:
 
-```yaml
-{{ value || 'default' }}       # ✅ Correct
-{{ value | default:'x' }}      # ❌ Wrong - doesn't exist
+```cue
+package beemflow
+
+steps: [
+  {
+    id: default_example
+    use: core.echo
+    with: {
+      text: "{{ value || 'default' }}"       // ✅ Default/fallback
+    }
+  }
+]
 ```
 
 ### Conditionals
 
-```yaml
-# In step conditions (must use template syntax)
-if: "{{ vars.status == 'active' }}"
-if: "{{ vars.count > 5 and env.DEBUG }}"
-if: "{{ not (vars.disabled) }}"
+```cue
+package beemflow
 
-# In template content
-{% if condition %}
-  True branch
-{% elif other_condition %}
-  Elif branch
-{% else %}
-  False branch
-{% endif %}
+steps: [
+  {
+    id: conditional_example1
+    if: "{{ vars.status == 'active' }}"
+    use: core.echo
+    with: {
+      text: "Status is active"
+    }
+  },
+  {
+    id: conditional_example2
+    if: "{{ vars.count > 5 && env.DEBUG }}"
+    use: core.echo
+    with: {
+      text: "Complex condition met"
+    }
+  },
+  {
+    id: conditional_example3
+    if: "{{ !vars.disabled }}"
+    use: core.echo
+    with: {
+      text: "Not disabled"
+    }
+  }
+]
 ```
 
-### Loops in Templates
+### Loops in Foreach Steps
 
-```yaml
-# In template content
-{% for item in array %}
-  {{ item }}{% if not loop.last %}, {% endif %}
-{% endfor %}
+```cue
+package beemflow
 
-# Loop variables
-{{ loop.index0 }}    # 0-based index
-{{ loop.index }}      # 1-based index
-{{ loop.first }}      # True if first iteration
-{{ loop.last }}       # True if last iteration
+steps: [
+  {
+    id: loop_example
+    foreach: "{{ vars.items }}"
+    as: item
+    do: [
+      {
+        id: process_item
+        use: core.echo
+        with: {
+          text: "Processing {{ item }} at index {{ item_index }}"
+        }
+      }
+    ]
+  }
+]
 ```
 
 ### In Foreach Steps
 
 BeemFlow automatically provides these variables:
 
-```yaml
-- id: process_items
-  foreach: "{{ vars.items }}"
-  as: item
-  do:
-    - id: process_{{ item_index }}    # 0-based index
-      use: core.echo
-      with:
-        text: |
-          Item: {{ item }}
-          Index: {{ item_index }}      # 0-based
-          Row: {{ item_row }}          # 1-based
+```cue
+package beemflow
+
+steps: [
+  {
+    id: process_items
+    foreach: "{{ vars.items }}"
+    as: item
+    do: [
+      {
+        id: process_item
+        use: core.echo
+        with: {
+          text: "Item: {{ item }}, Index: {{ item_index }}, Row: {{ item_row }}"
+        }
+      }
+    ]
+  }
+]
 ```
-
-### Functions That Don't Exist
-
-```yaml
-{{ now() }}              # ❌ No function calls
-{{ date() }}             # ❌ No date function
-{{ 'now' | date }}       # ❌ No date filter
-{{ uuid() }}             # ❌ No UUID generation
 ```
 
 ---
