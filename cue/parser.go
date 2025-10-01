@@ -305,11 +305,12 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 		expr := template[start+2 : end-2]
 		expr = strings.TrimSpace(expr)
 
-		// Handle empty expressions - this could indicate a bug
+		// Handle empty expressions - treat as empty string
 		if expr == "" {
-			// Log warning about empty template expression
-			utils.Warn("Empty template expression found in %q at position %d-%d", template, start, end)
-			// Move past this template
+			// Log warning about empty template expression for debugging
+			utils.Warn("Empty template expression found in %q at position %d-%d, treating as empty string", template, start, end)
+			// Append empty string for empty template
+			result.WriteString("")
 			lastEnd = end
 			continue
 		}
@@ -649,8 +650,9 @@ func convertInvalidIdentifiersToBracketNotation(expr string) string {
 
 		// Check if this part contains array access (e.g., "arr[0]")
 		if strings.Contains(part, "[") && strings.Contains(part, "]") {
-			// This is array access, don't convert
-			result = append(result, part)
+			// This is array access, parse and convert the base identifier if needed
+			convertedPart := convertArrayAccessPart(part)
+			result = append(result, convertedPart)
 		} else if isValidCUEKey(part) {
 			// Valid identifier
 			result = append(result, part)
@@ -674,4 +676,27 @@ func convertInvalidIdentifiersToBracketNotation(expr string) string {
 	}
 
 	return strings.Join(result, ".")
+}
+
+// convertArrayAccessPart converts an array access part like "arr[0]" or "my-invalid-array[0]"
+func convertArrayAccessPart(part string) string {
+	// Find the opening bracket
+	bracketIndex := strings.Index(part, "[")
+	if bracketIndex == -1 {
+		return part
+	}
+
+	// Extract the base identifier (everything before the bracket)
+	base := part[:bracketIndex]
+
+	// Extract the array access part (everything from bracket onwards)
+	arrayPart := part[bracketIndex:]
+
+	// Convert the base identifier if it's invalid
+	if !isValidCUEKey(base) {
+		convertedBase := fmt.Sprintf(`quoted["%s"]`, strings.ReplaceAll(base, `"`, `\"`))
+		return convertedBase + arrayPart
+	}
+
+	return part
 }

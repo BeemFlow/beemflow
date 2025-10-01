@@ -403,7 +403,7 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) (string, er
 		return "Bearer " + token
 	})
 
-	// Return error if OAuth expansion failed
+	// Return error immediately if OAuth expansion failed
 	if oauthError != nil {
 		return "", oauthError
 	}

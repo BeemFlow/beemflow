@@ -389,9 +389,10 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 
 	_, execErr := eng.Execute(ctx, flow, eventData)
 
-	// For await_event pause, return the run ID instead of error
+	// For await_event pause, return the run ID along with the pause error
 	if execErr != nil && strings.Contains(execErr.Error(), "is waiting for event") {
-		return handleExecutionResult(eng.Storage, flowName, execErr)
+		runID, _ := handleExecutionResult(eng.Storage, flowName, execErr)
+		return runID, execErr
 	}
 
 	return handleExecutionResult(eng.Storage, flowName, execErr)
