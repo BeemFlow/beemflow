@@ -121,7 +121,8 @@ We're building the infrastructure for the largest generational wealth transfer i
 **What it does:** Runs two steps, each echoing a message. Shows how outputs can be reused.
 
 ```cue
-// hello_world.flow.cue
+package beemflow
+
 name: "hello_world"
 description: """
 Display a greeting message, then echo that same message again with additional text.
@@ -162,7 +163,8 @@ flow run hello_world.flow.cue
 **What it does:** Fetches a web page, summarizes it with an LLM, and prints the result.
 
 ```cue
-// fetch_and_summarize.flow.cue
+package beemflow
+
 name: "fetch_and_summarize"
 description: """
 Fetch content from a web URL using HTTP, summarize it with OpenAI into 3 bullet points,
@@ -238,7 +240,8 @@ Explore real-world automations, from parallel LLMs to human-in-the-loop and mult
 **What it does:** Runs two LLM prompts in parallel, then combines their answers.
 
 ```cue
-// parallel_openai.flow.cue
+package beemflow
+
 name: "parallel_openai"
 description: """
 Execute two OpenAI chat completions in parallel to generate different fun facts about
@@ -312,7 +315,8 @@ flow run parallel_openai.flow.cue
 **What it does:** Drafts a message, sends it for human approval via SMS (using an MCP tool), and acts on the reply.
 
 ```cue
-// tweet_approval_workflow.flow.cue
+package beemflow
+
 name: "tweet_approval_workflow"
 on: "cli.manual"
 vars: {
@@ -396,7 +400,8 @@ flow run tweet_approval_workflow.flow.cue
 - Waits for Slack feedback/approval before posting to the socials (simulated as echo steps for safety, but can be swapped for real posting tools).
 
 ```cue
-// social_media_publisher.flow.cue
+package beemflow
+
 name: "social_media_publisher"
 on: "cli.manual"
 vars: {
@@ -539,6 +544,8 @@ flow run social_media_publisher.flow.cue
 - Sends the slide to Slack.
 
 ```cue
+package beemflow
+
 name: "cfo_daily_cash"
 on: "schedule.cron"
 cron: "0 7 * * *"          // 07:00 every day
@@ -625,6 +632,8 @@ flow run cfo_daily_cash.flow.cue
 - Adjusts Google Ads campaigns based on price changes.
 
 ```cue
+package beemflow
+
 name: "conditional_logic"
 on: "schedule.cron"
 cron: "0 * * * *"  // Every hour
@@ -689,6 +698,8 @@ flow run conditional_logic.flow.cue
 - Checks if paid; if not, escalates with a Twilio SMS.
 
 ```cue
+package beemflow
+
 name: "await_resume_demo"
 on: "schedule.cron"
 cron: "0 9 * * 1-5"  // every weekday 09:00
@@ -769,6 +780,8 @@ flow run await_resume_demo.flow.cue
 ## Anatomy of a Flow
 
 ```cue
+package beemflow
+
 name: "fetch_and_summarize"
 description: """
 Fetch content from a web URL, summarize it with OpenAI into 3 bullet points,
@@ -836,29 +849,33 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 **Best for:** Simple APIs, getting started, common services
 
 ```cue
-// Simple HTTP fetching
-{
-  id: "fetch_page"
-  use: "http.fetch"
-  with: {
-    url: "https://api.example.com/data"
-  }
-}
+package beemflow
 
-// AI services with smart defaults
-{
-  id: "chat"
-  use: "openai.chat_completion"
-  with: {
-    model: "gpt-4o"
-    messages: [
-      {
-        role: "user"
-        content: "Hello, world!"
-      }
-    ]
+steps: [
+  // Simple HTTP fetching
+  {
+    id: "fetch_page"
+    use: "http.fetch"
+    with: {
+      url: "https://api.example.com/data"
+    }
+  },
+
+  // AI services with smart defaults
+  {
+    id: "chat"
+    use: "openai.chat_completion"
+    with: {
+      model: "gpt-4o"
+      messages: [
+        {
+          role: "user"
+          content: "Hello, world!"
+        }
+      ]
+    }
   }
-}
+]
 ```
 
 **How it works:**
@@ -872,29 +889,33 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 **Best for:** Complex APIs, custom authentication, non-standard requests
 
 ```cue
-// Full HTTP control
-{
-  id: "api_call"
-  use: "http"
-  with: {
-    url: "https://api.example.com/data"
-    method: "POST"
-    headers: {
-      Authorization: "Bearer {{ secrets.API_KEY }}"
-      "Content-Type": "application/json"
-      "X-Custom-Header": "my-value"
-    }
-    body: """
-      {
-        "query": "{{ user_input }}",
-        "options": {
-          "format": "json",
-          "limit": 100
-        }
+package beemflow
+
+steps: [
+  // Full HTTP control
+  {
+    id: "api_call"
+    use: "http"
+    with: {
+      url: "https://api.example.com/data"
+      method: "POST"
+      headers: {
+        Authorization: "Bearer {{ secrets.API_KEY }}"
+        "Content-Type": "application/json"
+        "X-Custom-Header": "my-value"
       }
-      """
+      body: """
+        {
+          "query": "{{ user_input }}",
+          "options": {
+            "format": "json",
+            "limit": 100
+          }
+        }
+        """
+    }
   }
-}
+]
 ```
 
 **How it works:**
@@ -908,23 +929,27 @@ BeemFlow provides **three complementary ways** to integrate with HTTP APIs and e
 **Best for:** Databases, file systems, stateful services, complex workflows
 
 ```cue
-// Database operations
-{
-  id: "query_db"
-  use: "mcp://postgres/query"
-  with: {
-    sql: "SELECT * FROM users WHERE active = true"
-  }
-}
+package beemflow
 
-// File operations
-{
-  id: "process_files"
-  use: "mcp://filesystem/read"
-  with: {
-    path: "/data/reports/*.csv"
+steps: [
+  // Database operations
+  {
+    id: "query_db"
+    use: "mcp://postgres/query"
+    with: {
+      sql: "SELECT * FROM users WHERE active = true"
+    }
+  },
+
+  // File operations
+  {
+    id: "process_files"
+    use: "mcp://filesystem/read"
+    with: {
+      path: "/data/reports/*.csv"
+    }
   }
-}
+]
 ```
 
 **How it works:**
@@ -984,51 +1009,59 @@ Instead of repeating the same `http` configuration across multiple flows, create
 
 **Then use it simply across all your flows:**
 ```cue
-// Flow 1: Product search
-{
-  id: "search_products"
-  use: "my_api.search"
-  with: {
-    query: "{{ product_name }}"
-    category: "products"
-  }
-}
+package beemflow
 
-// Flow 2: User search
-{
-  id: "find_users"
-  use: "my_api.search"
-  with: {
-    query: "{{ email_domain }}"
-    category: "users"
-    limit: 5
+steps: [
+  // Flow 1: Product search
+  {
+    id: "search_products"
+    use: "my_api.search"
+    with: {
+      query: "{{ product_name }}"
+      category: "products"
+    }
+  },
+
+  // Flow 2: User search
+  {
+    id: "find_users"
+    use: "my_api.search"
+    with: {
+      query: "{{ email_domain }}"
+      category: "users"
+      limit: 5
+    }
   }
-}
+]
 ```
 
 **Compare this to repeating the same HTTP config everywhere:**
 ```cue
-// ❌ Bad: Repetitive and error-prone
-{
-  id: "search_products"
-  use: "http"
-  with: {
-    url: "https://my-api.com/search"
-    method: "POST"
-    headers: {
-      Authorization: "Bearer {{ secrets.MY_API_KEY }}"
-      "Content-Type": "application/json"
-    }
-    body: """
-      {
-        "query": "{{ product_name }}",
-        "category": "products"
-      }
-      """
-  }
-}
+package beemflow
 
-# ❌ Same config repeated in every flow...
+steps: [
+  // ❌ Bad: Repetitive and error-prone
+  {
+    id: "search_products"
+    use: "http"
+    with: {
+      url: "https://my-api.com/search"
+      method: "POST"
+      headers: {
+        Authorization: "Bearer {{ secrets.MY_API_KEY }}"
+        "Content-Type": "application/json"
+      }
+      body: """
+        {
+          "query": "{{ product_name }}",
+          "category": "products"
+        }
+        """
+    }
+  }
+]
+
+// ❌ Same config repeated in every flow...
 ```
 
 **Benefits of JSON manifests:**
@@ -1106,16 +1139,19 @@ curl -s https://api.example.com/openapi.json | flow convert
 
 **Then use it immediately in your flows:**
 ```cue
-// products_search.flow.cue
-{
-  id: "find_electronics"
-  use: "products_api.search"
-  with: {
-    query: "smartphones"
-    category: "electronics"
-    limit: 5
+package beemflow
+
+steps: [
+  {
+    id: "find_electronics"
+    use: "products_api.search"
+    with: {
+      query: "smartphones"
+      category: "electronics"
+      limit: 5
+    }
   }
-}
+]
 ```
 
 **Why this is game-changing:**
@@ -1129,15 +1165,19 @@ curl -s https://api.example.com/openapi.json | flow convert
 For more sophisticated custom API integrations, consider creating an MCP server instead:
 
 ```cue
-// Advanced: MCP server with business logic
-{
-  id: "search_products"
-  use: "mcp://my-api/search"
-  with: {
-    query: "{{ product_name }}"
-    // MCP server handles caching, retries, rate limiting, etc.
+package beemflow
+
+steps: [
+  // Advanced: MCP server with business logic
+  {
+    id: "search_products"
+    use: "mcp://my-api/search"
+    with: {
+      query: "{{ product_name }}"
+      // MCP server handles caching, retries, rate limiting, etc.
+    }
   }
-}
+]
 ```
 
 **MCP servers are better when you need:**
@@ -1159,15 +1199,21 @@ For more sophisticated custom API integrations, consider creating an MCP server 
 # - Inventory sync logic
 # - Order processing workflows
 
-// Use it simply:
-{
-  id: "sync_inventory"
-  use: "mcp://shopify/sync_inventory"
-  with: {
-    store_id: "{{ store.id }}"
-    // Server handles all the complexity
+```cue
+package beemflow
+
+steps: [
+  // Use it simply:
+  {
+    id: "sync_inventory"
+    use: "mcp://shopify/sync_inventory"
+    with: {
+      store_id: "{{ store.id }}"
+      // Server handles all the complexity
+    }
   }
-}
+]
+```
 ```
 
 **The progression:**
@@ -1274,6 +1320,8 @@ The true power of BeemFlow isn't in YAML files—it's in the **universal protoco
 
 **CUE-Native (Template-Centric):**
 ```cue
+package beemflow
+
 name: "research_flow"
 steps: [
   {

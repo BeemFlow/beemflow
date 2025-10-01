@@ -8,6 +8,8 @@
 
 ### ✅ Valid CUE Structure
 ```cue
+package beemflow
+
 name: string                    # REQUIRED
 description: string             # optional - precise natural language representation of workflow logic
 version: string                 # optional
@@ -115,6 +117,8 @@ mcp://server/tool             # MCP server tools
 
 ### Basic Flow
 ```cue
+package beemflow
+
 name: hello_world
 on: cli.manual
 steps:
@@ -126,6 +130,8 @@ steps:
 
 ### Using Variables and Outputs
 ```cue
+package beemflow
+
 name: fetch_and_process
 on: cli.manual
 vars:
@@ -212,6 +218,8 @@ steps:
 
 ### Error Handling
 ```cue
+package beemflow
+
 name: with_error_handling
 on: cli.manual
 steps:
@@ -243,6 +251,8 @@ catch:
 
 ### Google Sheets Example
 ```cue
+package beemflow
+
 name: sheets_integration
 on: cli.manual
 vars:
@@ -253,7 +263,7 @@ steps:
     with:
       spreadsheetId: "{{ vars.SHEET_ID }}"
       range: "Sheet1!A1:D10"
-      
+
   - id: append_row
     use: google_sheets.values.append
     with:
@@ -364,15 +374,20 @@ The optional `description` field provides a precise natural language representat
 
 **✅ Good Description:**
 ```cue
+package beemflow
+
 name: social_media_approval
 description: |
-  Generate social media content using AI, store it in Airtable for human review, 
+  Generate social media content using AI, store it in Airtable for human review,
   wait for approval status change, then post to Twitter and mark as completed.
   Handle timeout by notifying team via Slack.
 ```
 
 **❌ Poor Description:**
 ```cue
+package beemflow
+
+name: social_media_approval
 description: "This workflow handles social media posting"  # Too vague
 description: "Uses OpenAI and Airtable"                    # Lists tools, not logic
 ```

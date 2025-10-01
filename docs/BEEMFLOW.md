@@ -83,7 +83,9 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 
 ### Flow Definition Structure
 
-```yaml
+```cue
+package beemflow
+
 # REQUIRED fields
 name: string                    # Unique workflow identifier
 on: trigger                     # Trigger type (see Triggers section)
@@ -101,7 +103,9 @@ mcpServers: {}                 # MCP server configurations
 
 BeemFlow supports multiple trigger types:
 
-```yaml
+```cue
+package beemflow
+
 # Manual CLI execution
 on: cli.manual
 
@@ -127,68 +131,99 @@ on:
 
 Every step MUST have an `id` and ONE primary action:
 
-```yaml
-# Tool execution step
-- id: unique_identifier
-  use: tool.name              # Tool to execute
-  with: {}                     # Tool parameters
-  
-# Parallel execution block
-- id: parallel_block
-  parallel: true
-  steps: []                    # Steps to run in parallel
-  
-# Loop execution
-- id: foreach_block
-  foreach: "{{ array }}"       # Array to iterate
-  as: item                     # Loop variable name
-  do: []                       # Steps to execute per item
-  
-# Event waiting
-- id: wait_for_event
-  await_event:
-    source: "system"
-    match: {key: value}
-    timeout: "1h"
-    
-# Time delay
-- id: delay
-  wait:
-    seconds: 30
+```cue
+package beemflow
+
+steps: [
+  // Tool execution step
+  {
+    id: unique_identifier
+    use: tool.name              // Tool to execute
+    with: {}                     // Tool parameters
+  },
+
+  // Parallel execution block
+  {
+    id: parallel_block
+    parallel: true
+    steps: []                    // Steps to run in parallel
+  },
+
+  // Loop execution
+  {
+    id: foreach_block
+    foreach: "{{ array }}"       // Array to iterate
+    as: item                     // Loop variable name
+    do: []                       // Steps to execute per item
+  },
+
+  // Event waiting
+  {
+    id: wait_for_event
+    await_event: {
+      source: "system"
+      match: {key: value}
+      timeout: "1h"
+    }
+  },
+
+  // Time delay
+  {
+    id: delay
+    wait: {
+      seconds: 30
+    }
+  }
+]
 ```
 
 ### Optional Step Modifiers
 
-```yaml
-- id: step_with_modifiers
-  use: tool.name
-  with: {}
-  
-  # Conditional execution
-  if: "{{ condition }}"
-  
-  # Dependencies
-  depends_on: [step1, step2]
-  
-  # Retry configuration
-  retry:
-    attempts: 3
-    delay_sec: 5
+```cue
+package beemflow
+
+steps: [
+  {
+    id: step_with_modifiers
+    use: tool.name
+    with: {}
+
+    // Conditional execution
+    if: "{{ condition }}"
+
+    // Dependencies
+    depends_on: [step1, step2]
+
+    // Retry configuration
+    retry: {
+      attempts: 3
+      delay_sec: 5
+    }
+  }
+]
 ```
 
 ### IMPORTANT: Fields That Don't Exist
 
 These fields are commonly hallucinated but **DO NOT EXIST**:
 
-```yaml
-# ❌ THESE DON'T EXIST
-continue_on_error: true    # Use catch blocks instead
-timeout: 30s               # Only in await_event.timeout
-on_error: handler          # Use catch blocks
-on_success: next          # Doesn't exist
-break: true               # No flow control keywords
-continue: true            # No flow control keywords
-exit: true                # No flow control keywords
+```cue
+package beemflow
+
+steps: [
+  // ❌ THESE DON'T EXIST
+  {
+    id: example_step
+    use: tool.name
+    // continue_on_error: true    // ❌ Use catch blocks instead
+    // timeout: 30s               // ❌ Only in await_event.timeout
+    // on_error: handler          // ❌ Use catch blocks
+    // on_success: next          // ❌ Doesn't exist
+    // break: true               // ❌ No flow control keywords
+    // continue: true            // ❌ No flow control keywords
+    // exit: true                // ❌ No flow control keywords
+  }
+]
 ```
 
 ---
@@ -271,25 +306,99 @@ BeemFlow uses **Pongo2** templating (Django-like syntax) for variable interpolat
 
 Always use explicit scopes for clarity:
 
-```yaml
-{{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables
-{{ secrets.API_KEY }}          # Secrets (from .env or system)
-{{ event.field }}              # Event data
-{{ outputs.step_id.field }}    # Step outputs (preferred)
-{{ step_id.field }}            # Step outputs (shorthand)
-{{ runs.Previous.field }}      # Previous run data
+```cue
+package beemflow
+
+steps: [
+  {
+    id: template_example
+    use: core.echo
+    with: {
+      text: "{{ vars.MY_VAR }}"              // Flow variables
+    }
+  },
+  {
+    id: template_example2
+    use: core.echo
+    with: {
+      text: "{{ env.USER }}"                 // Environment variables
+    }
+  },
+  {
+    id: template_example3
+    use: core.echo
+    with: {
+      text: "{{ secrets.API_KEY }}"          // Secrets (from .env or system)
+    }
+  },
+  {
+    id: template_example4
+    use: core.echo
+    with: {
+      text: "{{ event.field }}"              // Event data
+    }
+  },
+  {
+    id: template_example5
+    use: core.echo
+    with: {
+      text: "{{ outputs.step_id.field }}"    // Step outputs (preferred)
+    }
+  },
+  {
+    id: template_example6
+    use: core.echo
+    with: {
+      text: "{{ step_id.field }}"            // Step outputs (shorthand)
+    }
+  },
+  {
+    id: template_example7
+    use: core.echo
+    with: {
+      text: "{{ runs.Previous.field }}"      // Previous run data
+    }
+  }
+]
 ```
 
 ### Array Access
 
 Pongo2 uses dot notation throughout:
 
-```yaml
-{{ array.0 }}                  # First element
-{{ array.1 }}                  # Second element
-{{ data.rows.0.name }}         # Nested access
-{{ array[variable_index] }}    # Variable index
+```cue
+package beemflow
+
+steps: [
+  {
+    id: array_example1
+    use: core.echo
+    with: {
+      text: "{{ array.0 }}"                  // First element
+    }
+  },
+  {
+    id: array_example2
+    use: core.echo
+    with: {
+      text: "{{ array.1 }}"                  // Second element
+    }
+  },
+  {
+    id: array_example3
+    use: core.echo
+    with: {
+      text: "{{ data.rows.0.name }}"         // Nested access
+    }
+  },
+  {
+    id: array_example4
+    use: core.echo
+    with: {
+      text: "{{ array[variable_index] }}"    // Variable index
+    }
+  }
+]
 ```
 
 ### Filters
