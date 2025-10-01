@@ -115,7 +115,6 @@ steps: [
 
 📤 HTTP POST Example:
 - Posted to: {{ outputs.test_http_post.url }}
-- Method: {{ outputs.test_http_post.method }}
 - Body sent successfully
 
 ✅ All HTTP patterns working correctly!

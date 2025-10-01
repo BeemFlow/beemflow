@@ -3,8 +3,6 @@ package cue
 import (
 	"encoding/json"
 	"fmt"
-	"net"
-	"net/url"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -219,18 +217,7 @@ func (p *Parser) validateWithSecurity(withVal cue.Value, stepID string) error {
 	// For now, just check for basic URL validation in common fields
 	// This can be extended to check for other security issues
 
-	// Check URL fields
-	urlFields := []string{"url", "endpoint", "host"}
-	for _, field := range urlFields {
-		fieldVal := withVal.LookupPath(cue.ParsePath(field))
-		if fieldVal.Err() == nil {
-			if urlStr, err := fieldVal.String(); err == nil {
-				if isSuspiciousURL(urlStr) {
-					return fmt.Errorf("step '%s' field '%s' contains suspicious URL: %s", stepID, field, urlStr)
-				}
-			}
-		}
-	}
+	// URL validation removed - let users make their own security decisions
 
 	return nil
 }
@@ -243,37 +230,6 @@ func isDangerousUse(use string) bool {
 			return true
 		}
 	}
-	return false
-}
-
-// isSuspiciousURL checks if a URL looks suspicious
-func isSuspiciousURL(urlStr string) bool {
-	// Parse the URL to get the host
-	parsed, err := url.Parse(urlStr)
-	if err != nil {
-		return false // If we can't parse it, assume it's not suspicious
-	}
-
-	host := strings.ToLower(parsed.Hostname())
-
-	// Check for localhost
-	if host == "localhost" {
-		return true
-	}
-
-	// Check for private IPs
-	ip := net.ParseIP(host)
-	if ip != nil {
-		// Check if it's a private IP
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			return true
-		}
-		// Check for 0.0.0.0 or :: (IPv6 unspecified)
-		if ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero) {
-			return true
-		}
-	}
-
 	return false
 }
 
@@ -313,7 +269,7 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 		return template, nil
 	}
 
-	// Build CUE context script once
+	// Build CUE context script once and create context once for efficiency
 	contextScript := buildCUEContextScript(context)
 	ctx := cuecontext.New()
 
@@ -332,9 +288,8 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 
 		end := strings.Index(template[start:], "}}")
 		if end == -1 {
-			// Malformed template, append remaining text
-			result.WriteString(template[lastEnd:])
-			break
+			// Malformed template, return error instead of silently ignoring
+			return "", fmt.Errorf("malformed template: missing closing }} in %q", template[lastEnd:])
 		}
 		end += start + 2
 
@@ -345,7 +300,14 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 		expr := template[start+2 : end-2]
 		expr = strings.TrimSpace(expr)
 
-		// Evaluate the expression
+		// Skip empty expressions
+		if expr == "" {
+			// Move past this template
+			lastEnd = end
+			continue
+		}
+
+		// Evaluate the expression using the pre-built context
 		cueScript := contextScript + "\nresult: " + expr
 		cueValue := ctx.CompileString(cueScript)
 

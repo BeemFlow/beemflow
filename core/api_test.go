@@ -28,8 +28,8 @@ func TestListFlows(t *testing.T) {
 
 func TestGetFlow(t *testing.T) {
 	// Set up a temporary flows directory with dummy flow
-	flowsDir := t.TempDir()
-	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
 	dummyFlowContent := `name: "dummy"
 description: "Dummy test flow"
 on: "cli.manual"
@@ -43,7 +43,7 @@ steps: [{
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	_, err := GetFlow(context.Background(), "dummy")
@@ -54,8 +54,8 @@ steps: [{
 
 func TestValidateFlow(t *testing.T) {
 	// Set up a temporary flows directory with dummy flow
-	flowsDir := t.TempDir()
-	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
 	dummyFlowContent := `name: "dummy"
 description: "Dummy test flow"
 on: "cli.manual"
@@ -69,7 +69,7 @@ steps: [{
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	err := ValidateFlow(context.Background(), "dummy")
@@ -80,8 +80,8 @@ steps: [{
 
 func TestGraphFlow(t *testing.T) {
 	// Set up a temporary flows directory with dummy flow
-	flowsDir := t.TempDir()
-	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
 	dummyFlowContent := `name: "dummy"
 description: "Dummy test flow"
 on: "cli.manual"
@@ -95,7 +95,7 @@ steps: [{
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	_, err := GraphFlow(context.Background(), "dummy")
@@ -106,8 +106,8 @@ steps: [{
 
 func TestStartRun(t *testing.T) {
 	// Set up a temporary flows directory with dummy flow
-	flowsDir := t.TempDir()
-	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
 	dummyFlowContent := `name: "dummy"
 description: "Dummy test flow"
 on: "cli.manual"
@@ -121,7 +121,7 @@ steps: [{
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	// Use test context with memory storage
@@ -189,16 +189,16 @@ func TestGetFlow_FileNotFound(t *testing.T) {
 }
 
 func TestGetFlow_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.cue")
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
 	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	// Set the global flowsDir in the api package
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	_, err := GetFlow(context.Background(), "bad")
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -213,16 +213,16 @@ func TestValidateFlow_FileNotFound(t *testing.T) {
 }
 
 func TestValidateFlow_SchemaError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.cue")
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
 	if err := os.WriteFile(badPath, []byte("name: \"bad\"\nsteps: []\ninvalid_field: \"should not be here\""), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	// Use a non-existent schema file
 	orig := "beemflow.schema.json"
 	if err := os.Rename(orig, orig+".bak"); err != nil && !os.IsNotExist(err) {
@@ -237,8 +237,8 @@ func TestValidateFlow_SchemaError(t *testing.T) {
 
 func TestStartRun_ConfigError(t *testing.T) {
 	// Set up a temporary flows directory with dummy flow
-	flowsDir := t.TempDir()
-	dummyFlowPath := filepath.Join(flowsDir, "dummy.flow.cue")
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
 	dummyFlowContent := `name: "dummy"
 description: "Dummy test flow"
 on: "cli.manual"
@@ -252,7 +252,7 @@ steps: [{
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	// Simulate config error by renaming config file
@@ -270,16 +270,16 @@ steps: [{
 }
 
 func TestStartRun_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.cue")
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
 	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	_, err := StartRun(context.Background(), "bad", map[string]any{})
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -361,16 +361,16 @@ func TestGetFlow_UnexpectedError(t *testing.T) {
 }
 
 func TestValidateFlow_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "badparse.flow.cue")
+	badPath := filepath.Join(tempDir, "badparse.flow.cue")
 	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	err := ValidateFlow(context.Background(), "badparse")
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -435,8 +435,8 @@ func TestResumeRun_InvalidStorageDriver(t *testing.T) {
 
 func TestStartRun_ListRunsError(t *testing.T) {
 	// Set up a temporary flows directory with empty flow
-	flowsDir := t.TempDir()
-	emptyFlowPath := filepath.Join(flowsDir, "empty.flow.cue")
+	tempDir := t.TempDir()
+	emptyFlowPath := filepath.Join(tempDir, "empty.flow.cue")
 	emptyFlowContent := `name: "empty"
 on: "cli.manual"
 steps: [{id: "dummy", use: "core.echo", with: {text: "dummy"}}]`
@@ -445,7 +445,7 @@ steps: [{id: "dummy", use: "core.echo", with: {text: "dummy"}}]`
 	}
 
 	originalDir := flowsDir
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
 	id, err := StartRun(context.Background(), "empty", map[string]any{})
@@ -531,11 +531,11 @@ steps: [{
 }
 
 func TestIntegration_ResumeRun(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	flowCUE := `name: "resumeflow"
 on: "cli.manual"
 steps: [{
@@ -559,10 +559,10 @@ steps: [{
 		text: "resumed"
 	}
 }]`
-	if err := os.WriteFile(filepath.Join(flowsDir, "resumeflow.flow.cue"), []byte(flowCUE), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tempDir, "resumeflow.flow.cue"), []byte(flowCUE), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
-	defer os.Remove(filepath.Join(flowsDir, "resumeflow.flow.cue"))
+	defer os.Remove(filepath.Join(tempDir, "resumeflow.flow.cue"))
 	// StartRun with token triggers pause
 	event := map[string]any{"token": "tok123"}
 	runID, err := StartRun(context.Background(), "resumeflow", event)

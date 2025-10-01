@@ -780,6 +780,11 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 		}
 	}
 
+	// Foreach logic: handle steps with Foreach first (before parallel/sequential)
+	if step.Foreach != "" {
+		return e.executeForeachBlock(ctx, step, stepCtx, stepID)
+	}
+
 	// Nested parallel block logic
 	if step.Parallel && len(step.Steps) > 0 {
 		return e.executeParallelBlock(ctx, step, stepCtx, stepID)
@@ -788,11 +793,6 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 	// Sequential block (non-parallel) for steps
 	if !step.Parallel && len(step.Steps) > 0 {
 		return e.executeSequentialBlock(ctx, step, stepCtx, stepID)
-	}
-
-	// Foreach logic: handle steps with Foreach and Do
-	if step.Foreach != "" {
-		return e.executeForeachBlock(ctx, step, stepCtx, stepID)
 	}
 
 	// Tool execution
@@ -909,10 +909,18 @@ func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Ste
 	defer wg.Done()
 
 	// Create iteration context for this item
-	iterStepCtx := e.createIterationContext(stepCtx, step.As, item, index)
+	asVar := step.As
+	if asVar == "" {
+		asVar = "item" // Default loop variable name
+	}
+	iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 	// Execute all steps for this iteration
-	if err := e.executeIterationSteps(ctx, step.Do, iterStepCtx, stepCtx); err != nil {
+	stepsToExecute := step.Do
+	if len(stepsToExecute) == 0 {
+		stepsToExecute = step.Steps
+	}
+	if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 		errChan <- err
 	}
 }
@@ -990,17 +998,19 @@ func (e *Engine) collectParallelErrors(wg *sync.WaitGroup, errChan chan error, s
 // executeForeachSequential handles sequential foreach execution
 func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
 	for index, item := range list {
-		// Set the loop variable for this iteration
-		if step.As != "" {
-			stepCtx.SetVar(step.As, item)
-			// Also expose the index (0-based)
-			stepCtx.SetVar(step.As+"_index", index)
-			// And 1-based index for row numbers
-			stepCtx.SetVar(step.As+"_row", index+1)
+		// Create iteration context for this item (same as parallel foreach)
+		asVar := step.As
+		if asVar == "" {
+			asVar = "item" // Default loop variable name
 		}
+		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 		// Execute all steps for this iteration
-		if err := e.executeSequentialIterationSteps(ctx, step.Do, stepCtx); err != nil {
+		stepsToExecute := step.Do
+		if len(stepsToExecute) == 0 {
+			stepsToExecute = step.Steps
+		}
+		if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 			return err
 		}
 	}
@@ -1008,23 +1018,6 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 	// Set output if stepID is non-empty
 	if stepID != "" {
 		stepCtx.SetOutput(stepID, make(map[string]any))
-	}
-	return nil
-}
-
-// executeSequentialIterationSteps executes all steps for a single sequential foreach iteration
-func (e *Engine) executeSequentialIterationSteps(ctx context.Context, steps []model.Step, stepCtx *StepContext) error {
-	for _, inner := range steps {
-		// Render the step ID as a template
-		renderedStepID, err := e.renderStepID(inner.ID, stepCtx)
-		if err != nil {
-			return err
-		}
-
-		// Execute the step
-		if err := e.executeStep(ctx, &inner, stepCtx, renderedStepID); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -1299,9 +1292,13 @@ func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepI
 func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) (any, error) {
 	switch v := value.(type) {
 	case string:
+		// Only process strings that contain template syntax
+		if !strings.Contains(v, "{{") {
+			return v, nil
+		}
 		resolved, err := cuepkg.ResolveRuntimeTemplates(v, context)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to resolve template in string %q: %w", v, err)
 		}
 		return resolved, nil
 	case []any:
@@ -1309,7 +1306,7 @@ func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) 
 		for i, item := range v {
 			resolved, err := e.resolveTemplatesRecursively(item, context)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to resolve template in array item %d: %w", i, err)
 			}
 			result[i] = resolved
 		}
@@ -1319,11 +1316,11 @@ func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) 
 		for i, item := range v {
 			resolved, err := e.resolveTemplatesRecursively(item, context)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to resolve template in map array item %d: %w", i, err)
 			}
 			resolvedMap, ok := resolved.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("expected map[string]any, got %T", resolved)
+				return nil, fmt.Errorf("expected map[string]any after resolution, got %T", resolved)
 			}
 			result[i] = resolvedMap
 		}
@@ -1333,12 +1330,28 @@ func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) 
 		for k, val := range v {
 			resolved, err := e.resolveTemplatesRecursively(val, context)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to resolve template in map key %q: %w", k, err)
 			}
 			result[k] = resolved
 		}
 		return result, nil
+	case []string:
+		// Handle []string slice efficiently
+		result := make([]string, len(v))
+		for i, item := range v {
+			if !strings.Contains(item, "{{") {
+				result[i] = item
+				continue
+			}
+			resolved, err := cuepkg.ResolveRuntimeTemplates(item, context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve template in string slice item %d: %w", i, err)
+			}
+			result[i] = resolved
+		}
+		return result, nil
 	default:
+		// For other types, return as-is without processing
 		return value, nil
 	}
 }

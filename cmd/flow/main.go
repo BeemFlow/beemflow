@@ -54,6 +54,11 @@ func NewRootCmd() *cobra.Command {
 		// Load environment variables from .env file, if present
 		_ = godotenv.Load()
 
+		// Set logger mode based on debug flag
+		if debug {
+			utils.SetMode("debug")
+		}
+
 		// Initialize config and set global state
 		_, err := api.InitializeConfig(configPath, flowsDir)
 		if err != nil {
