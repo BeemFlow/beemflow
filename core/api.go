@@ -269,13 +269,25 @@ func findLatestRunForFlow(runs []*model.Run, flowName string) *model.Run {
 
 // isBetterRunStatus determines if status1 is better than status2
 func isBetterRunStatus(status1, status2 model.RunStatus) bool {
-	// Prefer successful runs over failed runs
-	if status1 == model.RunSucceeded && status2 != model.RunSucceeded {
+	// When timestamps are equal, prefer more recent statuses (waiting > succeeded > failed)
+	// This ensures that paused runs are not incorrectly overridden by older succeeded runs
+
+	// Prefer waiting runs over succeeded runs (for equal timestamps)
+	if status1 == model.RunWaiting && status2 == model.RunSucceeded {
 		return true
 	}
-	if status1 != model.RunSucceeded && status2 == model.RunSucceeded {
+	if status1 == model.RunSucceeded && status2 == model.RunWaiting {
 		return false
 	}
+
+	// Prefer succeeded runs over failed runs
+	if status1 == model.RunSucceeded && status2 == model.RunFailed {
+		return true
+	}
+	if status1 == model.RunFailed && status2 == model.RunSucceeded {
+		return false
+	}
+
 	// Prefer waiting runs over failed runs
 	if status1 == model.RunWaiting && status2 == model.RunFailed {
 		return true
@@ -283,12 +295,13 @@ func isBetterRunStatus(status1, status2 model.RunStatus) bool {
 	if status1 == model.RunFailed && status2 == model.RunWaiting {
 		return false
 	}
+
 	return false
 }
 
 // tryFindPausedRun attempts to find a paused run when await_event is involved
 func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
-	if execErr == nil || !strings.Contains(execErr.Error(), "is waiting for event") {
+	if execErr == nil || !strings.Contains(execErr.Error(), constants.ErrAwaitEventPause) {
 		return uuid.Nil, execErr
 	}
 
@@ -339,6 +352,12 @@ func handleExecutionResult(store storage.Storage, flowName string, execErr error
 
 	// For successful flows, look for the run
 	if latest.Status != model.RunSucceeded {
+		// Handle paused flows (RunWaiting status)
+		if latest.Status == model.RunWaiting {
+			utils.Debug("Found paused run with ID: %s", latest.ID)
+			return latest.ID, nil
+		}
+
 		// If there's no execution error but the run status is not succeeded,
 		// it might be a timing issue or the run wasn't saved properly
 		if execErr == nil {

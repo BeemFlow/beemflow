@@ -9,6 +9,7 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/load"
 	"github.com/beemflow/beemflow/model"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // Parser handles CUE-based flow parsing and validation
@@ -270,7 +271,7 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 	}
 
 	// Build CUE context script once and create context once for efficiency
-	contextScript := buildCUEContextScript(context)
+	contextScript := BuildCUEContextScript(context)
 	ctx := cuecontext.New()
 
 	// Use a strings.Builder for efficient string building
@@ -288,8 +289,12 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 
 		end := strings.Index(template[start:], "}}")
 		if end == -1 {
-			// Malformed template, return error instead of silently ignoring
-			return "", fmt.Errorf("malformed template: missing closing }} in %q", template[lastEnd:])
+			// Malformed template, return error with more specific context
+			remaining := template[start:]
+			if len(remaining) > 50 {
+				remaining = remaining[:50] + "..."
+			}
+			return "", fmt.Errorf("malformed template: missing closing }} in %q (starting at position %d)", remaining, start)
 		}
 		end += start + 2
 
@@ -300,12 +305,17 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 		expr := template[start+2 : end-2]
 		expr = strings.TrimSpace(expr)
 
-		// Skip empty expressions
+		// Handle empty expressions - this could indicate a bug
 		if expr == "" {
+			// Log warning about empty template expression
+			utils.Warn("Empty template expression found in %q at position %d-%d", template, start, end)
 			// Move past this template
 			lastEnd = end
 			continue
 		}
+
+		// Convert invalid identifiers to bracket notation
+		expr = convertInvalidIdentifiersToBracketNotation(expr)
 
 		// Evaluate the expression using the pre-built context
 		cueScript := contextScript + "\nresult: " + expr
@@ -335,7 +345,7 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 
 // EvaluateCUEArray evaluates a CUE expression and returns it as a Go []any
 func EvaluateCUEArray(expr string, context map[string]any) ([]any, error) {
-	contextScript := buildCUEContextScript(context)
+	contextScript := BuildCUEContextScript(context)
 
 	cueScript := contextScript + "\nresult: " + normalizeSingleQuotes(expr)
 
@@ -359,7 +369,7 @@ func EvaluateCUEArray(expr string, context map[string]any) ([]any, error) {
 
 // EvaluateCUEBoolean evaluates a CUE expression and returns a boolean result
 func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
-	contextScript := buildCUEContextScript(context)
+	contextScript := BuildCUEContextScript(context)
 
 	cueScript := contextScript + "\nresult: " + normalizeSingleQuotes(expr)
 
@@ -402,24 +412,44 @@ func EvaluateCUEBoolean(expr string, context map[string]any) (bool, error) {
 	}
 }
 
-// buildCUEContextScript creates a CUE script string from a context map
-func buildCUEContextScript(context map[string]any) string {
+// BuildCUEContextScript creates a CUE script string from a context map
+func BuildCUEContextScript(context map[string]any) string {
 	var buf strings.Builder
+
+	// Separate valid and invalid identifiers
+	validKeys := make(map[string]any)
+	quotedKeys := make(map[string]any)
 
 	for key, value := range context {
 		if isValidCUEKey(key) {
-			buf.WriteString(key)
+			validKeys[key] = value
 		} else {
-			// Use quoted string for invalid identifiers
+			quotedKeys[key] = value
+		}
+	}
+
+	// Write valid keys first
+	for key, value := range validKeys {
+		buf.WriteString(key)
+		buf.WriteString(": ")
+		writeCUEValue(&buf, value)
+		buf.WriteString("\n")
+	}
+
+	// Write quoted keys in a sub-object if any exist
+	if len(quotedKeys) > 0 {
+		buf.WriteString("quoted: {\n")
+		for key, value := range quotedKeys {
 			buf.WriteByte('"')
 			// Escape quotes in key
 			escapedKey := strings.ReplaceAll(key, `"`, `\"`)
 			buf.WriteString(escapedKey)
 			buf.WriteByte('"')
+			buf.WriteString(": ")
+			writeCUEValue(&buf, value)
+			buf.WriteString("\n")
 		}
-		buf.WriteString(": ")
-		writeCUEValue(&buf, value)
-		buf.WriteString("\n")
+		buf.WriteString("}\n")
 	}
 
 	return buf.String()
@@ -481,14 +511,21 @@ func writeCUEValue(buf *strings.Builder, value any) {
 		buf.WriteString("{")
 		first := true
 		for k, val := range v {
-			if !isValidCUEKey(k) {
-				continue
-			}
 			if !first {
 				buf.WriteString(", ")
 			}
 			first = false
-			buf.WriteString(k)
+
+			// Always quote keys to handle invalid identifiers
+			if isValidCUEKey(k) {
+				buf.WriteString(k)
+			} else {
+				buf.WriteByte('"')
+				// Escape quotes in key
+				escapedKey := strings.ReplaceAll(k, `"`, `\"`)
+				buf.WriteString(escapedKey)
+				buf.WriteByte('"')
+			}
 			buf.WriteString(": ")
 			writeCUEValue(buf, val)
 		}
@@ -584,4 +621,57 @@ func convertToString(value any) string {
 		return s
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+// convertInvalidIdentifiersToBracketNotation converts invalid identifiers in expressions to bracket notation
+func convertInvalidIdentifiersToBracketNotation(expr string) string {
+	// Handle array access syntax like arr[0] or arr[0].field
+	// We need to be careful not to convert array indices
+
+	// First, let's handle simple cases where the entire expression is an invalid identifier
+	if !strings.Contains(expr, ".") && !strings.Contains(expr, "[") {
+		if !isValidCUEKey(expr) {
+			return fmt.Sprintf(`quoted["%s"]`, strings.ReplaceAll(expr, `"`, `\"`))
+		}
+		return expr
+	}
+
+	// For complex expressions, we need to parse them more carefully
+	// Split by dots but preserve array access syntax
+	parts := strings.Split(expr, ".")
+	var result []string
+
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Check if this part contains array access (e.g., "arr[0]")
+		if strings.Contains(part, "[") && strings.Contains(part, "]") {
+			// This is array access, don't convert
+			result = append(result, part)
+		} else if isValidCUEKey(part) {
+			// Valid identifier
+			result = append(result, part)
+		} else {
+			// Invalid identifier, convert to bracket notation
+			if i == 0 {
+				// First part is invalid, use quoted["key"]
+				result = append(result, fmt.Sprintf(`quoted["%s"]`, strings.ReplaceAll(part, `"`, `\"`)))
+			} else {
+				// Later part is invalid, use bracket notation on the previous part
+				if len(result) > 0 {
+					// Replace the last part with bracket notation
+					lastPart := result[len(result)-1]
+					result[len(result)-1] = fmt.Sprintf(`%s["%s"]`, lastPart, strings.ReplaceAll(part, `"`, `\"`))
+				} else {
+					// Fallback to quoted access
+					result = append(result, fmt.Sprintf(`quoted["%s"]`, strings.ReplaceAll(part, `"`, `\"`)))
+				}
+			}
+		}
+	}
+
+	return strings.Join(result, ".")
 }

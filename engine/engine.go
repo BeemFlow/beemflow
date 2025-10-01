@@ -427,6 +427,11 @@ func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event 
 		return e.executeCatchBlocks(ctx, flow, event, err)
 	}
 
+	// For paused flows, return outputs without error
+	if status == model.RunWaiting {
+		return outputs, nil
+	}
+
 	return outputs, err
 }
 
@@ -1176,17 +1181,29 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 	}
 
 	// Merge event variables into top level for backward compatibility
+	// Check for collisions and warn about them
 	for k, v := range snapshot.Event {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and event context. Event value will override. Existing: %T, Event: %T", k, existing, v)
+		}
 		context[k] = v
 	}
 
 	// Merge flow vars into top level for backward compatibility
+	// Check for collisions and warn about them
 	for k, v := range snapshot.Vars {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and vars context. Vars value will override. Existing: %T, Vars: %T", k, existing, v)
+		}
 		context[k] = v
 	}
 
 	// Merge step outputs into top level for backward compatibility
+	// Check for collisions and warn about them
 	for k, v := range snapshot.Outputs {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and outputs context. Outputs value will override. Existing: %T, Outputs: %T", k, existing, v)
+		}
 		context[k] = v
 	}
 
@@ -1318,9 +1335,13 @@ func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) 
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve template in map array item %d: %w", i, err)
 			}
+
+			// Safe type assertion with proper error handling
 			resolvedMap, ok := resolved.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("expected map[string]any after resolution, got %T", resolved)
+				// If the resolved item is not a map, we need to handle it appropriately
+				// This could happen if template resolution changes the structure
+				return nil, fmt.Errorf("template resolution changed structure: expected map[string]any after resolution, got %T (item %d)", resolved, i)
 			}
 			result[i] = resolvedMap
 		}

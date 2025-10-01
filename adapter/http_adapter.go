@@ -116,7 +116,10 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	enrichedInputs := a.enrichInputsWithDefaults(inputs)
 
 	// Prepare headers
-	headers := a.prepareManifestHeaders(ctx, enrichedInputs)
+	headers, err := a.prepareManifestHeaders(ctx, enrichedInputs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Replace path parameters in URL with validation
 	url := a.ToolManifest.Endpoint
@@ -317,13 +320,17 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 }
 
 // prepareManifestHeaders prepares headers for manifest-based requests
-func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) map[string]string {
+func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) (map[string]string, error) {
 	headers := make(map[string]string)
 
 	// Add manifest headers with OAuth and environment variable expansion
 	if a.ToolManifest.Headers != nil {
 		for k, v := range a.ToolManifest.Headers {
-			headers[k] = a.expandValue(ctx, v)
+			expanded, err := a.expandValue(ctx, v)
+			if err != nil {
+				return nil, err
+			}
+			headers[k] = expanded
 		}
 	}
 
@@ -336,7 +343,7 @@ func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[str
 		}
 	}
 
-	return headers
+	return headers, nil
 }
 
 // extractMethod extracts HTTP method from inputs with safe default
@@ -361,7 +368,7 @@ func (a *HTTPAdapter) extractHeaders(inputs map[string]any) map[string]string {
 }
 
 // expandValue expands both OAuth tokens and environment variables in a value string
-func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
+func (a *HTTPAdapter) expandValue(ctx context.Context, value string) (string, error) {
 	// Get storage from context for OAuth client
 	store, ok := ctx.Value(storageContextKey).(storage.Storage)
 	if !ok {
@@ -373,27 +380,33 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 				return envVal
 			}
 			return match
-		})
+		}), nil
 	}
 
 	oauthClient := auth.NewOAuthClient(store)
 
 	// First handle OAuth patterns
+	var oauthError error
 	expanded := oauthPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
 		if len(parts) != 2 {
-			utils.Warn("Invalid OAuth pattern: %s (expected format: $oauth:provider:integration)", match)
+			oauthError = fmt.Errorf("invalid OAuth pattern: %s (expected format: $oauth:provider:integration)", match)
 			return match
 		}
 		provider, integration := parts[0], parts[1]
 
 		token, err := oauthClient.GetToken(ctx, provider, integration)
 		if err != nil {
-			utils.Warn("Failed to retrieve OAuth token for %s:%s: %v", provider, integration, err)
+			oauthError = fmt.Errorf("failed to retrieve OAuth token for %s:%s: %w", provider, integration, err)
 			return match
 		}
 		return "Bearer " + token
 	})
+
+	// Return error if OAuth expansion failed
+	if oauthError != nil {
+		return "", oauthError
+	}
 
 	// Then handle environment variables (existing logic)
 	return envVarPattern.ReplaceAllStringFunc(expanded, func(match string) string {
@@ -402,7 +415,7 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
 			return envVal
 		}
 		return match
-	})
+	}), nil
 }
 
 // expandEnvValue expands environment variables in a value string using regex for safety
