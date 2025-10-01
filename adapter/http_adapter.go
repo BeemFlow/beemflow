@@ -372,7 +372,7 @@ func (a *HTTPAdapter) expandValue(ctx context.Context, value string) (string, er
 	// Get storage from context for OAuth client
 	store, ok := ctx.Value(storageContextKey).(storage.Storage)
 	if !ok {
-		utils.Error("DEBUG: Storage not available in context for OAuth expansion")
+		utils.Debug("Storage not available in context for OAuth expansion, falling back to environment variables only")
 		// Fall back to environment variable expansion only
 		return envVarPattern.ReplaceAllStringFunc(value, func(match string) string {
 			varName := match[5:] // Remove "$env:" prefix

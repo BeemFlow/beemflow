@@ -554,11 +554,11 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 // enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost for development)
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	// Allow HTTP for localhost development
-	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" || 
-	   r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
+	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" ||
+		r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" {
 		return true
 	}
-	
+
 	if r.TLS == nil {
 		http.Error(w, "HTTPS required for OAuth endpoints", http.StatusForbidden)
 		return false
@@ -916,11 +916,11 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Debug: Log what Google returned
-	utils.Info("DEBUG: Google token response - AccessToken length: %d, starts with: %s", 
-		len(tokenResp.AccessToken), 
+	// Log token details for debugging
+	utils.Debug("Google token response - AccessToken length: %d, starts with: %s",
+		len(tokenResp.AccessToken),
 		tokenResp.AccessToken[:20]+"...")
-	utils.Info("DEBUG: TokenType: %s, ExpiresIn: %d", tokenResp.TokenType, tokenResp.ExpiresIn)
+	utils.Debug("TokenType: %s, ExpiresIn: %d", tokenResp.TokenType, tokenResp.ExpiresIn)
 
 	// Store the credentials
 	var refreshToken *string
@@ -946,9 +946,9 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		UpdatedAt:    time.Now(),
 	}
 
-	// Debug: Log what we're about to store
-	utils.Info("DEBUG: About to store credential - AccessToken length: %d, starts with: %s", 
-		len(cred.AccessToken), 
+	// Log credential details for debugging
+	utils.Debug("About to store credential - AccessToken length: %d, starts with: %s",
+		len(cred.AccessToken),
 		cred.AccessToken[:20]+"...")
 
 	if err := h.store.SaveOAuthCredential(r.Context(), cred); err != nil {
@@ -960,11 +960,11 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	// Debug: Verify what was actually stored
 	storedCred, err := h.store.GetOAuthCredential(r.Context(), authState.Provider, authState.Integration)
 	if err == nil {
-		utils.Info("DEBUG: Retrieved stored credential - AccessToken length: %d, starts with: %s", 
-			len(storedCred.AccessToken), 
+		utils.Debug("Retrieved stored credential - AccessToken length: %d, starts with: %s",
+			len(storedCred.AccessToken),
 			storedCred.AccessToken[:20]+"...")
 	} else {
-		utils.Error("DEBUG: Failed to retrieve stored credential for verification: %v", err)
+		utils.Error("Failed to retrieve stored credential for verification: %v", err)
 	}
 
 	utils.Info("Successfully authorized OAuth for %s:%s", authState.Provider, authState.Integration)
