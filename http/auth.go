@@ -654,7 +654,7 @@ func (h *WebOAuthHandler) HandleOAuthProviders(w http.ResponseWriter, r *http.Re
 			Connected:          connected,
 			Integration:        defaultIntegration,
 			DefaultIntegration: defaultIntegration,
-			Scopes:             provider.Scopes,
+			Scopes:             registry.ScopesToStrings(provider.Scopes),
 		}
 
 		if connected && cred.ExpiresAt != nil {
@@ -706,24 +706,36 @@ func (h *WebOAuthHandler) getIntegrationDescription(integration string) string {
 }
 
 // getScopeDescriptions returns descriptions for OAuth scopes from registry metadata
-func (h *WebOAuthHandler) getScopeDescriptions(providerName string, scopes []string) []ScopeDescription {
+func (h *WebOAuthHandler) getScopeDescriptions(providerName string, scopes []registry.OAuthScope) []ScopeDescription {
 	ctx := context.Background()
 	provider, err := h.registry.GetOAuthProvider(ctx, providerName)
 
 	var descriptions []ScopeDescription
 	for _, scope := range scopes {
-		desc := "Access to " + scope // Default description
+		desc := "Access to " + scope.Raw() // Default description using raw scope
 
 		// Use registry metadata if available
 		if err == nil && provider != nil && provider.ScopeDescriptions != nil {
-			if customDesc, exists := provider.ScopeDescriptions[scope]; exists {
+			if customDesc, exists := provider.ScopeDescriptions[scope.Raw()]; exists {
 				desc = customDesc
+			}
+		}
+
+		// Check if this scope is required (from registry metadata)
+		required := false
+		if err == nil && provider != nil && provider.RequiredScopes != nil {
+			for _, reqScope := range provider.RequiredScopes {
+				if reqScope.Raw() == scope.Raw() {
+					required = true
+					break
+				}
 			}
 		}
 
 		descriptions = append(descriptions, ScopeDescription{
 			Scope:       scope,
 			Description: desc,
+			Required:    required,
 		})
 	}
 	return descriptions
@@ -743,8 +755,9 @@ type ProviderAuthTemplateData struct {
 
 // ScopeDescription describes a scope with human-readable text
 type ScopeDescription struct {
-	Scope       string
+	Scope       registry.OAuthScope
 	Description string
+	Required    bool
 }
 
 // HandleOAuthAuthorize initiates OAuth authorization for a provider
@@ -816,7 +829,7 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	query := authURL.Query()
 	query.Set("client_id", provider.ClientID)
 	query.Set("redirect_uri", h.baseURL+"/oauth/callback")
-	query.Set("scope", strings.Join(provider.Scopes, " "))
+	query.Set("scope", strings.Join(registry.ScopesToStrings(provider.Scopes), " "))
 	query.Set("response_type", "code")
 	query.Set("state", state)
 	authURL.RawQuery = query.Encode()
@@ -916,12 +929,6 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Debug: Log what Google returned
-	utils.Info("DEBUG: Google token response - AccessToken length: %d, starts with: %s", 
-		len(tokenResp.AccessToken), 
-		tokenResp.AccessToken[:20]+"...")
-	utils.Info("DEBUG: TokenType: %s, ExpiresIn: %d", tokenResp.TokenType, tokenResp.ExpiresIn)
-
 	// Store the credentials
 	var refreshToken *string
 	if tokenResp.RefreshToken != "" {
@@ -941,30 +948,15 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    expiresAt,
-		Scope:        strings.Join(provider.Scopes, " "),
+		Scope:        strings.Join(registry.ScopesToStrings(provider.Scopes), " "),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
-
-	// Debug: Log what we're about to store
-	utils.Info("DEBUG: About to store credential - AccessToken length: %d, starts with: %s", 
-		len(cred.AccessToken), 
-		cred.AccessToken[:20]+"...")
 
 	if err := h.store.SaveOAuthCredential(r.Context(), cred); err != nil {
 		utils.Error("Failed to save OAuth credentials: %v", err)
 		http.Error(w, "Failed to save OAuth credentials", http.StatusInternalServerError)
 		return
-	}
-
-	// Debug: Verify what was actually stored
-	storedCred, err := h.store.GetOAuthCredential(r.Context(), authState.Provider, authState.Integration)
-	if err == nil {
-		utils.Info("DEBUG: Retrieved stored credential - AccessToken length: %d, starts with: %s", 
-			len(storedCred.AccessToken), 
-			storedCred.AccessToken[:20]+"...")
-	} else {
-		utils.Error("DEBUG: Failed to retrieve stored credential for verification: %v", err)
 	}
 
 	utils.Info("Successfully authorized OAuth for %s:%s", authState.Provider, authState.Integration)
@@ -978,7 +970,7 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 	}{
 		ProviderName: authState.Provider,
 		Integration:  authState.Integration,
-		Scopes:       strings.Join(provider.Scopes, " "),
+		Scopes:       strings.Join(registry.ScopesToStrings(provider.Scopes), " "),
 		Message:      fmt.Sprintf("%s has been successfully connected!", provider.DisplayName),
 	}
 
