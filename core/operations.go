@@ -189,10 +189,9 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		parser := cue.NewParser()
 		flow, parseErr := parser.ParseFile(file)
 		if parseErr != nil {
-			utils.Error("YAML parse error: %v\n", parseErr)
-			return fmt.Errorf("YAML parse error: %w", parseErr)
+			utils.Error("CUE parse error: %v\n", parseErr)
+			return fmt.Errorf("CUE parse error: %w", parseErr)
 		}
-		parser = cue.NewParser()
 		err = parser.Validate(flow)
 		if err != nil {
 			utils.Error("Schema validation error: %v\n", err)
@@ -228,9 +227,8 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 		parser := cue.NewParser()
 		flow, parseErr := parser.ParseFile(a.File)
 		if parseErr != nil {
-			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
+			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
 		}
-		parser = cue.NewParser()
 		err = parser.Validate(flow)
 		if err != nil {
 			return nil, fmt.Errorf("schema validation error: %w", err)
@@ -266,8 +264,8 @@ func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		parser := cue.NewParser()
 		flow, parseErr := parser.ParseFile(file)
 		if parseErr != nil {
-			utils.Error("YAML parse error: %v\n", parseErr)
-			return fmt.Errorf("YAML parse error: %w", parseErr)
+			utils.Error("CUE parse error: %v\n", parseErr)
+			return fmt.Errorf("CUE parse error: %w", parseErr)
 		}
 		diagram, err = graph.ExportMermaid(flow)
 	} else {
@@ -311,7 +309,7 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 		parser := cue.NewParser()
 		flow, parseErr := parser.ParseFile(a.File)
 		if parseErr != nil {
-			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
+			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
 		}
 		diagram, err = graph.ExportMermaid(flow)
 		if err != nil {
@@ -335,10 +333,9 @@ func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	parser := cue.NewParser()
 	flow, err := parser.ParseFile(file)
 	if err != nil {
-		utils.Error("YAML parse error: %v\n", err)
-		return fmt.Errorf("YAML parse error: %w", err)
+		utils.Error("CUE parse error: %v\n", err)
+		return fmt.Errorf("CUE parse error: %w", err)
 	}
-	parser = cue.NewParser()
 	err = parser.Validate(flow)
 	if err != nil {
 		utils.Error("Schema validation error: %v\n", err)
@@ -353,9 +350,8 @@ func lintFlowHandler(ctx context.Context, args any) (any, error) {
 	parser := cue.NewParser()
 	flow, err := parser.ParseFile(a.File)
 	if err != nil {
-		return nil, fmt.Errorf("YAML parse error: %w", err)
+		return nil, fmt.Errorf("CUE parse error: %w", err)
 	}
-	parser = cue.NewParser()
 	err = parser.Validate(flow)
 	if err != nil {
 		return nil, fmt.Errorf("schema validation error: %w", err)
