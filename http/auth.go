@@ -399,7 +399,7 @@ func setSliceField(field reflect.Value, arr []interface{}) error {
 
 // getOAuthIssuerURL determines the OAuth issuer URL from config
 func getOAuthIssuerURL(cfg *config.Config) string {
-	baseURL := "http://localhost:3333" // default HTTP server port
+	baseURL := "http://localhost:3330" // default HTTP server port
 
 	if cfg.HTTP != nil {
 		host := "localhost"
@@ -407,7 +407,7 @@ func getOAuthIssuerURL(cfg *config.Config) string {
 			host = cfg.HTTP.Host
 		}
 
-		port := 3333
+		port := 3330
 		if cfg.HTTP.Port != 0 {
 			port = cfg.HTTP.Port
 		}
@@ -554,10 +554,9 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 
 // enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost and ngrok for development)
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
-	// Allow HTTP for localhost development
-	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" ||
-		r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" ||
-		r.Host == "localhost:3001" || r.Host == "127.0.0.1:3001" {
+	// Allow HTTP for localhost development (using standard BeemFlow ports)
+	if r.Host == "localhost:3330" || r.Host == "127.0.0.1:3330" ||
+		r.Host == "localhost:3331" || r.Host == "127.0.0.1:3331" {
 		return true
 	}
 

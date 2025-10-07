@@ -25,7 +25,7 @@ import (
 //   "registries": [
 //     { "type": "local", "path": ".beemflow/registry.json" }
 //   ],
-//   "http": { "host": "localhost", "port": 8080 },
+//   "http": { "host": "localhost", "port": 3330 },
 //   "log": { "level": "info" }
 // }
 //

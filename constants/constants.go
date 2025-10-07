@@ -216,8 +216,8 @@ const (
 
 // Server Configuration Defaults
 const (
-	DefaultHTTPServerPort = 3333
-	DefaultMCPServerPort  = 3001
+	DefaultHTTPServerPort = 3330
+	DefaultMCPServerPort  = 3331
 	DefaultMCPTransport   = "stdio"
 	DefaultServerHost     = "localhost"
 )
