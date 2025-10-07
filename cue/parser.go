@@ -306,7 +306,12 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 
 		// Handle empty expressions - return error instead of silent conversion
 		if expr == "" {
-			return "", fmt.Errorf("empty template expression found in %q at position %d-%d (empty expressions are not allowed)", template, start, end)
+			// Limit template preview in error message to avoid log pollution
+			templatePreview := template
+			if len(template) > 100 {
+				templatePreview = template[:50] + "..." + template[len(template)-47:]
+			}
+			return "", fmt.Errorf("empty template expression {{ }} found at position %d-%d in template: %q", start, end, templatePreview)
 		}
 
 		// Note: We let CUE handle all expression parsing natively
