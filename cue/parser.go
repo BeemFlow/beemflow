@@ -9,7 +9,6 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/load"
 	"github.com/beemflow/beemflow/model"
-	"github.com/beemflow/beemflow/utils"
 )
 
 // Parser handles CUE-based flow parsing and validation
@@ -305,14 +304,9 @@ func ResolveRuntimeTemplates(template string, context map[string]any) (string, e
 		expr := template[start+2 : end-2]
 		expr = strings.TrimSpace(expr)
 
-		// Handle empty expressions - treat as empty string
+		// Handle empty expressions - return error instead of silent conversion
 		if expr == "" {
-			// Log warning about empty template expression for debugging
-			utils.Warn("Empty template expression found in %q at position %d-%d, treating as empty string", template, start, end)
-			// Append empty string for empty template
-			result.WriteString("")
-			lastEnd = end
-			continue
+			return "", fmt.Errorf("empty template expression found in %q at position %d-%d (empty expressions are not allowed)", template, start, end)
 		}
 
 		// Note: We let CUE handle all expression parsing natively
@@ -371,27 +365,51 @@ func buildImportsForExpression(expr string) string {
 
 // EvaluateCUEArray evaluates a CUE expression and returns it as a Go []any
 func EvaluateCUEArray(expr string, context map[string]any) ([]any, error) {
-	contextScript := BuildCUEContextScript(context)
-	imports := buildImportsForExpression(expr)
+	// Validate input
+	if expr == "" {
+		return nil, fmt.Errorf("empty array expression")
+	}
 
-	cueScript := imports + contextScript + "\nresult: " + normalizeSingleQuotes(expr)
+	// Trim and validate expression structure
+	trimmedExpr := strings.TrimSpace(expr)
+	if trimmedExpr == "" {
+		return nil, fmt.Errorf("array expression is empty after trimming whitespace")
+	}
+
+	contextScript := BuildCUEContextScript(context)
+	imports := buildImportsForExpression(trimmedExpr)
+
+	cueScript := imports + contextScript + "\nresult: " + normalizeSingleQuotes(trimmedExpr)
 
 	ctx := cuecontext.New()
 	cueValue := ctx.CompileString(cueScript)
 	if cueValue.Err() != nil {
-		return nil, fmt.Errorf("CUE compilation error in array expression %q: %w", expr, cueValue.Err())
+		return nil, fmt.Errorf("CUE compilation error in array expression %q: %w", trimmedExpr, cueValue.Err())
 	}
 
 	resultField := cueValue.LookupPath(cue.ParsePath("result"))
 	if resultField.Err() != nil {
-		return nil, fmt.Errorf("CUE evaluation error in array expression %q: %w", expr, resultField.Err())
+		return nil, fmt.Errorf("CUE evaluation error in array expression %q: %w", trimmedExpr, resultField.Err())
+	}
+
+	// Check if the result is incomplete or has errors
+	if !resultField.IsConcrete() {
+		return nil, fmt.Errorf("expression %q evaluates to an incomplete value (contains unresolved references)", trimmedExpr)
 	}
 
 	result := ExtractCUEValue(resultField)
+
+	// Handle nil result
+	if result == nil {
+		return nil, fmt.Errorf("expression %q evaluates to null, expected array", trimmedExpr)
+	}
+
+	// Check if it's an array
 	if arr, ok := result.([]any); ok {
 		return arr, nil
 	}
-	return nil, fmt.Errorf("expression %q does not evaluate to an array: %T", expr, result)
+
+	return nil, fmt.Errorf("expression %q does not evaluate to an array: got %T", trimmedExpr, result)
 }
 
 // EvaluateCUEBoolean evaluates a CUE expression and returns a boolean result

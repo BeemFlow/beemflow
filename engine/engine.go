@@ -888,6 +888,12 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 		return nil
 	}
 
+	// Handle special case: foreach with direct use/with (single tool per iteration)
+	// This wraps the tool call in a synthetic step for iteration
+	if step.Use != "" && len(step.Do) == 0 && len(step.Steps) == 0 {
+		return e.executeForeachWithDirectUse(ctx, step, stepCtx, stepID, list)
+	}
+
 	if step.Parallel {
 		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list)
 	}
@@ -921,6 +927,8 @@ func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Ste
 	iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 	// Execute all steps for this iteration
+	// Use step.Do if provided, otherwise fall back to step.Steps
+	// In practice, most flows use steps for foreach bodies
 	stepsToExecute := step.Do
 	if len(stepsToExecute) == 0 {
 		stepsToExecute = step.Steps
@@ -1011,6 +1019,8 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 		// Execute all steps for this iteration
+		// Use step.Do if provided, otherwise fall back to step.Steps
+		// In practice, most flows use steps for foreach bodies
 		stepsToExecute := step.Do
 		if len(stepsToExecute) == 0 {
 			stepsToExecute = step.Steps
@@ -1024,6 +1034,41 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 	if stepID != "" {
 		stepCtx.SetOutput(stepID, make(map[string]any))
 	}
+	return nil
+}
+
+// executeForeachWithDirectUse handles foreach with a direct use/with pattern
+// This is a shorthand for: foreach + single tool execution per iteration
+func (e *Engine) executeForeachWithDirectUse(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
+	// Create a synthetic step for each iteration that wraps the tool call
+	syntheticStep := &model.Step{
+		ID:   stepID,
+		Use:  step.Use,
+		With: step.With,
+		If:   step.If, // Preserve conditional logic
+	}
+
+	for index, item := range list {
+		asVar := step.As
+		if asVar == "" {
+			asVar = "item"
+		}
+		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
+
+		// Generate unique step ID for this iteration
+		iterStepID := fmt.Sprintf("%s_%d", stepID, index)
+
+		// Execute the tool with iteration context
+		if err := e.executeToolCall(ctx, syntheticStep, iterStepCtx, iterStepID); err != nil {
+			return err
+		}
+
+		// Copy outputs back to main context
+		e.copyIterationOutput(iterStepCtx, stepCtx, iterStepID)
+	}
+
+	// Set summary output
+	stepCtx.SetOutput(stepID, make(map[string]any))
 	return nil
 }
 
@@ -1329,21 +1374,15 @@ func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) 
 		}
 		return result, nil
 	case []map[string]any:
-		result := make([]map[string]any, len(v))
+		// Allow dynamic type resolution - if template changes the type, accept it
+		result := make([]any, len(v))
 		for i, item := range v {
 			resolved, err := e.resolveTemplatesRecursively(item, context)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve template in map array item %d: %w", i, err)
 			}
-
-			// Safe type assertion with proper error handling
-			resolvedMap, ok := resolved.(map[string]any)
-			if !ok {
-				// If the resolved item is not a map, we need to handle it appropriately
-				// This could happen if template resolution changes the structure
-				return nil, fmt.Errorf("template resolution changed structure: expected map[string]any after resolution, got %T (item %d)", resolved, i)
-			}
-			result[i] = resolvedMap
+			// Store resolved value regardless of type - templates can change types dynamically
+			result[i] = resolved
 		}
 		return result, nil
 	case map[string]any:

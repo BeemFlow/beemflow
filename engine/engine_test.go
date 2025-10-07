@@ -1024,6 +1024,50 @@ func TestExecuteForeachSequential(t *testing.T) {
 	}
 }
 
+// TestExecuteForeachWithDirectUse tests foreach with direct use/with pattern
+func TestExecuteForeachWithDirectUse(t *testing.T) {
+	ctx := context.Background()
+	eng := NewDefaultEngine(ctx)
+
+	flow := &model.Flow{
+		Name: "foreach_direct_use",
+		Vars: map[string]any{
+			"test_items": []any{"apple", "banana", "cherry"},
+		},
+		Steps: []model.Step{
+			{
+				ID:      "test_foreach",
+				Foreach: "{{ vars.test_items }}",
+				Use:     "core.echo",
+				With: map[string]any{
+					"text": "Processing {{ item }}",
+				},
+			},
+		},
+	}
+
+	outputs, err := eng.Execute(ctx, flow, map[string]any{})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	// Should have created outputs for each iteration
+	if outputs == nil {
+		t.Fatal("Expected outputs map, got nil")
+	}
+
+	// Check that iteration outputs were created
+	if _, ok := outputs["test_foreach_0"]; !ok {
+		t.Error("Expected output for iteration 0")
+	}
+	if _, ok := outputs["test_foreach_1"]; !ok {
+		t.Error("Expected output for iteration 1")
+	}
+	if _, ok := outputs["test_foreach_2"]; !ok {
+		t.Error("Expected output for iteration 2")
+	}
+}
+
 // TestNewEngineWithBlobStore tests engine creation with blob store
 func TestNewEngineWithBlobStore(t *testing.T) {
 	ctx := context.Background()
