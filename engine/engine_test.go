@@ -2562,3 +2562,186 @@ func TestRunsAccess_Integration(t *testing.T) {
 		}
 	})
 }
+
+// TestDependencyResolution tests topological sorting and dependency execution
+func TestDependencyResolution(t *testing.T) {
+	t.Run("simple_dependency_chain", func(t *testing.T) {
+		ctx := context.Background()
+		eng := NewDefaultEngine(ctx)
+
+		flow := &model.Flow{
+			Name: "dependency_test",
+			Steps: []model.Step{
+				{
+					ID:        "step3",
+					DependsOn: []string{"step1", "step2"},
+					Use:       "core.echo",
+					With:      map[string]any{"text": "THIRD"},
+				},
+				{
+					ID:   "step1",
+					Use:  "core.echo",
+					With: map[string]any{"text": "FIRST"},
+				},
+				{
+					ID:        "step2",
+					DependsOn: []string{"step1"},
+					Use:       "core.echo",
+					With:      map[string]any{"text": "SECOND"},
+				},
+			},
+		}
+
+		// Test topological sort directly
+		order, err := topologicalSort(flow.Steps)
+		if err != nil {
+			t.Fatalf("topologicalSort failed: %v", err)
+		}
+
+		// Verify order: step1 -> step2 -> step3
+		if len(order) != 3 {
+			t.Fatalf("Expected 3 steps, got %d", len(order))
+		}
+		if order[0] != "step1" {
+			t.Errorf("Expected step1 first, got %s", order[0])
+		}
+		if order[1] != "step2" {
+			t.Errorf("Expected step2 second, got %s", order[1])
+		}
+		if order[2] != "step3" {
+			t.Errorf("Expected step3 third, got %s", order[2])
+		}
+
+		// Execute and verify it works
+		_, err = eng.Execute(ctx, flow, map[string]any{})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+	})
+
+	t.Run("circular_dependency", func(t *testing.T) {
+		steps := []model.Step{
+			{ID: "a", DependsOn: []string{"b"}},
+			{ID: "b", DependsOn: []string{"a"}},
+		}
+
+		_, err := topologicalSort(steps)
+		if err == nil {
+			t.Error("Expected circular dependency error, got nil")
+		}
+		if !strings.Contains(err.Error(), "circular") {
+			t.Errorf("Expected circular dependency error, got: %v", err)
+		}
+	})
+
+	t.Run("three_way_circular", func(t *testing.T) {
+		steps := []model.Step{
+			{ID: "a", DependsOn: []string{"c"}},
+			{ID: "b", DependsOn: []string{"a"}},
+			{ID: "c", DependsOn: []string{"b"}},
+		}
+
+		_, err := topologicalSort(steps)
+		if err == nil {
+			t.Error("Expected circular dependency error, got nil")
+		}
+	})
+
+	t.Run("missing_dependency", func(t *testing.T) {
+		steps := []model.Step{
+			{ID: "a", DependsOn: []string{"nonexistent"}},
+		}
+
+		_, err := topologicalSort(steps)
+		if err == nil {
+			t.Error("Expected missing dependency error, got nil")
+		}
+		if !strings.Contains(err.Error(), "non-existent") {
+			t.Errorf("Expected non-existent step error, got: %v", err)
+		}
+	})
+
+	t.Run("no_dependencies", func(t *testing.T) {
+		steps := []model.Step{
+			{ID: "a"},
+			{ID: "b"},
+			{ID: "c"},
+		}
+
+		order, err := topologicalSort(steps)
+		if err != nil {
+			t.Fatalf("topologicalSort failed: %v", err)
+		}
+		if len(order) != 3 {
+			t.Errorf("Expected 3 steps, got %d", len(order))
+		}
+	})
+
+	t.Run("parallel_steps_with_dependencies", func(t *testing.T) {
+		ctx := context.Background()
+		eng := NewDefaultEngine(ctx)
+
+		flow := &model.Flow{
+			Name: "parallel_deps",
+			Steps: []model.Step{
+				{
+					ID:   "prepare",
+					Use:  "core.echo",
+					With: map[string]any{"text": "Preparing..."},
+				},
+				{
+					ID:        "parallel_block",
+					DependsOn: []string{"prepare"},
+					Parallel:  true,
+					Steps: []model.Step{
+						{ID: "task1", Use: "core.echo", With: map[string]any{"text": "Task 1"}},
+						{ID: "task2", Use: "core.echo", With: map[string]any{"text": "Task 2"}},
+					},
+				},
+				{
+					ID:        "finalize",
+					DependsOn: []string{"parallel_block"},
+					Use:       "core.echo",
+					With:      map[string]any{"text": "Done!"},
+				},
+			},
+		}
+
+		outputs, err := eng.Execute(ctx, flow, map[string]any{})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+
+		// Verify all steps executed
+		if outputs["prepare"] == nil {
+			t.Error("prepare step didn't execute")
+		}
+		if outputs["parallel_block"] == nil {
+			t.Error("parallel_block didn't execute")
+		}
+		if outputs["finalize"] == nil {
+			t.Error("finalize step didn't execute")
+		}
+	})
+
+	t.Run("circular_dependency_full_execution", func(t *testing.T) {
+		ctx := context.Background()
+		eng := NewDefaultEngine(ctx)
+
+		flow := &model.Flow{
+			Name: "circular_test_execution",
+			Steps: []model.Step{
+				{ID: "x", DependsOn: []string{"y"}, Use: "core.echo", With: map[string]any{"text": "X"}},
+				{ID: "y", DependsOn: []string{"x"}, Use: "core.echo", With: map[string]any{"text": "Y"}},
+			},
+		}
+
+		_, err := eng.Execute(ctx, flow, map[string]any{})
+		if err == nil {
+			t.Error("Expected circular dependency error, got nil")
+		}
+		if !strings.Contains(err.Error(), "circular") {
+			t.Errorf("Expected circular dependency in error, got: %v", err)
+		}
+	})
+}

@@ -475,21 +475,111 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
+// buildDependencyGraph creates a map of step ID -> list of dependencies
+func buildDependencyGraph(steps []model.Step) map[string][]string {
+	graph := make(map[string][]string)
+	for _, step := range steps {
+		graph[step.ID] = step.DependsOn
+	}
+	return graph
+}
+
+// topologicalSort performs topological sorting using Kahn's algorithm
+// Returns execution order or error if circular dependency detected
+func topologicalSort(steps []model.Step) ([]string, error) {
+	// Build adjacency list and in-degree map
+	graph := make(map[string][]string)      // step -> dependents
+	inDegree := make(map[string]int)        // step -> number of dependencies
+	stepMap := make(map[string]*model.Step) // step ID -> step
+
+	// Initialize
+	for i := range steps {
+		step := &steps[i]
+		stepMap[step.ID] = step
+		inDegree[step.ID] = 0
+		graph[step.ID] = []string{}
+	}
+
+	// Build graph and count in-degrees
+	for i := range steps {
+		step := &steps[i]
+		for _, dep := range step.DependsOn {
+			// Validate dependency exists
+			if _, exists := stepMap[dep]; !exists {
+				return nil, fmt.Errorf("step '%s' depends on non-existent step '%s'", step.ID, dep)
+			}
+			graph[dep] = append(graph[dep], step.ID)
+			inDegree[step.ID]++
+		}
+	}
+
+	// Kahn's algorithm: start with nodes that have no dependencies
+	queue := []string{}
+	for id, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, id)
+		}
+	}
+
+	// Process queue
+	result := []string{}
+	for len(queue) > 0 {
+		// Pop from queue
+		current := queue[0]
+		queue = queue[1:]
+		result = append(result, current)
+
+		// Reduce in-degree for dependents
+		for _, dependent := range graph[current] {
+			inDegree[dependent]--
+			if inDegree[dependent] == 0 {
+				queue = append(queue, dependent)
+			}
+		}
+	}
+
+	// Check for cycles
+	if len(result) != len(steps) {
+		return nil, fmt.Errorf("circular dependency detected: processed %d steps, expected %d", len(result), len(steps))
+	}
+
+	return result, nil
+}
+
 // executeStepsWithPersistence executes steps, persisting each step after execution.
+// Steps are executed in dependency order if depends_on is used, otherwise in declaration order.
 func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Flow, stepCtx *StepContext, startIdx int, runID uuid.UUID) (map[string]any, error) {
 	if runID == uuid.Nil {
 		runID = runIDFromContext(ctx)
 	}
 
-	// Execute steps sequentially from startIdx
-	// Note: Future enhancement could add dependency mapping for more sophisticated
-	// parallel execution patterns
-	for i := startIdx; i < len(flow.Steps); i++ {
+	// Build step map for quick lookup
+	stepMap := make(map[string]*model.Step)
+	stepIndices := make(map[string]int)
+	for i := range flow.Steps {
 		step := &flow.Steps[i]
+		stepMap[step.ID] = step
+		stepIndices[step.ID] = i
+	}
+
+	// Determine execution order (respecting dependencies)
+	executionOrder, err := e.determineExecutionOrder(flow.Steps, startIdx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine execution order: %w", err)
+	}
+
+	// Execute steps in dependency order
+	for _, stepID := range executionOrder {
+		step, exists := stepMap[stepID]
+		if !exists {
+			continue // Skip if step not found (shouldn't happen)
+		}
+
+		stepIdx := stepIndices[stepID]
 
 		// Handle await_event steps
 		if step.AwaitEvent != nil {
-			return e.handleAwaitEventStep(ctx, step, flow, stepCtx, i, runID)
+			return e.handleAwaitEventStep(ctx, step, flow, stepCtx, stepIdx, runID)
 		}
 
 		// Execute regular step
@@ -506,6 +596,52 @@ func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Fl
 	}
 
 	return stepCtx.Snapshot().Outputs, nil
+}
+
+// determineExecutionOrder calculates the order to execute steps based on dependencies
+func (e *Engine) determineExecutionOrder(steps []model.Step, startIdx int) ([]string, error) {
+	// Check if any step has dependencies
+	hasDependencies := false
+	for i := startIdx; i < len(steps); i++ {
+		if len(steps[i].DependsOn) > 0 {
+			hasDependencies = true
+			utils.Debug("Step '%s' has dependencies: %v", steps[i].ID, steps[i].DependsOn)
+			break
+		}
+	}
+
+	// If no dependencies, use declaration order (fast path)
+	if !hasDependencies {
+		order := make([]string, 0, len(steps)-startIdx)
+		for i := startIdx; i < len(steps); i++ {
+			order = append(order, steps[i].ID)
+		}
+		utils.Debug("No dependencies found, using declaration order: %v", order)
+		return order, nil
+	}
+
+	// Get topological sort of all steps
+	utils.Debug("Dependencies detected, performing topological sort")
+	allStepsOrder, err := topologicalSort(steps)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter to only include steps from startIdx onwards
+	startStepIDs := make(map[string]bool)
+	for i := startIdx; i < len(steps); i++ {
+		startStepIDs[steps[i].ID] = true
+	}
+
+	filteredOrder := []string{}
+	for _, stepID := range allStepsOrder {
+		if startStepIDs[stepID] {
+			filteredOrder = append(filteredOrder, stepID)
+		}
+	}
+
+	utils.Debug("Dependency-based execution order: %v", filteredOrder)
+	return filteredOrder, nil
 }
 
 // handleAwaitEventStep processes await_event steps and sets up pause/resume logic

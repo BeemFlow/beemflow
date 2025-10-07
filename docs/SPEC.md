@@ -30,7 +30,7 @@ catch: [...]                   # optional error handler
   as: item                     # Loop variable name (default: "item")
   parallel: true               # Run nested steps/iterations in parallel
   steps: [steps]               # Child steps (for foreach/parallel/sequential blocks)
-  depends_on: [step_ids]       # Step dependencies (future)
+  depends_on: [step_ids]       # Step dependencies (ensures execution order)
   retry: {attempts: 3, delay_sec: 5}  # Retry configuration (future)
   await_event: {source: "x", match: {}, timeout: "24h"}  # Event wait
   wait: {seconds: 30}          # Time delay (future)
@@ -363,6 +363,9 @@ Constraints:
 - `foreach` REQUIRES `steps` array (loop body)
 - `as` provides loop variable name (default: "item")
 - Step IDs within foreach should use templates for uniqueness: `id: "step_{{ item_index }}"`
+- `depends_on` ensures steps execute in dependency order (topological sort)
+- Circular dependencies are detected and cause execution failure
+- Missing dependencies cause validation errors
 - Flow name max 100 chars, allows alphanumeric + `-_.`
 - Maximum 1000 steps per flow
 
