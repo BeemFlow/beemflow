@@ -42,10 +42,15 @@ steps: [
 	{
 		id: "loop_over_items"
 		foreach: "{{ vars.items }}"
-		use: "core.echo"
-		with: {
-			text: "Item {{ item_index }}: {{ item }}"
-		}
+		steps: [
+			{
+				id: "echo_item"
+				use: "core.echo"
+				with: {
+					text: "Item {{ item_index }}: {{ item }}"
+				}
+			}
+		]
 	},
 
 	// Reference previous step output

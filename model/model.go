@@ -28,7 +28,6 @@ type Step struct {
 	If         string          `yaml:"if,omitempty" json:"if,omitempty"`
 	Foreach    string          `yaml:"foreach,omitempty" json:"foreach,omitempty"`
 	As         string          `yaml:"as,omitempty" json:"as,omitempty"`
-	Do         []Step          `yaml:"do,omitempty" json:"do,omitempty"`
 	Steps      []Step          `yaml:"steps,omitempty" json:"steps,omitempty"`
 	Retry      *RetrySpec      `yaml:"retry,omitempty" json:"retry,omitempty"`
 	AwaitEvent *AwaitEventSpec `yaml:"await_event,omitempty" json:"await_event,omitempty"`

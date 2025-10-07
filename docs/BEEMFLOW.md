@@ -193,7 +193,7 @@ steps: [
     id: foreach_block
     foreach: "{{ array }}"       // Array to iterate
     as: item                     // Loop variable name
-    do: []                       // Steps to execute per item
+    steps: []                       // Steps to execute per item
   },
 
   // Event waiting
@@ -288,18 +288,17 @@ type Flow struct {
 
 type Step struct {
     ID         string          `yaml:"id"`          // REQUIRED
-    Use        string          `yaml:"use"`         
-    With       map[string]any  `yaml:"with"`        
-    DependsOn  []string        `yaml:"depends_on"`  
-    Parallel   bool            `yaml:"parallel"`    
-    If         string          `yaml:"if"`          
-    Foreach    string          `yaml:"foreach"`     
-    As         string          `yaml:"as"`          
-    Do         []Step          `yaml:"do"`          
-    Steps      []Step          `yaml:"steps"`       
-    Retry      *RetrySpec      `yaml:"retry"`       
-    AwaitEvent *AwaitEventSpec `yaml:"await_event"` 
-    Wait       *WaitSpec       `yaml:"wait"`        
+    Use        string          `yaml:"use"`         // Tool to execute
+    With       map[string]any  `yaml:"with"`        // Tool parameters
+    DependsOn  []string        `yaml:"depends_on"`  // Future: dependencies
+    Parallel   bool            `yaml:"parallel"`    // Parallel execution
+    If         string          `yaml:"if"`          // Conditional ({{ expression }})
+    Foreach    string          `yaml:"foreach"`     // Loop array ({{ array }})
+    As         string          `yaml:"as"`          // Loop variable (default: "item")
+    Steps      []Step          `yaml:"steps"`       // Child steps (foreach/parallel/sequential)
+    Retry      *RetrySpec      `yaml:"retry"`       // Future: retry config
+    AwaitEvent *AwaitEventSpec `yaml:"await_event"` // Event waiting
+    Wait       *WaitSpec       `yaml:"wait"`        // Future: time delay
 }
 
 type RetrySpec struct {
@@ -319,21 +318,23 @@ type WaitSpec struct {
 }
 ```
 
-### Validation Rules
+### Validation Rules (from cue/parser.go)
 
 1. **Step Requirements**: Every step must have ONE of:
    - `use` → Execute a tool
-   - `parallel: true` with `steps` → Parallel block
-   - `foreach` with `as` and `do` → Loop
+   - `steps` → Child steps (parallel/sequential/foreach body)
    - `await_event` → Wait for event
-   - `wait` → Time delay
+   - `wait` → Time delay (future)
 
 2. **Constraints**:
-   - `id` is always required and must be unique within scope
-   - `parallel: true` REQUIRES `steps` array
-   - `foreach` REQUIRES both `as` and `do`
-   - Cannot combine `use` with `parallel` or `foreach`
-   - Step IDs must be valid identifiers (alphanumeric + underscore)
+   - `id` is always required and must be unique within flow
+   - Flow name: 1-100 chars, alphanumeric + `-_.`
+   - Step ID: 1-50 chars, alphanumeric + `-_`
+   - Maximum 1000 steps per flow
+   - `parallel: true` requires `steps` array
+   - `foreach` requires `steps` array for loop body
+   - `if` conditions must use `{{ }}` template syntax
+   - Dangerous tool names (exec, shell, eval) are blocked by validation
 
 ---
 
@@ -570,7 +571,7 @@ steps: [
     id: process_items
     foreach: "{{ vars.items }}"  // BeemFlow evaluates this using CUE
     as: item                      // BeemFlow sets loop variable name
-    do: [
+    steps: [
       {
         id: process_item
         use: core.echo
@@ -754,7 +755,7 @@ The generic HTTP adapter provides full control:
 - id: process_items
   foreach: "{{ vars.items }}"
   as: item
-  do:
+  steps:
     - id: validate_{{ item_index }}
       use: validation.check
       with:
@@ -1253,7 +1254,7 @@ steps:
   - id: notify
     foreach: "{{ vars.RECIPIENTS }}"
     as: recipient
-    do:
+    steps:
       - id: send_email_{{ recipient_index }}
         use: email.send
         with:
@@ -1471,7 +1472,7 @@ steps:
   - id: test_cases
     foreach: "{{ vars.TEST_DATA }}"
     as: test
-    do:
+    steps:
       - id: run_test_{{ test.id }}
         use: function.under.test
         with:
@@ -1499,7 +1500,7 @@ steps:
     foreach: "{{ range(0, vars.ITERATIONS) }}"
     as: iteration
     parallel: true
-    do:
+    steps:
       - id: request_{{ iteration }}
         use: http
         with:

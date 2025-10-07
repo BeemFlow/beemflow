@@ -63,10 +63,15 @@ steps: [
 	{
 		id: "test_mixed_foreach"
 		foreach: "{{ vars.nested_data.level1.level2.array }}"
-		use: "core.echo"
-		with: {
-			text: "Item {{ item_index }}: {{ item }}"
-		}
+		steps: [
+			{
+				id: "echo_item"
+				use: "core.echo"
+				with: {
+					text: "Item {{ item_index }}: {{ item }}"
+				}
+			}
+		]
 	},
 
 	// Test parallel with error handling

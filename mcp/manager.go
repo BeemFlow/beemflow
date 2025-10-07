@@ -38,8 +38,8 @@ func findMCPInStep(step model.Step, servers map[string]bool) {
 			servers[match[1]] = true
 		}
 	}
-	// Recursively check nested steps (foreach, do, etc.)
-	for _, sub := range step.Do {
+	// Recursively check nested steps
+	for _, sub := range step.Steps {
 		findMCPInStep(sub, servers)
 	}
 }

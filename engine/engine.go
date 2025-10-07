@@ -182,9 +182,6 @@ type Engine struct {
 	// Current execution context (set during Execute)
 	currentFlow  *model.Flow
 	currentRunID uuid.UUID
-	// Template context cache for performance optimization
-	templateCache      map[string]map[string]any
-	templateCacheMutex sync.RWMutex
 	// Execution metrics for monitoring and performance analysis
 	metrics      ExecutionMetrics
 	metricsMutex sync.RWMutex
@@ -263,7 +260,6 @@ func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engi
 		waiting:          make(map[string]*PausedRun),
 		completedOutputs: make(map[string]map[string]any),
 		Storage:          storage.NewMemoryStorage(),
-		templateCache:    make(map[string]map[string]any),
 	}
 }
 
@@ -281,7 +277,6 @@ func NewEngine(
 		Storage:          storage,
 		waiting:          make(map[string]*PausedRun),
 		completedOutputs: make(map[string]map[string]any),
-		templateCache:    make(map[string]map[string]any),
 	}
 }
 
@@ -888,27 +883,22 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 		return nil
 	}
 
-	// Handle special case: foreach with direct use/with (single tool per iteration)
-	// This wraps the tool call in a synthetic step for iteration
-	if step.Use != "" && len(step.Do) == 0 && len(step.Steps) == 0 {
-		return e.executeForeachWithDirectUse(ctx, step, stepCtx, stepID, list)
-	}
-
+	// Execute iterations with provided steps
 	if step.Parallel {
-		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list)
+		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list, step.Steps)
 	}
-	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list)
+	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list, step.Steps)
 }
 
 // executeForeachParallel handles parallel foreach execution
-func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
+func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any, stepsToExecute []model.Step) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(list))
 
 	// Process each item in parallel
 	for index, item := range list {
 		wg.Add(1)
-		go e.processParallelForeachItem(ctx, step, stepCtx, item, index, &wg, errChan)
+		go e.processParallelForeachItem(ctx, step, stepCtx, item, index, stepsToExecute, &wg, errChan)
 	}
 
 	// Wait for all goroutines and collect errors
@@ -916,7 +906,7 @@ func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, s
 }
 
 // processParallelForeachItem processes a single item in a parallel foreach loop
-func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, index int, wg *sync.WaitGroup, errChan chan<- error) {
+func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, index int, stepsToExecute []model.Step, wg *sync.WaitGroup, errChan chan<- error) {
 	defer wg.Done()
 
 	// Create iteration context for this item
@@ -927,12 +917,6 @@ func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Ste
 	iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 	// Execute all steps for this iteration
-	// Use step.Do if provided, otherwise fall back to step.Steps
-	// In practice, most flows use steps for foreach bodies
-	stepsToExecute := step.Do
-	if len(stepsToExecute) == 0 {
-		stepsToExecute = step.Steps
-	}
 	if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 		errChan <- err
 	}
@@ -1009,7 +993,7 @@ func (e *Engine) collectParallelErrors(wg *sync.WaitGroup, errChan chan error, s
 }
 
 // executeForeachSequential handles sequential foreach execution
-func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
+func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any, stepsToExecute []model.Step) error {
 	for index, item := range list {
 		// Create iteration context for this item (same as parallel foreach)
 		asVar := step.As
@@ -1019,12 +1003,6 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 		// Execute all steps for this iteration
-		// Use step.Do if provided, otherwise fall back to step.Steps
-		// In practice, most flows use steps for foreach bodies
-		stepsToExecute := step.Do
-		if len(stepsToExecute) == 0 {
-			stepsToExecute = step.Steps
-		}
 		if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 			return err
 		}
@@ -1034,41 +1012,6 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 	if stepID != "" {
 		stepCtx.SetOutput(stepID, make(map[string]any))
 	}
-	return nil
-}
-
-// executeForeachWithDirectUse handles foreach with a direct use/with pattern
-// This is a shorthand for: foreach + single tool execution per iteration
-func (e *Engine) executeForeachWithDirectUse(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
-	// Create a synthetic step for each iteration that wraps the tool call
-	syntheticStep := &model.Step{
-		ID:   stepID,
-		Use:  step.Use,
-		With: step.With,
-		If:   step.If, // Preserve conditional logic
-	}
-
-	for index, item := range list {
-		asVar := step.As
-		if asVar == "" {
-			asVar = "item"
-		}
-		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
-
-		// Generate unique step ID for this iteration
-		iterStepID := fmt.Sprintf("%s_%d", stepID, index)
-
-		// Execute the tool with iteration context
-		if err := e.executeToolCall(ctx, syntheticStep, iterStepCtx, iterStepID); err != nil {
-			return err
-		}
-
-		// Copy outputs back to main context
-		e.copyIterationOutput(iterStepCtx, stepCtx, iterStepID)
-	}
-
-	// Set summary output
-	stepCtx.SetOutput(stepID, make(map[string]any))
 	return nil
 }
 
@@ -1253,14 +1196,6 @@ func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
 	}
 
 	return context
-}
-
-// clearTemplateCache clears the template context cache
-// Useful for testing or when memory usage becomes too high
-func (e *Engine) clearTemplateCache() {
-	e.templateCacheMutex.Lock()
-	e.templateCache = make(map[string]map[string]any)
-	e.templateCacheMutex.Unlock()
 }
 
 // updateMetrics safely updates execution metrics

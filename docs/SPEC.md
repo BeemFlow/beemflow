@@ -27,14 +27,13 @@ catch: [...]                   # optional error handler
   with: {params}               # Tool input parameters
   if: "{{ expression }}"       # Conditional execution (GitHub Actions style)
   foreach: "{{ array }}"       # Loop over array
-  as: item                     # Loop variable name
-  do: [steps]                  # Steps to run in loop
-  parallel: true               # Run nested steps in parallel
-  steps: [steps]               # Steps for parallel block
-  depends_on: [step_ids]       # Step dependencies
-  retry: {attempts: 3, delay_sec: 5}  # Retry configuration
+  as: item                     # Loop variable name (default: "item")
+  parallel: true               # Run nested steps/iterations in parallel
+  steps: [steps]               # Child steps (for foreach/parallel/sequential blocks)
+  depends_on: [step_ids]       # Step dependencies (future)
+  retry: {attempts: 3, delay_sec: 5}  # Retry configuration (future)
   await_event: {source: "x", match: {}, timeout: "24h"}  # Event wait
-  wait: {seconds: 30}          # Time delay
+  wait: {seconds: 30}          # Time delay (future)
 ```
 
 ### ❌ THESE DON'T EXIST (Common Hallucinations)
@@ -184,32 +183,41 @@ steps:
 
 ### Loops (Foreach)
 ```cue
+# Simple foreach loop
 - id: process_items
   foreach: "{{ vars.items }}"
   as: item
-  do:
+  steps:
     - id: process_{{ item_index }}
       use: core.echo
       with:
         text: "Row {{ item_row }}: Processing {{ item }}"
+
+# Foreach with multiple steps per iteration
+- id: complex_loop
+  foreach: "{{ vars.items }}"
+  as: item
+  steps:
+    - id: step1_{{ item_index }}
+      use: core.echo
+      with:
+        text: "Processing {{ item }}"
     
-    # Conditional processing in loops
-    - id: conditional_{{ item_index }}
+    - id: step2_{{ item_index }}
       if: "{{ item.status == 'active' }}"
       use: core.echo
       with:
         text: "Item {{ item.name }} is active"
 
-# Array element access in loops
-- id: process_rows
-  foreach: "{{ sheet_data.values }}"
-  as: row
-  do:
-    - id: check_row_{{ row_index }}
-      if: "{{ row.0 && row.1 == 'approved' }}"
+# Parallel foreach (run iterations concurrently)
+- id: parallel_loop
+  foreach: "{{ vars.items }}"
+  parallel: true
+  steps:
+    - id: process_{{ item_index }}
       use: core.echo
       with:
-        text: "Processing: {{ row.0 }}"
+        text: "Processing {{ item }} in parallel"
 ```
 
 ### Parallel Execution
@@ -293,12 +301,14 @@ steps:
 |-------|-------|-------------|
 | `${ var }` | `{{ var }}` | BeemFlow uses CUE-based templates |
 | `if: "status == 'active'"` | `if: "{{ vars.status == 'active' }}"` | Must use template syntax & explicit scopes |
-| `{{ data.rows.0.name }}` | `{{ data.rows[0].name }}` | CUE uses bracket notation for arrays |
+| `{{ row.0 }}` | `{{ row[0] }}` | CUE uses bracket notation for arrays |
+| `do: [steps]` in foreach | `steps: [steps]` | Field `do` was removed, use `steps` |
 | `continue_on_error: true` | Use `catch` blocks | Field doesn't exist |
-| `{{ now() }}` | Use a variable | No function calls |
-| `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator |
+| `{{ now() }}` | Use a variable | No function calls in templates |
+| `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator for defaults |
 | `timeout: 30` on step | Only in `await_event` | Not a general step field |
 | `on_error: cleanup` | Use `catch` blocks | No step-level error handlers |
+| `foreach` + `use` directly | `foreach` + `steps` | Must wrap in steps array |
 
 ---
 
@@ -322,16 +332,15 @@ type Step struct {
     ID         string          `yaml:"id"`         // REQUIRED
     Use        string          `yaml:"use"`        // tool name
     With       map[string]any  `yaml:"with"`       // tool inputs
-    DependsOn  []string        `yaml:"depends_on"` // dependencies
-    Parallel   bool            `yaml:"parallel"`   // parallel block
+    DependsOn  []string        `yaml:"depends_on"` // dependencies (future)
+    Parallel   bool            `yaml:"parallel"`   // parallel execution
     If         string          `yaml:"if"`         // conditional
     Foreach    string          `yaml:"foreach"`    // loop array
-    As         string          `yaml:"as"`         // loop variable
-    Do         []Step          `yaml:"do"`         // loop steps
-    Steps      []Step          `yaml:"steps"`      // parallel steps
-    Retry      *RetrySpec      `yaml:"retry"`      // retry config
+    As         string          `yaml:"as"`         // loop variable (default: "item")
+    Steps      []Step          `yaml:"steps"`      // child steps (foreach/parallel/sequential)
+    Retry      *RetrySpec      `yaml:"retry"`      // retry config (future)
     AwaitEvent *AwaitEventSpec `yaml:"await_event"` // event wait
-    Wait       *WaitSpec       `yaml:"wait"`       // time wait
+    Wait       *WaitSpec       `yaml:"wait"`       // time delay (future)
 }
 // NO OTHER FIELDS EXIST!
 ```
@@ -341,17 +350,21 @@ type Step struct {
 ## ✅ Validation Rules
 
 A step must have ONE of:
-- `use` - Execute a tool
-- `parallel: true` with `steps` - Parallel block
-- `foreach` with `as` and `do` - Loop
+- `use` + `with` - Execute a tool
+- `foreach` + `steps` - Loop over array
+- `parallel: true` + `steps` - Parallel execution
+- `steps` (without parallel) - Sequential grouping
 - `await_event` - Wait for event
-- `wait` - Time delay
+- `wait` - Time delay (future)
 
 Constraints:
+- `id` is always required and must be unique (max 50 chars, alphanumeric + `-_`)
 - `parallel: true` REQUIRES `steps` array
-- `foreach` REQUIRES both `as` and `do`
-- Cannot combine `use` with `parallel` or `foreach`
-- `id` is always required and must be unique
+- `foreach` REQUIRES `steps` array (loop body)
+- `as` provides loop variable name (default: "item")
+- Step IDs within foreach should use templates for uniqueness: `id: "step_{{ item_index }}"`
+- Flow name max 100 chars, allows alphanumeric + `-_.`
+- Maximum 1000 steps per flow
 
 ---
 

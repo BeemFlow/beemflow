@@ -330,7 +330,7 @@ func TestExecute_AllStepTypes(t *testing.T) {
 			If:         "x > 0",
 			Foreach:    "{{list}}",
 			As:         "item",
-			Do:         []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+			Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
 			Parallel:   true,
 			Retry:      &model.RetrySpec{Attempts: 2, DelaySec: 1},
 			AwaitEvent: &model.AwaitEventSpec{Source: "bus", Match: map[string]interface{}{"key": "value"}, Timeout: "10s"},
@@ -454,7 +454,7 @@ func TestExecute_ParallelForeachEdgeCases(t *testing.T) {
 			Foreach:  "{{list}}",
 			As:       "item",
 			Parallel: true,
-			Do:       []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+			Steps:    []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
 		}},
 	}
 	outputs, err := e.Execute(context.Background(), f, map[string]any{"list": []any{}})
@@ -474,7 +474,7 @@ func TestExecute_ParallelForeachEdgeCases(t *testing.T) {
 			Foreach:  "{{ event.list }}",
 			As:       "item",
 			Parallel: true,
-			Do:       []model.Step{{ID: "d1", Use: "nonexistent.adapter"}},
+			Steps:    []model.Step{{ID: "d1", Use: "nonexistent.adapter"}},
 		}},
 	}
 	_, err = e.Execute(context.Background(), f2, map[string]any{"list": []any{"a", "b"}})
@@ -926,7 +926,7 @@ func TestExecuteForeachSequential(t *testing.T) {
 		Foreach:  "{{items}}",
 		As:       "item",
 		Parallel: false,
-		Do: []model.Step{
+		Steps: []model.Step{
 			{
 				ID:  "process_{{vars.item}}",
 				Use: "core.echo",
@@ -943,7 +943,7 @@ func TestExecuteForeachSequential(t *testing.T) {
 		map[string]any{},
 	)
 
-	err := engine.executeForeachSequential(ctx, step, stepCtx, "foreach_seq_test", []any{"alpha", "beta", "gamma"})
+	err := engine.executeForeachSequential(ctx, step, stepCtx, "foreach_seq_test", []any{"alpha", "beta", "gamma"}, step.Steps)
 	if err != nil {
 		t.Fatalf("executeForeachSequential failed: %v", err)
 	}
@@ -957,7 +957,7 @@ func TestExecuteForeachSequential(t *testing.T) {
 		Foreach:  "{{items}}",
 		As:       "item",
 		Parallel: false,
-		Do: []model.Step{
+		Steps: []model.Step{
 			{
 				ID:  "bad_{{item}}",
 				Use: "nonexistent.adapter",
@@ -974,14 +974,14 @@ func TestExecuteForeachSequential(t *testing.T) {
 		map[string]any{},
 	)
 
-	err = engine.executeForeachSequential(ctx, stepWithError, stepCtx2, "foreach_error_test", []any{"one", "two"})
+	err = engine.executeForeachSequential(ctx, stepWithError, stepCtx2, "foreach_error_test", []any{"one", "two"}, stepWithError.Steps)
 	if err == nil {
 		t.Error("Expected error from foreach with bad adapter")
 	}
 
 	// Test empty list
 	stepCtx3 := NewStepContext(map[string]any{}, map[string]any{}, map[string]any{})
-	err = engine.executeForeachSequential(ctx, step, stepCtx3, "foreach_empty_test", []any{})
+	err = engine.executeForeachSequential(ctx, step, stepCtx3, "foreach_empty_test", []any{}, step.Steps)
 	if err != nil {
 		t.Fatalf("Empty foreach should not error: %v", err)
 	}
@@ -992,7 +992,7 @@ func TestExecuteForeachSequential(t *testing.T) {
 		map[string]any{"items": []any{"test"}},
 		map[string]any{},
 	)
-	err = engine.executeForeachSequential(ctx, step, stepCtx4, "", []any{"test"})
+	err = engine.executeForeachSequential(ctx, step, stepCtx4, "", []any{"test"}, step.Steps)
 	if err != nil {
 		t.Fatalf("foreach with empty stepID should not error: %v", err)
 	}
@@ -1002,7 +1002,7 @@ func TestExecuteForeachSequential(t *testing.T) {
 		Foreach:  "{{items}}",
 		As:       "",
 		Parallel: false,
-		Do: []model.Step{
+		Steps: []model.Step{
 			{
 				ID:  "no_as_test",
 				Use: "core.echo",
@@ -1018,19 +1018,19 @@ func TestExecuteForeachSequential(t *testing.T) {
 		map[string]any{"items": []any{"test"}},
 		map[string]any{},
 	)
-	err = engine.executeForeachSequential(ctx, stepNoAs, stepCtx5, "no_as_test", []any{"test"})
+	err = engine.executeForeachSequential(ctx, stepNoAs, stepCtx5, "no_as_test", []any{"test"}, stepNoAs.Steps)
 	if err != nil {
 		t.Fatalf("foreach without As should not error: %v", err)
 	}
 }
 
-// TestExecuteForeachWithDirectUse tests foreach with direct use/with pattern
-func TestExecuteForeachWithDirectUse(t *testing.T) {
+// TestExecuteForeachWithSteps tests foreach with explicit steps (standard pattern)
+func TestExecuteForeachWithSteps(t *testing.T) {
 	ctx := context.Background()
 	eng := NewDefaultEngine(ctx)
 
 	flow := &model.Flow{
-		Name: "foreach_direct_use",
+		Name: "foreach_with_steps",
 		Vars: map[string]any{
 			"test_items": []any{"apple", "banana", "cherry"},
 		},
@@ -1038,9 +1038,14 @@ func TestExecuteForeachWithDirectUse(t *testing.T) {
 			{
 				ID:      "test_foreach",
 				Foreach: "{{ vars.test_items }}",
-				Use:     "core.echo",
-				With: map[string]any{
-					"text": "Processing {{ item }}",
+				Steps: []model.Step{
+					{
+						ID:  "process_item",
+						Use: "core.echo",
+						With: map[string]any{
+							"text": "Processing {{ item }}",
+						},
+					},
 				},
 			},
 		},
@@ -1051,20 +1056,14 @@ func TestExecuteForeachWithDirectUse(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	// Should have created outputs for each iteration
+	// Should have created outputs
 	if outputs == nil {
 		t.Fatal("Expected outputs map, got nil")
 	}
 
-	// Check that iteration outputs were created
-	if _, ok := outputs["test_foreach_0"]; !ok {
-		t.Error("Expected output for iteration 0")
-	}
-	if _, ok := outputs["test_foreach_1"]; !ok {
-		t.Error("Expected output for iteration 1")
-	}
-	if _, ok := outputs["test_foreach_2"]; !ok {
-		t.Error("Expected output for iteration 2")
+	// Foreach with steps creates child step outputs
+	if _, ok := outputs["process_item"]; !ok {
+		t.Error("Expected output for child step 'process_item'")
 	}
 }
 
@@ -1602,7 +1601,7 @@ func TestForeachWithConditions(t *testing.T) {
 				ID:      "process_items",
 				Foreach: "{{items}}",
 				As:      "item",
-				Do: []model.Step{
+				Steps: []model.Step{
 					{
 						ID:   "process_{{item.name}}",
 						If:   "{{ item.process == true }}",
@@ -1776,7 +1775,7 @@ func TestPristineForeachSyntax(t *testing.T) {
 				ID:      "process",
 				Foreach: "{{ vars.items }}",
 				As:      "item",
-				Do: []model.Step{
+				Steps: []model.Step{
 					{
 						ID:  "echo_{{ item_index }}",
 						Use: "core.echo",
@@ -1954,7 +1953,7 @@ func TestPristineConditionsInForeach(t *testing.T) {
 				ID:      "process",
 				Foreach: "{{ vars.items }}",
 				As:      "item",
-				Do: []model.Step{
+				Steps: []model.Step{
 					{
 						ID:   "active_{{ item_index }}",
 						If:   "{{ item.status == 'active' }}",
@@ -2008,7 +2007,7 @@ func TestPristineComplexNesting(t *testing.T) {
 						ID:      "foreach_in_block",
 						Foreach: "{{ vars.items }}",
 						As:      "item",
-						Do: []model.Step{
+						Steps: []model.Step{
 							{
 								ID:   "nested_condition_{{ item_index }}",
 								If:   "{{ item.priority > 2 }}",
@@ -2050,7 +2049,7 @@ func TestPristineParallelForeach(t *testing.T) {
 				Foreach:  "{{ vars.items }}",
 				As:       "item",
 				Parallel: true,
-				Do: []model.Step{
+				Steps: []model.Step{
 					{
 						ID:  "process_{{ item_index }}",
 						Use: "core.echo",

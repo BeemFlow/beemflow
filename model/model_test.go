@@ -24,7 +24,7 @@ steps:
     if: "x > 0"
     foreach: "{{list}}"
     as: item
-    do:
+    steps:
       - id: d1
         use: core.echo
         with:
@@ -88,10 +88,10 @@ catch:
 	if step.As != "item" {
 		t.Errorf("expected step.As 'item', got '%s'", step.As)
 	}
-	if len(step.Do) != 1 {
-		t.Errorf("expected step.Do len 1, got %d", len(step.Do))
-	} else if step.Do[0].Use != "core.echo" {
-		t.Errorf("expected Do[0].Use 'core.echo', got '%s'", step.Do[0].Use)
+	if len(step.Steps) != 1 {
+		t.Errorf("expected step.Steps len 1, got %d", len(step.Steps))
+	} else if step.Steps[0].Use != "core.echo" {
+		t.Errorf("expected Steps[0].Use 'core.echo', got '%s'", step.Steps[0].Use)
 	}
 	if !step.Parallel {
 		t.Errorf("expected step.Parallel true, got false")
@@ -125,7 +125,7 @@ func TestStep_AllFieldsSet(t *testing.T) {
 		If:         "x > 0",
 		Foreach:    "{{list}}",
 		As:         "item",
-		Do:         []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+		Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
 		Parallel:   true,
 		Retry:      &model.RetrySpec{Attempts: 2, DelaySec: 1},
 		AwaitEvent: &model.AwaitEventSpec{Source: "bus", Match: map[string]interface{}{"key": "value"}, Timeout: "10s"},
@@ -134,10 +134,8 @@ func TestStep_AllFieldsSet(t *testing.T) {
 	if s.Use != "core.echo" || s.With["text"] != "hi" || s.If != "x > 0" || s.Foreach != "{{list}}" || s.As != "item" {
 		t.Errorf("step fields not set correctly: %+v", s)
 	}
-	if len(s.Do) != 1 {
-		if s.Do[0].Use != "core.echo" {
-			t.Errorf("step.Do not set correctly: %+v", s.Do)
-		}
+	if len(s.Steps) != 1 || s.Steps[0].Use != "core.echo" {
+		t.Errorf("step.Steps not set correctly: %+v", s.Steps)
 	}
 	if !s.Parallel {
 		t.Errorf("step.Parallel not set correctly: %+v", s.Parallel)
@@ -180,8 +178,8 @@ func TestStep_NilAndEmptySubfields(t *testing.T) {
 	if s.With != nil {
 		t.Errorf("expected With nil, got %+v", s.With)
 	}
-	if len(s.Do) != 0 {
-		t.Errorf("expected Do nil or empty, got %+v", s.Do)
+	if len(s.Steps) != 0 {
+		t.Errorf("expected Do nil or empty, got %+v", s.Steps)
 	}
 	// Parallel is a bool, so no nil/len check needed
 }

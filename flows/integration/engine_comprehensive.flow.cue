@@ -33,10 +33,15 @@ steps: [
 	{
 		id: "test_foreach"
 		foreach: "{{ vars.test_items }}"
-		use: "core.echo"
-		with: {
-			text: "Processing {{ item }}"
-		}
+		steps: [
+			{
+				id: "process_item"
+				use: "core.echo"
+				with: {
+					text: "Processing {{ item }}"
+				}
+			}
+		]
 	},
 
 	// Test conditions

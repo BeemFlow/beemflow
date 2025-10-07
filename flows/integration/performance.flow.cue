@@ -17,20 +17,30 @@ steps: [
 	{
 		id: "large_parallel_test"
 		foreach: "{{ vars.large_dataset }}"
-		use: "core.echo"
-		with: {
-			text: "Processing item {{ item }} in parallel"
-		}
+		steps: [
+			{
+				id: "process_item"
+				use: "core.echo"
+				with: {
+					text: "Processing item {{ item }} in parallel"
+				}
+			}
+		]
 	},
 
 	// Test sequential processing
 	{
 		id: "sequential_test"
 		foreach: "{{ vars.small_array }}"
-		use: "core.echo"
-		with: {
-			text: "Sequential: {{ item }}"
-		}
+		steps: [
+			{
+				id: "process_item"
+				use: "core.echo"
+				with: {
+					text: "Sequential: {{ item }}"
+				}
+			}
+		]
 	},
 
 	// Final summary
