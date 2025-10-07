@@ -445,18 +445,50 @@
     "type": "oauth_provider",
     "name": "google",
     "display_name": "Google",
-    "description": "Connect to Google services including Drive, Sheets, Calendar, and more",
+    "description": "Connect to Google services including Drive, Sheets, Calendar, Gmail, and more",
     "icon": "🇬",
     "authorization_url": "https://accounts.google.com/o/oauth2/auth",
     "token_url": "https://oauth2.googleapis.com/token",
     "scopes": [
       "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive"
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/docs",
+      "https://www.googleapis.com/auth/docs.readonly",
+      "https://www.googleapis.com/auth/presentations",
+      "https://www.googleapis.com/auth/presentations.readonly",
+      "https://www.googleapis.com/auth/youtube.readonly",
+      "https://www.googleapis.com/auth/contacts.readonly",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email"
     ],
     "scope_descriptions": {
-      "https://www.googleapis.com/auth/spreadsheets": "Read and write Google Sheets",
-      "https://www.googleapis.com/auth/drive": "Access Google Drive files"
+      "https://www.googleapis.com/auth/spreadsheets": "Read and write Google Sheets spreadsheets",
+      "https://www.googleapis.com/auth/drive": "Full access to Google Drive files and folders",
+      "https://www.googleapis.com/auth/drive.file": "Access only to files created by this app in Google Drive",
+      "https://www.googleapis.com/auth/calendar": "Read and write Google Calendar events",
+      "https://www.googleapis.com/auth/calendar.readonly": "Read Google Calendar events (read-only)",
+      "https://www.googleapis.com/auth/gmail.readonly": "Read Gmail messages and settings",
+      "https://www.googleapis.com/auth/gmail.send": "Send emails through Gmail",
+      "https://www.googleapis.com/auth/gmail.modify": "Modify Gmail messages (archive, delete, etc.)",
+      "https://www.googleapis.com/auth/docs": "Read and write Google Docs documents",
+      "https://www.googleapis.com/auth/docs.readonly": "Read Google Docs documents (read-only)",
+      "https://www.googleapis.com/auth/presentations": "Read and write Google Slides presentations",
+      "https://www.googleapis.com/auth/presentations.readonly": "Read Google Slides presentations (read-only)",
+      "https://www.googleapis.com/auth/youtube.readonly": "Read YouTube channel and video information",
+      "https://www.googleapis.com/auth/contacts.readonly": "Read Google Contacts",
+      "https://www.googleapis.com/auth/userinfo.profile": "Access basic profile information",
+      "https://www.googleapis.com/auth/userinfo.email": "Access email address"
     },
+    "required_scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ],
     "client_id": "${GOOGLE_CLIENT_ID}",
     "client_secret": "${GOOGLE_CLIENT_SECRET}"
   },
@@ -470,13 +502,350 @@
     "token_url": "https://github.com/login/oauth/access_token",
     "scopes": [
       "repo",
-      "user"
+      "repo:status",
+      "repo_deployment",
+      "public_repo",
+      "repo:invite",
+      "security_events",
+      "admin:repo_hook",
+      "write:repo_hook",
+      "read:repo_hook",
+      "admin:org",
+      "write:org",
+      "read:org",
+      "admin:public_key",
+      "write:public_key",
+      "read:public_key",
+      "admin:org_hook",
+      "gist",
+      "notifications",
+      "user",
+      "read:user",
+      "user:email",
+      "user:follow",
+      "project",
+      "read:project",
+      "delete_repo",
+      "write:discussion",
+      "read:discussion",
+      "write:packages",
+      "read:packages",
+      "delete:packages",
+      "admin:gpg_key",
+      "write:gpg_key",
+      "read:gpg_key",
+      "codespace",
+      "workflow"
     ],
     "scope_descriptions": {
       "repo": "Full access to private and public repositories",
-      "user": "Read and write access to user profile data"
+      "repo:status": "Access to commit statuses",
+      "repo_deployment": "Access to deployment statuses",
+      "public_repo": "Access to public repositories only",
+      "repo:invite": "Access to repository invitations",
+      "security_events": "Read and write access to security events",
+      "admin:repo_hook": "Full control of repository hooks",
+      "write:repo_hook": "Write access to repository hooks",
+      "read:repo_hook": "Read access to repository hooks",
+      "admin:org": "Full control of organizations and teams",
+      "write:org": "Write access to organization membership",
+      "read:org": "Read access to organization membership",
+      "admin:public_key": "Full control of user public keys",
+      "write:public_key": "Write access to user public keys",
+      "read:public_key": "Read access to user public keys",
+      "admin:org_hook": "Full control of organization hooks",
+      "gist": "Write access to gists",
+      "notifications": "Access to notifications",
+      "user": "Read and write access to user profile data",
+      "read:user": "Read access to user profile data",
+      "user:email": "Access to user email addresses",
+      "user:follow": "Access to follow/unfollow users",
+      "project": "Write access to user and organization projects",
+      "read:project": "Read access to user and organization projects",
+      "delete_repo": "Delete access to adminable repositories",
+      "write:discussion": "Write access to team discussions",
+      "read:discussion": "Read access to team discussions",
+      "write:packages": "Upload packages to GitHub Package Registry",
+      "read:packages": "Download packages from GitHub Package Registry",
+      "delete:packages": "Delete packages from GitHub Package Registry",
+      "admin:gpg_key": "Full control of user GPG keys",
+      "write:gpg_key": "Write access to user GPG keys",
+      "read:gpg_key": "Read access to user GPG keys",
+      "codespace": "Full control of codespaces",
+      "workflow": "Update GitHub Action workflows"
     },
+    "required_scopes": [
+      "user"
+    ],
     "client_id": "${GITHUB_CLIENT_ID}",
     "client_secret": "${GITHUB_CLIENT_SECRET}"
+  },
+  {
+    "type": "tool",
+    "name": "github.projects.create",
+    "description": "Create a new GitHub project board",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "owner",
+        "repo",
+        "name"
+      ],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "description": "Repository owner (username or organization)"
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repository name"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the project board"
+        },
+        "body": {
+          "type": "string",
+          "description": "Description of the project board"
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/repos/{owner}/{repo}/projects",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.projects.columns.create",
+    "description": "Create a column in a GitHub project board",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "project_id",
+        "name"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "integer",
+          "description": "ID of the project board"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the column"
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/projects/{project_id}/columns",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.projects.cards.create",
+    "description": "Create a card in a GitHub project column from an issue",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "column_id",
+        "content_id"
+      ],
+      "properties": {
+        "column_id": {
+          "type": "integer",
+          "description": "ID of the project column"
+        },
+        "content_id": {
+          "type": "integer",
+          "description": "ID of the issue to add as a card"
+        },
+        "content_type": {
+          "type": "string",
+          "description": "Type of content (should be 'Issue')",
+          "default": "Issue"
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/projects/columns/{column_id}/cards",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.issues.get",
+    "description": "Get details of a GitHub issue by number",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "owner",
+        "repo",
+        "issue_number"
+      ],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "description": "Repository owner (username or organization)"
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repository name"
+        },
+        "issue_number": {
+          "type": "integer",
+          "description": "Issue number"
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Accept": "application/vnd.github.v3+json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.projects.v2.create",
+    "description": "Create a new GitHub Project v2",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "query",
+        "variables"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "GraphQL mutation query",
+          "default": "mutation CreateProject($ownerId: ID!, $title: String!) { createProjectV2(input: {ownerId: $ownerId, title: $title}) { projectV2 { id url title } } }"
+        },
+        "variables": {
+          "type": "object",
+          "description": "GraphQL variables",
+          "properties": {
+            "ownerId": {
+              "type": "string",
+              "description": "ID of the organization or user that will own the project"
+            },
+            "title": {
+              "type": "string",
+              "description": "Title of the project"
+            }
+          }
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/graphql",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.user.get_id",
+    "description": "Get the authenticated user's ID for creating projects",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "GraphQL query",
+          "default": "query GetViewer { viewer { id login name } }"
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/graphql",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "github.projects.v2.add_draft_issue",
+    "description": "Add a draft issue to a GitHub Project v2",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "query",
+        "variables"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "GraphQL mutation query",
+          "default": "mutation AddDraftIssue($projectId: ID!, $title: String!, $body: String) { addProjectV2DraftIssue(input: {projectId: $projectId, title: $title, body: $body}) { projectItem { id } } }"
+        },
+        "variables": {
+          "type": "object",
+          "description": "GraphQL variables",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "description": "ID of the project"
+            },
+            "title": {
+              "type": "string",
+              "description": "Title of the draft issue"
+            },
+            "body": {
+              "type": "string",
+              "description": "Body content of the draft issue"
+            }
+          }
+        }
+      }
+    },
+    "endpoint": "https://api.github.com/graphql",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:github:default",
+      "Content-Type": "application/json"
+    }
   }
 ]

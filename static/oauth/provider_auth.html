@@ -24,29 +24,83 @@
                 </div>
             </div>
 
-            <div class="permissions">
-                <h3>This will allow BeemFlow to:</h3>
-                <ul>
-                    {{range .Scopes}}
-                    <li>{{.Description}}</li>
-                    {{end}}
-                </ul>
-            </div>
+            <form id="scope-form" action="{{.AuthURL}}" method="get">
+                <div class="permissions">
+                    <h3>Choose permissions for BeemFlow:</h3>
+                    <div class="scope-selection">
+                        {{range .Scopes}}
+                        <div class="scope-item">
+                            <label>
+                                <input type="checkbox" name="scope" value="{{.Scope.Raw}}" 
+                                       {{if .Required}}checked disabled{{else}}checked{{end}}>
+                           <div class="scope-details">
+                               <div class="scope-name">{{.Scope}}</div>
+                               <div class="scope-description">{{.Description}}</div>
+                               {{if .Required}}<span class="required-badge">Required</span>{{end}}
+                           </div>
+                            </label>
+                        </div>
+                        {{end}}
+                    </div>
+                    <p class="scope-note">
+                        <small>💡 You can adjust these permissions later in your {{.ProviderDisplayName}} account settings.</small>
+                    </p>
+                </div>
 
-            <div class="integration-info">
-                <h3>Integration:</h3>
-                <p><strong>{{.Integration}}</strong> - {{.IntegrationDescription}}</p>
-            </div>
+                <div class="integration-info">
+                    <h3>Integration:</h3>
+                    <p><strong>{{.Integration}}</strong> - {{.IntegrationDescription}}</p>
+                </div>
 
-            <div class="consent-actions">
-                <a href="/oauth/providers" class="btn btn-secondary">Cancel</a>
-                <a href="{{.AuthURL}}" class="btn btn-primary">Continue to {{.ProviderDisplayName}}</a>
-            </div>
+                <div class="consent-actions">
+                    <a href="/oauth/providers" class="btn btn-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary">Continue to {{.ProviderDisplayName}}</button>
+                </div>
+            </form>
         </div>
 
         <div class="footer">
             <p>You'll be redirected to {{.ProviderName}} to complete authorization.</p>
         </div>
     </div>
+
+    <script>
+        // Store the original auth URL
+        const originalAuthURL = new URL('{{.AuthURL}}');
+        
+        // Update the form action URL when checkboxes change
+        document.getElementById('scope-form').addEventListener('change', function() {
+            const checkedScopes = Array.from(document.querySelectorAll('input[name="scope"]:checked'))
+                .map(cb => cb.value)
+                .join(' ');
+            
+            // Create new URL with updated scopes, preserving all other parameters
+            const newAuthURL = new URL(originalAuthURL);
+            newAuthURL.searchParams.set('scope', checkedScopes);
+            this.action = newAuthURL.toString();
+        });
+
+        // Ensure at least one scope is selected
+        document.getElementById('scope-form').addEventListener('submit', function(e) {
+            const checkedScopes = document.querySelectorAll('input[name="scope"]:checked');
+            if (checkedScopes.length === 0) {
+                e.preventDefault();
+                alert('Please select at least one permission to continue.');
+                return false;
+            }
+            
+            // Make sure we have the updated URL with selected scopes
+            const selectedScopes = Array.from(checkedScopes).map(cb => cb.value).join(' ');
+            const finalAuthURL = new URL(originalAuthURL);
+            finalAuthURL.searchParams.set('scope', selectedScopes);
+            
+            // Redirect to the final URL instead of form submission
+            e.preventDefault();
+            window.location.href = finalAuthURL.toString();
+        });
+
+        // Initialize with current scope selection
+        document.getElementById('scope-form').dispatchEvent(new Event('change'));
+    </script>
 </body>
 </html>
