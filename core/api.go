@@ -185,7 +185,6 @@ func ValidateFlow(ctx context.Context, name string) error {
 		}
 		return err
 	}
-	parser = cue.NewParser()
 	return parser.Validate(flow)
 }
 
@@ -389,12 +388,7 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 
 	_, execErr := eng.Execute(ctx, flow, eventData)
 
-	// For await_event pause, return the run ID along with the pause error
-	if execErr != nil && constants.IsAwaitEventPause(execErr) {
-		runID, _ := handleExecutionResult(eng.Storage, flowName, execErr)
-		return runID, execErr
-	}
-
+	// Handle execution result (works for both success, failure, and await_event pause)
 	return handleExecutionResult(eng.Storage, flowName, execErr)
 }
 

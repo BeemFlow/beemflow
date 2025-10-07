@@ -372,7 +372,7 @@ func TestAwaitEventResume_RoundTrip(t *testing.T) {
 	startEvent := map[string]any{"input": "hello world", "token": "abc123"}
 	outputs, err := engine.Execute(context.Background(), flow, startEvent)
 	if err != nil {
-		t.Fatalf("expected pause on await_event (nil error), got: %v, outputs: %v", err, outputs)
+		t.Fatalf("expected successful pause on await_event (nil error), got: %v, outputs: %v", err, outputs)
 	}
 	// Wait to ensure subscription is registered
 	time.Sleep(50 * time.Millisecond)
@@ -563,7 +563,7 @@ func TestSqlitePersistenceAndResume_FullFlow(t *testing.T) {
 	startEvent := map[string]any{"input": "hello world", "token": "abc123"}
 	outputs, err := engine.Execute(context.Background(), flow, startEvent)
 	if err != nil {
-		t.Fatalf("expected pause on await_event (nil error), got: %v, outputs: %v", err, outputs)
+		t.Fatalf("expected successful pause on await_event (nil error), got: %v, outputs: %v", err, outputs)
 	}
 
 	// Check that only echo_start step is present in DB
