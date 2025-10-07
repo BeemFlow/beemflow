@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"unicode"
 
 	"github.com/beemflow/beemflow/constants"
 )
@@ -172,6 +173,38 @@ func ValidateOneOf(fieldName string, value string, allowed []string) error {
 		}
 	}
 	return Errorf("field '%s' must be one of %v, got '%s'", fieldName, allowed, value)
+}
+
+// ============================================================================
+// STANDARDIZED STRING HELPERS
+// ============================================================================
+
+// ToTitle is a replacement for the deprecated strings.Title function
+// It capitalizes the first letter and letters after spaces
+func ToTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	
+	runes := []rune(s)
+	result := make([]rune, len(runes))
+	
+	// Capitalize first letter and letters after spaces
+	capitalizeNext := true
+	for i, r := range runes {
+		if capitalizeNext && unicode.IsLetter(r) {
+			result[i] = unicode.ToUpper(r)
+			capitalizeNext = false
+		} else {
+			result[i] = unicode.ToLower(r)
+		}
+		
+		if unicode.IsSpace(r) {
+			capitalizeNext = true
+		}
+	}
+	
+	return string(result)
 }
 
 // ============================================================================

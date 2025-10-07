@@ -2,7 +2,8 @@ package registry
 
 import (
 	"strings"
-	"unicode"
+
+	"github.com/beemflow/beemflow/utils"
 )
 
 // OAuthScope represents an OAuth scope with automatic string formatting
@@ -17,36 +18,9 @@ func (s OAuthScope) String() string {
 		// Remove common prefixes and make it more readable
 		lastPart = strings.ReplaceAll(lastPart, "_", " ")
 		lastPart = strings.ReplaceAll(lastPart, ".", " ")
-		return toTitle(lastPart)
+		return utils.ToTitle(lastPart)
 	}
 	return string(s)
-}
-
-// toTitle is a replacement for the deprecated strings.Title
-func toTitle(s string) string {
-	if s == "" {
-		return s
-	}
-	
-	runes := []rune(s)
-	result := make([]rune, len(runes))
-	
-	// Capitalize first letter and letters after spaces
-	capitalizeNext := true
-	for i, r := range runes {
-		if capitalizeNext && unicode.IsLetter(r) {
-			result[i] = unicode.ToUpper(r)
-			capitalizeNext = false
-		} else {
-			result[i] = unicode.ToLower(r)
-		}
-		
-		if unicode.IsSpace(r) {
-			capitalizeNext = true
-		}
-	}
-	
-	return string(result)
 }
 
 // Raw returns the original scope string without formatting
