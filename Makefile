@@ -8,6 +8,7 @@ CMD_PATH := ./cmd/flow
 # Auto-discover flow files
 INTEGRATION_FLOWS := $(shell find flows/integration -name "*.flow.cue" 2>/dev/null)
 E2E_FLOWS := $(shell find flows/e2e -name "*.flow.cue" 2>/dev/null)
+EXAMPLE_FLOWS := $(shell find flows/examples -name "*.flow.cue" 2>/dev/null)
 
 # ────────────────────────────────────────────────────────────────────────────
 .PHONY: all clean build build-static install test test-race coverage e2e integration test-all check fmt vet lint tidy fix release
@@ -73,13 +74,21 @@ test-all: test-race integration e2e
 # Code quality
 # ────────────────────────────────────────────────────────────────────────────
 
-check: fmt vet lint tidy
+check: fmt vet lint tidy vet-cue
 
 fmt:
 	go fmt ./...
 
 vet:
 	go vet ./...
+
+vet-cue:
+	@echo "Validating CUE flow files..."
+	@for file in $(INTEGRATION_FLOWS) $(E2E_FLOWS) $(EXAMPLE_FLOWS); do \
+		echo "  ✓ $$file"; \
+		cue vet "$$file" || exit 1; \
+	done
+	@echo "All CUE files valid!"
 
 lint:
 	golangci-lint run -c .golangci.yml ./...

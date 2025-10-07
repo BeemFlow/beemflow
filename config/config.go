@@ -400,7 +400,7 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 // It works generically for any registry type and any field.
 func InjectEnvVarsIntoRegistry(reg map[string]any) {
 	envVarPattern := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-	
+
 	for k, v := range reg {
 		str, ok := v.(string)
 		if ok {

@@ -88,7 +88,7 @@ steps: [
 			spreadsheetId: "{{ vars.SPREADSHEET_ID }}"
 			range:        "{{ vars.SHEET_NAME }}!A:E"
 			values: [[
-				outputs.generate_draft.content[0].text,
+				"{{ outputs.generate_draft.content[0].text }}",
 				"draft",
 				"FALSE",
 				"FALSE",

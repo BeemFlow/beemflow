@@ -950,11 +950,11 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 			http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
 			return
 		}
-		
+
 		tokenResp.AccessToken = values.Get("access_token")
 		tokenResp.TokenType = values.Get("token_type")
 		tokenResp.RefreshToken = values.Get("refresh_token")
-		
+
 		if expiresInStr := values.Get("expires_in"); expiresInStr != "" {
 			if expiresIn, err := strconv.Atoi(expiresInStr); err == nil {
 				tokenResp.ExpiresIn = expiresIn

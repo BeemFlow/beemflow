@@ -95,9 +95,9 @@ func (d *DefaultRegistry) GetOAuthProvider(ctx context.Context, name string) (*R
 // expandOAuthProviderEnvVars expands environment variables in OAuth provider fields
 func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
 	envVarPattern := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-	
+
 	expanded := entry
-	
+
 	// Expand environment variables in OAuth provider fields
 	if expanded.ClientID != "" {
 		expanded.ClientID = envVarPattern.ReplaceAllStringFunc(expanded.ClientID, func(match string) string {
@@ -108,7 +108,7 @@ func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
 			return match // Keep original if env var not found
 		})
 	}
-	
+
 	if expanded.ClientSecret != "" {
 		expanded.ClientSecret = envVarPattern.ReplaceAllStringFunc(expanded.ClientSecret, func(match string) string {
 			envVar := match[2 : len(match)-1] // Remove ${ and }
@@ -118,7 +118,7 @@ func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
 			return match // Keep original if env var not found
 		})
 	}
-	
+
 	if expanded.AuthorizationURL != "" {
 		expanded.AuthorizationURL = envVarPattern.ReplaceAllStringFunc(expanded.AuthorizationURL, func(match string) string {
 			envVar := match[2 : len(match)-1] // Remove ${ and }
@@ -128,7 +128,7 @@ func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
 			return match // Keep original if env var not found
 		})
 	}
-	
+
 	if expanded.TokenURL != "" {
 		expanded.TokenURL = envVarPattern.ReplaceAllStringFunc(expanded.TokenURL, func(match string) string {
 			envVar := match[2 : len(match)-1] // Remove ${ and }
@@ -138,6 +138,6 @@ func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
 			return match // Keep original if env var not found
 		})
 	}
-	
+
 	return expanded
 }
