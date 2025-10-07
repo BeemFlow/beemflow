@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -923,10 +924,41 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 		RefreshToken string `json:"refresh_token"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		utils.Error("Failed to parse token response: %v", err)
-		http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		utils.Error("Failed to read token response body: %v", err)
+		http.Error(w, "Failed to read token response", http.StatusInternalServerError)
 		return
+	}
+
+	// Check content type to determine parsing method
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		// Parse as JSON (Google, most providers)
+		if err := json.Unmarshal(body, &tokenResp); err != nil {
+			utils.Error("Failed to parse JSON token response: %v", err)
+			http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Parse as form-encoded (GitHub, some others)
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			utils.Error("Failed to parse form-encoded token response: %v", err)
+			http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
+			return
+		}
+		
+		tokenResp.AccessToken = values.Get("access_token")
+		tokenResp.TokenType = values.Get("token_type")
+		tokenResp.RefreshToken = values.Get("refresh_token")
+		
+		if expiresInStr := values.Get("expires_in"); expiresInStr != "" {
+			if expiresIn, err := strconv.Atoi(expiresInStr); err == nil {
+				tokenResp.ExpiresIn = expiresIn
+			}
+		}
 	}
 
 	// Store the credentials
