@@ -383,7 +383,7 @@ func handleInstallToolCLI(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to read from stdin: %w", err)
 			}
-			result, err = InstallToolFromManifest(context.Background(), string(data))
+			result, _ = InstallToolFromManifest(context.Background(), string(data))
 		} else if _, statErr := os.Stat(arg); statErr == nil {
 			// It's a file
 			result, err = InstallToolFromManifest(context.Background(), arg)

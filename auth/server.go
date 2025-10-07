@@ -436,13 +436,13 @@ func (t *TokenStore) Create(ctx context.Context, info oauth2.TokenInfo) error {
 		Scope:            info.GetScope(),
 		Code:             info.GetCode(),
 		CodeCreateAt:     info.GetCodeCreateAt(),
-		CodeExpiresIn:    time.Duration(info.GetCodeExpiresIn()) * time.Second,
+		CodeExpiresIn:    info.GetCodeExpiresIn() * time.Second,
 		Access:           info.GetAccess(),
 		AccessCreateAt:   info.GetAccessCreateAt(),
-		AccessExpiresIn:  time.Duration(info.GetAccessExpiresIn()) * time.Second,
+		AccessExpiresIn:  info.GetAccessExpiresIn() * time.Second,
 		Refresh:          info.GetRefresh(),
 		RefreshCreateAt:  info.GetRefreshCreateAt(),
-		RefreshExpiresIn: time.Duration(info.GetRefreshExpiresIn()) * time.Second,
+		RefreshExpiresIn: info.GetRefreshExpiresIn() * time.Second,
 	}
 
 	return t.store.SaveOAuthToken(ctx, token)

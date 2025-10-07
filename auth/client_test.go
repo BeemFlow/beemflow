@@ -78,7 +78,7 @@ func TestOAuthClient_GetToken_Expired(t *testing.T) {
 
 	// Since we don't have a real OAuth provider set up for refreshing,
 	// the token refresh will fail, but we should still get the expired token
-	token, err := client.GetToken(ctx, "google", "sheets")
+	token, _ := client.GetToken(ctx, "google", "sheets")
 	// We expect an error due to failed refresh, but the token should be returned
 	if token != "expired-token" {
 		t.Errorf("Expected token 'expired-token', got %s", token)
