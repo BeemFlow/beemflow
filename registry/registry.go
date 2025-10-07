@@ -33,8 +33,9 @@ type RegistryEntry struct {
 	Icon              string            `json:"icon,omitempty"`
 	AuthorizationURL  string            `json:"authorization_url,omitempty"`
 	TokenURL          string            `json:"token_url,omitempty"`
-	Scopes            []string          `json:"scopes,omitempty"`
+	Scopes            []OAuthScope      `json:"scopes,omitempty"`
 	ScopeDescriptions map[string]string `json:"scope_descriptions,omitempty"`
+	RequiredScopes    []OAuthScope      `json:"required_scopes,omitempty"`
 	ClientID          string            `json:"client_id,omitempty"`
 	ClientSecret      string            `json:"client_secret,omitempty"`
 }

@@ -244,6 +244,89 @@ body {
     border-top: 1px solid var(--border-color);
 }
 
+/* Scope selection styles */
+.scope-selection {
+    margin: 1rem 0;
+}
+
+.scope-item {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: var(--light-bg);
+    border-radius: var(--border-radius);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.scope-item:hover {
+    border-color: var(--primary-color);
+    background: #f0f8ff;
+}
+
+.scope-item label {
+    display: flex;
+    align-items: flex-start;
+    cursor: pointer;
+    width: 100%;
+}
+
+.scope-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-right: 12px;
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: var(--primary-color);
+}
+
+.scope-item input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.scope-details {
+    flex: 1;
+}
+
+.scope-name {
+    font-weight: 500;
+    color: var(--dark-text);
+    margin-bottom: 0.25rem;
+    font-size: 0.95rem;
+}
+
+.scope-description {
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.required-badge {
+    display: inline-block;
+    background: var(--warning-color);
+    color: #856404;
+    padding: 0.2rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-top: 0.5rem;
+}
+
+.scope-note {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: #e8f4f8;
+    border-left: 4px solid var(--primary-color);
+    border-radius: 0 var(--border-radius) var(--border-radius) 0;
+}
+
+.scope-note small {
+    color: #0c5460;
+    font-size: 0.85rem;
+}
+
 .footer {
     text-align: center;
     color: rgba(255, 255, 255, 0.8);
