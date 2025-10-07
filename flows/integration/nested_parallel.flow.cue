@@ -25,13 +25,13 @@ steps: [
 					text: "UPPER: {{ item }}"
 				}
 			},
-			{
-				id: "length"
-				use: "core.echo"
-				with: {
-					text: "Length: 5"
-				}
-			},
+		{
+			id: "length"
+			use: "core.echo"
+			with: {
+				text: "Length: {{ len(item) }}"
+			}
+		},
 			{
 				id: "reverse"
 				use: "core.echo"
