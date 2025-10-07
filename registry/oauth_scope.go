@@ -1,6 +1,10 @@
 package registry
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/beemflow/beemflow/utils"
+)
 
 // OAuthScope represents an OAuth scope with automatic string formatting
 type OAuthScope string
@@ -14,7 +18,7 @@ func (s OAuthScope) String() string {
 		// Remove common prefixes and make it more readable
 		lastPart = strings.ReplaceAll(lastPart, "_", " ")
 		lastPart = strings.ReplaceAll(lastPart, ".", " ")
-		return strings.Title(lastPart)
+		return utils.ToTitle(lastPart)
 	}
 	return string(s)
 }

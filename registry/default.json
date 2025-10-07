@@ -847,5 +847,276 @@
       "Authorization": "$oauth:github:default",
       "Content-Type": "application/json"
     }
+  },
+  {
+    "type": "oauth_provider",
+    "name": "x",
+    "display_name": "X (Twitter)",
+    "icon": "🐦",
+    "authorization_url": "https://twitter.com/i/oauth2/authorize",
+    "token_url": "https://api.twitter.com/2/oauth2/token",
+    "client_id": "${X_CLIENT_ID}",
+    "client_secret": "${X_CLIENT_SECRET}",
+    "scopes": [
+      "users.read",
+      "tweet.read",
+      "tweet.write",
+      "tweet.moderate.write",
+      "users.email",
+      "follows.read",
+      "follows.write",
+      "offline.access",
+      "space.read",
+      "mute.read",
+      "mute.write",
+      "like.read",
+      "like.write",
+      "list.read",
+      "list.write",
+      "block.read",
+      "block.write",
+      "bookmark.read",
+      "bookmark.write",
+      "media.write"
+    ],
+    "required_scopes": [
+      "users.read"
+    ],
+    "scope_descriptions": {
+      "tweet.read": "All the Tweets you can view, including Tweets from protected accounts",
+      "tweet.write": "Tweet and Retweet for you",
+      "tweet.moderate.write": "Hide and unhide replies to your Tweets",
+      "users.email": "Email from an authenticated user",
+      "users.read": "Any account you can view, including protected accounts",
+      "follows.read": "People who follow you and people who you follow",
+      "follows.write": "Follow and unfollow people for you",
+      "offline.access": "Stay connected to your account until you revoke access",
+      "space.read": "All the Spaces you can view",
+      "mute.read": "Accounts you've muted",
+      "mute.write": "Mute and unmute accounts for you",
+      "like.read": "Tweets you've liked and likes you can view",
+      "like.write": "Like and un-like Tweets for you",
+      "list.read": "Lists, list members, and list followers of lists you've created or are a member of, including private lists",
+      "list.write": "Create and manage Lists for you",
+      "block.read": "Accounts you've blocked",
+      "block.write": "Block and unblock accounts for you",
+      "bookmark.read": "Get Bookmarked Tweets from an authenticated user",
+      "bookmark.write": "Bookmark and remove Bookmarks from Tweets",
+      "media.write": "Upload media"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "x.user.me",
+    "description": "Get the authenticated user's profile information",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "user.fields": {
+          "type": "string",
+          "description": "Comma-separated list of user fields to include",
+          "default": "id,name,username,public_metrics,verified,description"
+        }
+      }
+    },
+    "endpoint": "https://api.twitter.com/2/users/me",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:x:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "x.tweets.timeline",
+    "description": "Get tweets from the authenticated user's home timeline",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of tweets to return (5-100)",
+          "minimum": 5,
+          "maximum": 100,
+          "default": 10
+        },
+        "tweet.fields": {
+          "type": "string",
+          "description": "Comma-separated list of tweet fields to include",
+          "default": "id,text,author_id,created_at,public_metrics,context_annotations"
+        },
+        "user.fields": {
+          "type": "string",
+          "description": "Comma-separated list of user fields to include",
+          "default": "id,name,username,verified"
+        },
+        "expansions": {
+          "type": "string",
+          "description": "Comma-separated list of expansions",
+          "default": "author_id"
+        }
+      }
+    },
+    "endpoint": "https://api.twitter.com/2/users/me/timelines/reverse_chronological",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:x:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "x.tweets.post",
+    "description": "Post a new tweet to X (Twitter)",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The text content of the tweet",
+          "maxLength": 280
+        },
+        "reply": {
+          "type": "object",
+          "description": "Tweet to reply to",
+          "properties": {
+            "in_reply_to_tweet_id": {
+              "type": "string",
+              "description": "ID of the tweet to reply to"
+            }
+          }
+        },
+        "media": {
+          "type": "object",
+          "description": "Media to attach to the tweet",
+          "properties": {
+            "media_ids": {
+              "type": "array",
+              "description": "Array of media IDs to attach",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "poll": {
+          "type": "object",
+          "description": "Poll to include in the tweet",
+          "properties": {
+            "options": {
+              "type": "array",
+              "description": "Poll options (2-4 options)",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 4
+            },
+            "duration_minutes": {
+              "type": "integer",
+              "description": "Poll duration in minutes (5-10080)",
+              "minimum": 5,
+              "maximum": 10080,
+              "default": 1440
+            }
+          }
+        }
+      }
+    },
+    "endpoint": "https://api.twitter.com/2/tweets",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:x:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "x.tweets.user_timeline",
+    "description": "Get tweets from a specific user's timeline",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "user_id"
+      ],
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "The ID of the user whose tweets to retrieve"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of tweets to return (5-100)",
+          "minimum": 5,
+          "maximum": 100,
+          "default": 10
+        },
+        "tweet.fields": {
+          "type": "string",
+          "description": "Comma-separated list of tweet fields to include",
+          "default": "id,text,author_id,created_at,public_metrics,context_annotations"
+        },
+        "exclude": {
+          "type": "string",
+          "description": "Comma-separated list of tweet types to exclude",
+          "enum": [
+            "retweets",
+            "replies"
+          ]
+        }
+      }
+    },
+    "endpoint": "https://api.twitter.com/2/users/{user_id}/tweets",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:x:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "x.tweets.like",
+    "description": "Like a tweet",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "tweet_id"
+      ],
+      "properties": {
+        "tweet_id": {
+          "type": "string",
+          "description": "The ID of the tweet to like"
+        }
+      }
+    },
+    "endpoint": "https://api.twitter.com/2/users/me/likes",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:x:default",
+      "Content-Type": "application/json"
+    }
   }
 ]

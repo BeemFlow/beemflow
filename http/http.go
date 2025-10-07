@@ -106,7 +106,7 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Setup OAuth server endpoints only if OAuth server is enabled
 	var oauthServer *auth.OAuthServer
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
-		_, oauthServer = setupOAuthServer(cfg, store)
+		oauthServer = setupOAuthServer(cfg, store)
 		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
 			sessionStore.Close()
 			baseCleanup()

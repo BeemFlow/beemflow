@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -25,7 +26,7 @@ import (
 )
 
 // setupOAuthServer creates and returns an OAuth server instance
-func setupOAuthServer(cfg *config.Config, store storage.Storage) (*auth.OAuthConfig, *auth.OAuthServer) {
+func setupOAuthServer(cfg *config.Config, store storage.Storage) *auth.OAuthServer {
 	// Create OAuth server configuration
 	oauthCfg := &auth.OAuthConfig{
 		Issuer:                  getOAuthIssuerURL(cfg),
@@ -39,12 +40,12 @@ func setupOAuthServer(cfg *config.Config, store storage.Storage) (*auth.OAuthCon
 	// Create OAuth server
 	oauthServer := auth.NewOAuthServer(oauthCfg, store)
 
-	return oauthCfg, oauthServer
+	return oauthServer
 }
 
 // SetupOAuthHandlers adds OAuth 2.1 endpoints to the HTTP server
 func SetupOAuthHandlers(mux *http.ServeMux, cfg *config.Config, store storage.Storage) error {
-	_, oauthServer := setupOAuthServer(cfg, store)
+	oauthServer := setupOAuthServer(cfg, store)
 
 	// Register OAuth endpoints
 	mux.HandleFunc("/.well-known/oauth-authorization-server", oauthServer.HandleMetadataDiscovery)
@@ -109,7 +110,6 @@ func setupMCPRoutes(mux *http.ServeMux, store storage.Storage, oauthServer *auth
 		utils.Debug("MCP request: method=%s, id=%v", method, id)
 
 		w.Header().Set("Content-Type", "application/json")
-		ctx := r.Context()
 
 		// Handle MCP protocol methods
 		switch method {
@@ -193,7 +193,7 @@ func setupMCPRoutes(mux *http.ServeMux, store storage.Storage, oauthServer *auth
 
 			// Call the tool handler (this will be type-safe based on the generated handlers)
 			// For now, we'll handle the most common case - operations that take structured args
-			result, err := callToolHandler(ctx, handler, toolArgs)
+			result, err := callToolHandler(handler, toolArgs)
 			if err != nil {
 				utils.Warn("MCP tool execution failed: %v", err)
 				response := map[string]interface{}{
@@ -245,7 +245,7 @@ func setupMCPRoutes(mux *http.ServeMux, store storage.Storage, oauthServer *auth
 }
 
 // callToolHandler dynamically calls an MCP tool handler with the provided arguments
-func callToolHandler(ctx context.Context, handler interface{}, args map[string]interface{}) (interface{}, error) {
+func callToolHandler(handler interface{}, args map[string]interface{}) (interface{}, error) {
 	handlerValue := reflect.ValueOf(handler)
 	handlerType := handlerValue.Type()
 
@@ -487,7 +487,7 @@ func (a *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 }
 
 // unauthorized sends an HTTP 401 Unauthorized response with OAuth challenge
-func (a *AuthMiddleware) unauthorized(w http.ResponseWriter, r *http.Request, message string) {
+func (a *AuthMiddleware) unauthorized(w http.ResponseWriter, _ *http.Request, message string) {
 	// According to MCP spec, when authorization is required but not provided,
 	// servers should respond with HTTP 401 Unauthorized
 
@@ -552,12 +552,17 @@ func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost for development)
+// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS (except localhost and ngrok for development)
 func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	// Allow HTTP for localhost development
 	if r.Host == "localhost:8080" || r.Host == "127.0.0.1:8080" ||
 		r.Host == "localhost:3333" || r.Host == "127.0.0.1:3333" ||
 		r.Host == "localhost:3001" || r.Host == "127.0.0.1:3001" {
+		return true
+	}
+
+	// Allow HTTP for ngrok tunnels (development)
+	if strings.Contains(r.Host, ".ngrok-free.dev") || strings.Contains(r.Host, ".ngrok.io") {
 		return true
 	}
 
@@ -584,11 +589,29 @@ type WebOAuthHandler struct {
 
 // OAuthAuthState tracks the state of an OAuth authorization flow
 type OAuthAuthState struct {
-	Provider    string
-	Integration string
-	UserID      string // From MCP client authentication
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
+	Provider      string
+	Integration   string
+	UserID        string // From MCP client authentication
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	CodeVerifier  string // PKCE code verifier
+	CodeChallenge string // PKCE code challenge
+}
+
+// generatePKCEChallenge generates a PKCE code verifier and challenge
+func generatePKCEChallenge() (verifier, challenge string, err error) {
+	// Generate a random code verifier (43-128 characters)
+	verifierBytes := make([]byte, 32)
+	if _, err := rand.Read(verifierBytes); err != nil {
+		return "", "", err
+	}
+	verifier = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(verifierBytes)
+
+	// Generate code challenge using SHA256
+	hash := sha256.Sum256([]byte(verifier))
+	challenge = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hash[:])
+
+	return verifier, challenge, nil
 }
 
 // NewWebOAuthHandler creates a new web OAuth handler
@@ -795,9 +818,17 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 	rand.Read(stateBytes)
 	state := base64.URLEncoding.EncodeToString(stateBytes)
 
+	// Generate PKCE challenge for X OAuth 2.0 (required by X)
+	codeVerifier, codeChallenge, err := generatePKCEChallenge()
+	if err != nil {
+		utils.Error("Failed to generate PKCE challenge: %v", err)
+		http.Error(w, "Failed to generate PKCE challenge", http.StatusInternalServerError)
+		return
+	}
+
 	// Get user ID from session or create anonymous session
 	session, _ := GetSessionFromRequest(r)
-	userID := "anonymous"
+	var userID string
 	if session != nil {
 		userID = session.UserID
 	} else {
@@ -811,13 +842,15 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 		userID = session.UserID
 	}
 
-	// Store auth state
+	// Store auth state with PKCE parameters
 	h.authStates[state] = &OAuthAuthState{
-		Provider:    providerName,
-		Integration: integration,
-		UserID:      userID,
-		CreatedAt:   time.Now(),
-		ExpiresAt:   time.Now().Add(10 * time.Minute), // 10 minute expiry
+		Provider:      providerName,
+		Integration:   integration,
+		UserID:        userID,
+		CreatedAt:     time.Now(),
+		ExpiresAt:     time.Now().Add(10 * time.Minute), // 10 minute expiry
+		CodeVerifier:  codeVerifier,
+		CodeChallenge: codeChallenge,
 	}
 
 	// Build authorization URL
@@ -828,12 +861,24 @@ func (h *WebOAuthHandler) HandleOAuthAuthorize(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Dynamically determine the redirect URI based on the request
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/oauth/callback", scheme, r.Host)
+
 	query := authURL.Query()
 	query.Set("client_id", provider.ClientID)
-	query.Set("redirect_uri", h.baseURL+"/oauth/callback")
+	query.Set("redirect_uri", redirectURI)
 	query.Set("scope", strings.Join(registry.ScopesToStrings(provider.Scopes), " "))
 	query.Set("response_type", "code")
 	query.Set("state", state)
+
+	// Add PKCE parameters (required by X OAuth 2.0)
+	query.Set("code_challenge", codeChallenge)
+	query.Set("code_challenge_method", "S256")
+
 	authURL.RawQuery = query.Encode()
 
 	// Prepare template data
@@ -895,15 +940,35 @@ func (h *WebOAuthHandler) HandleOAuthCallback(w http.ResponseWriter, r *http.Req
 
 	// Exchange code for tokens
 	tokenURL := provider.TokenURL
+
+	// Dynamically determine the redirect URI based on the request (must match authorization)
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/oauth/callback", scheme, r.Host)
+
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
-		"redirect_uri":  {h.baseURL + "/oauth/callback"},
-		"client_id":     {provider.ClientID},
-		"client_secret": {provider.ClientSecret},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {authState.CodeVerifier}, // PKCE code verifier
 	}
 
-	resp, err := http.PostForm(tokenURL, data)
+	// Create HTTP request with Basic Auth for confidential clients (X OAuth 2.0 requirement)
+	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		utils.Error("Failed to create token request: %v", err)
+		http.Error(w, "Failed to create token request", http.StatusInternalServerError)
+		return
+	}
+
+	// Set Basic Auth header with client credentials
+	req.SetBasicAuth(provider.ClientID, provider.ClientSecret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		utils.Error("Failed to exchange code for tokens")
 		http.Error(w, "Failed to exchange code for tokens", http.StatusInternalServerError)
