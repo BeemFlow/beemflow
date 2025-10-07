@@ -98,7 +98,12 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		return nil, nil, err
 	}
 
-	// Setup OAuth endpoints only if OAuth is enabled
+	// Setup OAuth client routes (always enabled for connecting to external services)
+	baseURL := getOAuthIssuerURL(cfg)
+	registry := api.GetDefaultRegistry()
+	RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
+
+	// Setup OAuth server endpoints only if OAuth server is enabled
 	var oauthServer *auth.OAuthServer
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
 		_, oauthServer = setupOAuthServer(cfg, store)
@@ -107,13 +112,6 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 			baseCleanup()
 			return nil, nil, err
 		}
-
-		// Setup web-based OAuth authorization flows
-		baseURL := getOAuthIssuerURL(cfg)
-		// Use default registry for OAuth providers
-		registry := api.GetDefaultRegistry()
-		RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
-
 	}
 
 	// Generate and register all operation handlers
