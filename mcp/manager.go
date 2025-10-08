@@ -51,10 +51,15 @@ func NewMCPCommand(info config.MCPServerConfig) *exec.Cmd {
 	for k, v := range info.Env {
 		// Expand environment variables using shared utility
 		expanded := utils.ExpandEnvValue(v)
-		// Only add if the value was successfully expanded (changed) or is a literal value
-		if expanded != v || !strings.HasPrefix(v, "$env:") {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, expanded))
+
+		// If it's an $env: reference that didn't expand, skip it
+		// (the env var doesn't exist, so don't set it to the literal string)
+		if strings.HasPrefix(v, "$env:") && expanded == v {
+			continue
 		}
+
+		// Add the expanded value (or literal value if not $env:)
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, expanded))
 	}
 	return cmd
 }
