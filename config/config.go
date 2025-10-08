@@ -396,32 +396,16 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// InjectEnvVarsIntoRegistry walks a registry config and replaces any string field set to "$env:VARNAME" or "${VARNAME}" or missing required fields with the value from the environment.
+// InjectEnvVarsIntoRegistry walks a registry config and replaces any string field set to "$env:VARNAME" or missing required fields with the value from the environment.
 // It works generically for any registry type and any field.
 func InjectEnvVarsIntoRegistry(reg map[string]any) {
-	envVarPattern := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
 	for k, v := range reg {
 		str, ok := v.(string)
 		if ok {
-			// Handle $env:VARNAME format
-			if strings.HasPrefix(str, "$env:") {
-				envVar := strings.TrimPrefix(str, "$env:")
-				if val := os.Getenv(envVar); val != "" {
-					reg[k] = val
-				}
-			} else {
-				// Handle ${VARNAME} format
-				expanded := envVarPattern.ReplaceAllStringFunc(str, func(match string) string {
-					envVar := match[2 : len(match)-1] // Remove ${ and }
-					if val := os.Getenv(envVar); val != "" {
-						return val
-					}
-					return match // Keep original if env var not found
-				})
-				if expanded != str {
-					reg[k] = expanded
-				}
+			// Use shared utility to expand $env:VARNAME format
+			expanded := utils.ExpandEnvValue(str)
+			if expanded != str {
+				reg[k] = expanded
 			}
 		} else if v == nil {
 			// If the field is nil, check for a matching env var by convention

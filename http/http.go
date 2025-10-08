@@ -15,7 +15,10 @@ import (
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
+	"github.com/beemflow/beemflow/event"
+	"github.com/beemflow/beemflow/registry"
 	"github.com/beemflow/beemflow/utils"
+	"github.com/beemflow/beemflow/webhook"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -117,6 +120,12 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Generate and register all operation handlers
 	api.GenerateHTTPHandlers(mux)
 
+	// Setup webhook endpoints
+	webhookManager, err := setupWebhookRoutes(mux, cfg)
+	if err != nil {
+		utils.Warn("Failed to setup webhook routes: %v", err)
+	}
+
 	// Setup MCP routes (auth required only when OAuth server is running)
 	mcpRequireAuth := oauthServer != nil
 	setupMCPRoutes(mux, store, oauthServer, mcpRequireAuth)
@@ -139,6 +148,11 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 
 	// Create combined cleanup function
 	cleanup := func() {
+		if webhookManager != nil {
+			if err := webhookManager.Close(); err != nil {
+				utils.Error("Failed to close webhook manager: %v", err)
+			}
+		}
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
@@ -373,4 +387,30 @@ func UpdateRunEvent(id uuid.UUID, newEvent map[string]any) error {
 
 	// Save the updated run
 	return store.SaveRun(context.Background(), run)
+}
+
+// setupWebhookRoutes initializes webhook endpoints for registered providers
+func setupWebhookRoutes(mux *http.ServeMux, cfg *config.Config) (*webhook.Manager, error) {
+	// Get event bus
+	eventBus, err := event.NewEventBusFromConfig(cfg.Event)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create event bus: %w", err)
+	}
+
+	// Get registry manager using the factory pattern
+	factory := registry.NewFactory()
+	registryManager := factory.CreateStandardManager(context.Background(), cfg)
+	
+	// Create webhook manager
+	webhookManager := webhook.NewManager(mux, eventBus, registryManager)
+	
+	// Load providers with webhooks from registry
+	ctx := context.Background()
+	if err := webhookManager.LoadProvidersWithWebhooks(ctx); err != nil {
+		webhookManager.Close() // Cleanup on error
+		return nil, fmt.Errorf("failed to load webhook providers: %w", err)
+	}
+	
+	utils.Info("Webhook routes setup completed")
+	return webhookManager, nil
 }
