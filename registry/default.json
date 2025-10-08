@@ -1130,11 +1130,26 @@
     "client_secret": "${SLACK_CLIENT_SECRET}",
     "scopes": [
       "users:read",
+      "users:read.email",
+      "users:profile:read",
       "chat:write",
       "channels:read",
       "channels:join",
       "channels:history",
-      "channels:manage"
+      "channels:manage",
+      "groups:read",
+      "groups:history",
+      "im:read",
+      "im:history",
+      "im:write",
+      "mpim:read",
+      "mpim:history",
+      "files:read",
+      "files:write",
+      "reactions:read",
+      "reactions:write",
+      "search:read",
+      "team:read"
     ],
     "required_scopes": [
       "channels:read",
@@ -1143,11 +1158,26 @@
     ],
     "scope_descriptions": {
       "users:read": "View people in a workspace",
+      "users:read.email": "View email addresses of people in a workspace",
+      "users:profile:read": "View profile details about people in a workspace",
       "chat:write": "Send messages as the app",
       "channels:read": "View basic information about public channels in a workspace",
       "channels:join": "Join public channels in a workspace",
       "channels:history": "View messages and other content in public channels that BeemBeem has been added to",
-      "channels:manage": "Manage public channels that BeemBeem has been added to and create new ones"
+      "channels:manage": "Manage public channels that BeemBeem has been added to and create new ones",
+      "groups:read": "View basic information about private channels",
+      "groups:history": "View messages and other content in private channels",
+      "im:read": "View basic information about direct messages",
+      "im:history": "View messages and other content in direct messages",
+      "im:write": "Start direct messages with people",
+      "mpim:read": "View basic information about group direct messages",
+      "mpim:history": "View messages and other content in group direct messages",
+      "files:read": "View files shared in channels and conversations",
+      "files:write": "Upload, edit, and delete files as the app",
+      "reactions:read": "View emoji reactions and their associated content",
+      "reactions:write": "Add and edit emoji reactions",
+      "search:read": "Search messages, files, and other content",
+      "team:read": "View the workspace name, domain, and icon"
     }
   },
   {
