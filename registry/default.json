@@ -1118,5 +1118,669 @@
       "Authorization": "$oauth:x:default",
       "Content-Type": "application/json"
     }
+  },
+  {
+    "type": "oauth_provider",
+    "name": "slack",
+    "display_name": "Slack",
+    "icon": "💬",
+    "authorization_url": "https://slack.com/oauth/v2/authorize",
+    "token_url": "https://slack.com/api/oauth.v2.access",
+    "client_id": "${SLACK_CLIENT_ID}",
+    "client_secret": "${SLACK_CLIENT_SECRET}",
+    "scopes": [
+      "users:read",
+      "users:read.email",
+      "users:profile:read",
+      "chat:write",
+      "channels:read",
+      "channels:join",
+      "channels:history",
+      "channels:manage",
+      "groups:read",
+      "groups:history",
+      "im:read",
+      "im:history",
+      "im:write",
+      "mpim:read",
+      "mpim:history",
+      "files:read",
+      "files:write",
+      "reactions:read",
+      "reactions:write",
+      "search:read",
+      "team:read"
+    ],
+    "required_scopes": [
+      "channels:read",
+      "chat:write",
+      "users:read"
+    ],
+    "scope_descriptions": {
+      "users:read": "View people in a workspace",
+      "users:read.email": "View email addresses of people in a workspace",
+      "users:profile:read": "View profile details about people in a workspace",
+      "chat:write": "Send messages as the app",
+      "channels:read": "View basic information about public channels in a workspace",
+      "channels:join": "Join public channels in a workspace",
+      "channels:history": "View messages and other content in public channels that BeemBeem has been added to",
+      "channels:manage": "Manage public channels that BeemBeem has been added to and create new ones",
+      "groups:read": "View basic information about private channels",
+      "groups:history": "View messages and other content in private channels",
+      "im:read": "View basic information about direct messages",
+      "im:history": "View messages and other content in direct messages",
+      "im:write": "Start direct messages with people",
+      "mpim:read": "View basic information about group direct messages",
+      "mpim:history": "View messages and other content in group direct messages",
+      "files:read": "View files shared in channels and conversations",
+      "files:write": "Upload, edit, and delete files as the app",
+      "reactions:read": "View emoji reactions and their associated content",
+      "reactions:write": "Add and edit emoji reactions",
+      "search:read": "Search messages, files, and other content",
+      "team:read": "View the workspace name, domain, and icon"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.auth.test",
+    "description": "Test authentication and get bot/user info",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {}
+    },
+    "endpoint": "https://slack.com/api/auth.test",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.conversations.list",
+    "description": "List conversations (channels) in a workspace",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "types": {
+          "type": "string",
+          "description": "Mix and match channel types by providing a comma-separated list",
+          "default": "public_channel"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "The maximum number of items to return",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Paginate through collections by setting cursor to next_cursor"
+        },
+        "exclude_archived": {
+          "type": "boolean",
+          "description": "Set to true to exclude archived channels",
+          "default": false
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/conversations.list",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.conversations.history",
+    "description": "Fetch conversation history for a channel",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Conversation ID to fetch history for"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Number of messages to return",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Paginate through collections by setting cursor to next_cursor"
+        },
+        "latest": {
+          "type": "string",
+          "description": "End of time range of messages to include in results"
+        },
+        "oldest": {
+          "type": "string",
+          "description": "Start of time range of messages to include in results"
+        },
+        "inclusive": {
+          "type": "boolean",
+          "description": "Include messages with latest or oldest timestamp in results",
+          "default": false
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/conversations.history",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.conversations.join",
+    "description": "Join an existing conversation",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "ID of conversation to join"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/conversations.join",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.conversations.create",
+    "description": "Create a new channel",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the public or private channel to create"
+        },
+        "is_private": {
+          "type": "boolean",
+          "description": "Create a private channel instead of a public one",
+          "default": false
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/conversations.create",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.chat.postMessage",
+    "description": "Send a message to a channel",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel",
+        "text"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel, private group, or IM channel to send message to"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text of the message to send"
+        },
+        "username": {
+          "type": "string",
+          "description": "Set your bot's user name"
+        },
+        "icon_emoji": {
+          "type": "string",
+          "description": "Emoji to use as the icon for this message"
+        },
+        "icon_url": {
+          "type": "string",
+          "description": "URL to an image to use as the icon for this message"
+        },
+        "thread_ts": {
+          "type": "string",
+          "description": "Provide another message's ts value to make this message a reply"
+        },
+        "reply_broadcast": {
+          "type": "boolean",
+          "description": "Used in conjunction with thread_ts to broadcast reply to channel",
+          "default": false
+        },
+        "unfurl_links": {
+          "type": "boolean",
+          "description": "Pass true to enable unfurling of primarily text-based content",
+          "default": true
+        },
+        "unfurl_media": {
+          "type": "boolean",
+          "description": "Pass false to disable unfurling of media content",
+          "default": true
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/chat.postMessage",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.chat.update",
+    "description": "Update a message",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel",
+        "ts",
+        "text"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel containing the message to be updated"
+        },
+        "ts": {
+          "type": "string",
+          "description": "Timestamp of the message to be updated"
+        },
+        "text": {
+          "type": "string",
+          "description": "New text for the message"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/chat.update",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.chat.delete",
+    "description": "Delete a message",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel",
+        "ts"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel containing the message to be deleted"
+        },
+        "ts": {
+          "type": "string",
+          "description": "Timestamp of the message to be deleted"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/chat.delete",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.users.list",
+    "description": "List all users in a workspace",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "The maximum number of items to return",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 0
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Paginate through collections by setting cursor to next_cursor"
+        },
+        "include_locale": {
+          "type": "boolean",
+          "description": "Set this to true to receive the locale for users",
+          "default": false
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/users.list",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.users.info",
+    "description": "Get information about a user",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "user"
+      ],
+      "properties": {
+        "user": {
+          "type": "string",
+          "description": "User to get info on"
+        },
+        "include_locale": {
+          "type": "boolean",
+          "description": "Set this to true to receive the locale for this user",
+          "default": false
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/users.info",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.files.upload",
+    "description": "Upload or create a file",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "string",
+          "description": "Comma-separated list of channel names or IDs where the file will be shared"
+        },
+        "content": {
+          "type": "string",
+          "description": "File contents via a POST variable"
+        },
+        "filename": {
+          "type": "string",
+          "description": "Filename of file"
+        },
+        "filetype": {
+          "type": "string",
+          "description": "A file type identifier"
+        },
+        "initial_comment": {
+          "type": "string",
+          "description": "The message text introducing the file in specified channels"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of file"
+        },
+        "thread_ts": {
+          "type": "string",
+          "description": "Provide another message's ts value to upload this file as a reply"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/files.upload",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.files.list",
+    "description": "List files in a workspace",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Filter files appearing in a specific channel"
+        },
+        "user": {
+          "type": "string",
+          "description": "Filter files created by a single user"
+        },
+        "ts_from": {
+          "type": "string",
+          "description": "Filter files created after this timestamp (inclusive)"
+        },
+        "ts_to": {
+          "type": "string",
+          "description": "Filter files created before this timestamp (inclusive)"
+        },
+        "types": {
+          "type": "string",
+          "description": "Filter files by type (e.g., 'images', 'snippets', 'pdfs')"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of items to return per page",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number of results to return",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/files.list",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.reactions.add",
+    "description": "Add a reaction to a message",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel",
+        "name",
+        "timestamp"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel where the message to add reaction to was posted"
+        },
+        "name": {
+          "type": "string",
+          "description": "Reaction (emoji) name"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Timestamp of the message to add reaction to"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/reactions.add",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.reactions.remove",
+    "description": "Remove a reaction from a message",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "channel",
+        "name",
+        "timestamp"
+      ],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel where the message to remove reaction from was posted"
+        },
+        "name": {
+          "type": "string",
+          "description": "Reaction (emoji) name"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Timestamp of the message to remove reaction from"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/reactions.remove",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "slack.search.messages",
+    "description": "Search for messages in a workspace",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of items to return per page",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "page": {
+          "type": "integer",
+          "description": "Page number of results to return",
+          "minimum": 1,
+          "default": 1
+        },
+        "sort": {
+          "type": "string",
+          "description": "Return matches sorted by either score or timestamp",
+          "enum": [
+            "score",
+            "timestamp"
+          ],
+          "default": "score"
+        },
+        "sort_dir": {
+          "type": "string",
+          "description": "Change sort direction to ascending (asc) or descending (desc)",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        }
+      }
+    },
+    "endpoint": "https://slack.com/api/search.messages",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:slack:default",
+      "Content-Type": "application/json"
+    }
   }
 ]
