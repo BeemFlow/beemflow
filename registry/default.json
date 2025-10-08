@@ -1183,47 +1183,88 @@
       "enabled": true,
       "path": "/slack",
       "secret_env": "SLACK_WEBHOOK_SECRET",
+      "signature": {
+        "header": "X-Slack-Signature",
+        "timestamp_header": "X-Slack-Request-Timestamp",
+        "algorithm": "hmac-sha256",
+        "format": "v0={signature}",
+        "max_age": 300
+      },
       "events": [
         {
           "type": "message",
           "topic": "slack.message",
-          "filters": [
-            "channel",
-            "user",
-            "text",
-            "ts",
-            "thread_ts"
-          ]
+          "match": {
+            "type": "event_callback",
+            "event.type": "message"
+          },
+          "extract": {
+            "channel": "event.channel",
+            "user": "event.user",
+            "text": "event.text",
+            "ts": "event.ts",
+            "thread_ts": "event.thread_ts",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
         },
         {
           "type": "app_mention",
           "topic": "slack.mention",
-          "filters": [
-            "channel",
-            "user",
-            "text",
-            "ts"
-          ]
+          "match": {
+            "type": "event_callback",
+            "event.type": "app_mention"
+          },
+          "extract": {
+            "channel": "event.channel",
+            "user": "event.user",
+            "text": "event.text",
+            "ts": "event.ts",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
         },
         {
           "type": "reaction_added",
           "topic": "slack.reaction_added",
-          "filters": [
-            "user",
-            "reaction",
-            "item",
-            "item_user"
-          ]
+          "match": {
+            "type": "event_callback",
+            "event.type": "reaction_added"
+          },
+          "extract": {
+            "user": "event.user",
+            "reaction": "event.reaction",
+            "item": "event.item",
+            "item_user": "event.item_user",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
         },
         {
           "type": "reaction_removed",
           "topic": "slack.reaction_removed",
-          "filters": [
-            "user",
-            "reaction",
-            "item",
-            "item_user"
-          ]
+          "match": {
+            "type": "event_callback",
+            "event.type": "reaction_removed"
+          },
+          "extract": {
+            "user": "event.user",
+            "reaction": "event.reaction",
+            "item": "event.item",
+            "item_user": "event.item_user",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
+        },
+        {
+          "type": "url_verification",
+          "topic": "slack.url_verification",
+          "match": {
+            "type": "url_verification"
+          },
+          "extract": {
+            "challenge": "challenge"
+          }
         }
       ]
     }

@@ -44,17 +44,28 @@ type RegistryEntry struct {
 
 // WebhookConfig defines webhook configuration for a provider
 type WebhookConfig struct {
-	Enabled   bool           `json:"enabled"`
-	Path      string         `json:"path"`        // e.g. "/slack"
-	SecretEnv string         `json:"secret_env"`  // e.g. "SLACK_WEBHOOK_SECRET"
-	Events    []WebhookEvent `json:"events"`
+	Enabled   bool                  `json:"enabled"`
+	Path      string                `json:"path"`        // e.g. "/slack"
+	SecretEnv string                `json:"secret_env"`  // e.g. "SLACK_WEBHOOK_SECRET"
+	Signature *WebhookSignatureConfig `json:"signature,omitempty"` // Signature verification config
+	Events    []WebhookEvent        `json:"events"`
 }
 
-// WebhookEvent defines how a specific event type should be handled
+// WebhookSignatureConfig defines how to verify webhook signatures
+type WebhookSignatureConfig struct {
+	Header          string `json:"header"`            // e.g. "X-Slack-Signature"
+	TimestampHeader string `json:"timestamp_header"`  // e.g. "X-Slack-Request-Timestamp"
+	Algorithm       string `json:"algorithm"`         // e.g. "hmac-sha256"
+	Format          string `json:"format"`            // e.g. "v0={signature}"
+	MaxAge          int    `json:"max_age,omitempty"` // Max age in seconds (default: 300)
+}
+
+// WebhookEvent defines how a specific event type should be handled using JSON path extraction
 type WebhookEvent struct {
-	Type    string   `json:"type"`    // e.g. "message", "app_mention"
-	Topic   string   `json:"topic"`   // e.g. "slack.message", "slack.mention"
-	Filters []string `json:"filters"` // Fields to extract: ["user", "text", "channel"]
+	Type    string            `json:"type"`    // Event identifier (e.g. "message", "push")  
+	Topic   string            `json:"topic"`   // BeemFlow event bus topic (e.g. "slack.message")
+	Match   map[string]any    `json:"match"`   // JSON path conditions to match this event
+	Extract map[string]string `json:"extract"` // JSON path mappings for field extraction
 }
 
 // ListOptions allows filtering and pagination for registry queries.

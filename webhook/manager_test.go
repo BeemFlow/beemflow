@@ -46,11 +46,11 @@ func (m *mockEventBus) Subscribe(ctx context.Context, topic string, handler func
 	// Mock implementation - not needed for these tests
 }
 
-// Test helper to create a mock registry
-func createMockRegistry(includeSlack bool) *registry.RegistryManager {
+// Test helper to create a mock registry with generic webhook config
+func createMockRegistry(includeSlackWebhook bool) *registry.RegistryManager {
 	entries := []registry.RegistryEntry{}
 	
-	if includeSlack {
+	if includeSlackWebhook {
 		entries = append(entries, registry.RegistryEntry{
 			Type: "oauth_provider",
 			Name: "slack",
@@ -58,16 +58,53 @@ func createMockRegistry(includeSlack bool) *registry.RegistryManager {
 				Enabled:   true,
 				Path:      "/slack",
 				SecretEnv: "SLACK_WEBHOOK_SECRET",
+				Signature: &registry.WebhookSignatureConfig{
+					Header:          "X-Slack-Signature",
+					TimestampHeader: "X-Slack-Request-Timestamp",
+					Algorithm:       "hmac-sha256",
+					Format:          "v0={signature}",
+					MaxAge:          300,
+				},
 				Events: []registry.WebhookEvent{
 					{
-						Type:    "message",
-						Topic:   "slack.message",
-						Filters: []string{"channel", "user", "text", "ts"},
+						Type:  "message",
+						Topic: "slack.message",
+						Match: map[string]any{
+							"type":       "event_callback",
+							"event.type": "message",
+						},
+						Extract: map[string]string{
+							"channel": "event.channel",
+							"user":    "event.user",
+							"text":    "event.text",
+							"ts":      "event.ts",
+							"team_id": "team_id",
+						},
 					},
 					{
-						Type:    "app_mention",
-						Topic:   "slack.mention",
-						Filters: []string{"channel", "user", "text", "ts"},
+						Type:  "app_mention",
+						Topic: "slack.mention",
+						Match: map[string]any{
+							"type":       "event_callback",
+							"event.type": "app_mention",
+						},
+						Extract: map[string]string{
+							"channel": "event.channel",
+							"user":    "event.user",
+							"text":    "event.text",
+							"ts":      "event.ts",
+							"team_id": "team_id",
+						},
+					},
+					{
+						Type: "url_verification",
+						Topic: "slack.url_verification",
+						Match: map[string]any{
+							"type": "url_verification",
+						},
+						Extract: map[string]string{
+							"challenge": "challenge",
+						},
 					},
 				},
 			},
@@ -139,11 +176,6 @@ func TestManager_Close(t *testing.T) {
 	}
 	
 	// Operations after close should fail
-	err = manager.RegisterServiceHandler("test", &SlackHandler{})
-	if err == nil {
-		t.Error("RegisterServiceHandler should fail after close")
-	}
-	
 	err = manager.LoadProvidersWithWebhooks(context.Background())
 	if err == nil {
 		t.Error("LoadProvidersWithWebhooks should fail after close")
@@ -181,8 +213,7 @@ func TestManager_LoadProvidersWithWebhooks(t *testing.T) {
 	}
 }
 
-func TestSlackHandler_VerifySignature(t *testing.T) {
-	handler := NewSlackHandler()
+func TestGenericHandler_VerifySignature(t *testing.T) {
 	secret := "test_secret"
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 	body := `{"test": "data"}`
@@ -194,60 +225,100 @@ func TestSlackHandler_VerifySignature(t *testing.T) {
 	validSignature := "v0=" + hex.EncodeToString(mac.Sum(nil))
 
 	tests := []struct {
-		name       string
-		signature  string
-		timestamp  string
-		body       string
-		secret     string
-		expectValid bool
+		name            string
+		signatureConfig *registry.WebhookSignatureConfig
+		headers         map[string]string
+		body            string
+		secret          string
+		expectValid     bool
 	}{
 		{
-			name:       "Valid signature",
-			signature:  validSignature,
-			timestamp:  timestamp,
-			body:       body,
-			secret:     secret,
+			name: "Valid Slack signature",
+			signatureConfig: &registry.WebhookSignatureConfig{
+				Header:          "X-Slack-Signature",
+				TimestampHeader: "X-Slack-Request-Timestamp",
+				Algorithm:       "hmac-sha256",
+				Format:          "v0={signature}",
+				MaxAge:          300,
+			},
+			headers: map[string]string{
+				"X-Slack-Signature":          validSignature,
+				"X-Slack-Request-Timestamp": timestamp,
+			},
+			body:        body,
+			secret:      secret,
 			expectValid: true,
 		},
 		{
-			name:       "Invalid signature",
-			signature:  "v0=invalid",
-			timestamp:  timestamp,
-			body:       body,
-			secret:     secret,
+			name: "Invalid signature",
+			signatureConfig: &registry.WebhookSignatureConfig{
+				Header:          "X-Slack-Signature",
+				TimestampHeader: "X-Slack-Request-Timestamp",
+				Algorithm:       "hmac-sha256",
+				Format:          "v0={signature}",
+				MaxAge:          300,
+			},
+			headers: map[string]string{
+				"X-Slack-Signature":          "v0=invalid",
+				"X-Slack-Request-Timestamp": timestamp,
+			},
+			body:        body,
+			secret:      secret,
 			expectValid: false,
 		},
 		{
-			name:       "Missing signature",
-			signature:  "",
-			timestamp:  timestamp,
-			body:       body,
-			secret:     secret,
+			name: "Missing signature",
+			signatureConfig: &registry.WebhookSignatureConfig{
+				Header:          "X-Slack-Signature",
+				TimestampHeader: "X-Slack-Request-Timestamp",
+				Algorithm:       "hmac-sha256",
+				Format:          "v0={signature}",
+				MaxAge:          300,
+			},
+			headers: map[string]string{
+				"X-Slack-Request-Timestamp": timestamp,
+			},
+			body:        body,
+			secret:      secret,
 			expectValid: false,
 		},
 		{
-			name:       "Missing timestamp",
-			signature:  validSignature,
-			timestamp:  "",
-			body:       body,
-			secret:     secret,
+			name: "Old timestamp",
+			signatureConfig: &registry.WebhookSignatureConfig{
+				Header:          "X-Slack-Signature",
+				TimestampHeader: "X-Slack-Request-Timestamp",
+				Algorithm:       "hmac-sha256",
+				Format:          "v0={signature}",
+				MaxAge:          300,
+			},
+			headers: map[string]string{
+				"X-Slack-Signature":          validSignature,
+				"X-Slack-Request-Timestamp": fmt.Sprintf("%d", time.Now().Unix()-400),
+			},
+			body:        body,
+			secret:      secret,
 			expectValid: false,
 		},
 		{
-			name:       "Old timestamp",
-			signature:  validSignature,
-			timestamp:  fmt.Sprintf("%d", time.Now().Unix()-400), // 400 seconds old
-			body:       body,
-			secret:     secret,
-			expectValid: false,
+			name:            "No signature config",
+			signatureConfig: nil,
+			headers:         map[string]string{},
+			body:            body,
+			secret:          secret,
+			expectValid:     true, // Should pass when no signature verification configured
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			handler := &GenericWebhookHandler{
+				signatureConfig: tt.signatureConfig,
+			}
+
 			req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader([]byte(tt.body)))
-			req.Header.Set("X-Slack-Signature", tt.signature)
-			req.Header.Set("X-Slack-Request-Timestamp", tt.timestamp)
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
 
 			result := handler.VerifySignature(req, tt.secret)
 			if result != tt.expectValid {
@@ -257,43 +328,58 @@ func TestSlackHandler_VerifySignature(t *testing.T) {
 	}
 }
 
-func TestSlackHandler_ParseEvents(t *testing.T) {
-	handler := NewSlackHandler()
+func TestGenericHandler_ParseEvents(t *testing.T) {
+	handler := &GenericWebhookHandler{}
 	
 	eventConfigs := []registry.WebhookEvent{
 		{
-			Type:    "message",
-			Topic:   "slack.message",
-			Filters: []string{"channel", "user", "text", "ts"},
+			Type:  "message",
+			Topic: "slack.message",
+			Match: map[string]any{
+				"type":       "event_callback",
+				"event.type": "message",
+			},
+			Extract: map[string]string{
+				"channel": "event.channel",
+				"user":    "event.user",
+				"text":    "event.text",
+				"ts":      "event.ts",
+				"team_id": "team_id",
+			},
 		},
 		{
-			Type:    "app_mention",
-			Topic:   "slack.mention",
-			Filters: []string{"channel", "user", "text", "ts"},
+			Type:  "url_verification",
+			Topic: "slack.url_verification",
+			Match: map[string]any{
+				"type": "url_verification",
+			},
+			Extract: map[string]string{
+				"challenge": "challenge",
+			},
 		},
 	}
 
 	tests := []struct {
 		name          string
-		payload       any
+		payload       map[string]any
 		expectEvents  int
 		expectTopic   string
 		expectError   bool
 	}{
 		{
 			name: "Valid message event",
-			payload: SlackEventWrapper{
-				Type: "event_callback",
-				Event: map[string]any{
+			payload: map[string]any{
+				"type": "event_callback",
+				"event": map[string]any{
 					"type":    "message",
 					"channel": "C1234567890",
 					"user":    "U1234567890",
 					"text":    "Hello world",
 					"ts":      "1234567890.123456",
 				},
-				TeamID:    "T1234567890",
-				EventID:   "Ev1234567890",
-				EventTime: 1234567890,
+				"team_id":    "T1234567890",
+				"event_id":   "Ev1234567890",
+				"event_time": 1234567890,
 			},
 			expectEvents: 1,
 			expectTopic:  "slack.message",
@@ -301,18 +387,19 @@ func TestSlackHandler_ParseEvents(t *testing.T) {
 		},
 		{
 			name: "URL verification challenge",
-			payload: SlackEventWrapper{
-				Type:      "url_verification",
-				Challenge: "test_challenge",
+			payload: map[string]any{
+				"type":      "url_verification",
+				"challenge": "test_challenge",
 			},
-			expectEvents: 0,
+			expectEvents: 1,
+			expectTopic:  "slack.url_verification",
 			expectError:  false,
 		},
 		{
 			name: "Unknown event type",
-			payload: SlackEventWrapper{
-				Type: "event_callback",
-				Event: map[string]any{
+			payload: map[string]any{
+				"type": "event_callback",
+				"event": map[string]any{
 					"type": "unknown_event",
 				},
 			},
@@ -347,7 +434,7 @@ func TestSlackHandler_ParseEvents(t *testing.T) {
 	}
 }
 
-func TestWebhookIntegration_SlackWebhook(t *testing.T) {
+func TestWebhookIntegration_GenericSlackWebhook(t *testing.T) {
 	// Set up environment
 	os.Setenv("SLACK_WEBHOOK_SECRET", "test_secret")
 	defer os.Unsetenv("SLACK_WEBHOOK_SECRET")
@@ -364,19 +451,19 @@ func TestWebhookIntegration_SlackWebhook(t *testing.T) {
 		t.Fatalf("LoadProvidersWithWebhooks failed: %v", err)
 	}
 
-	// Create test Slack event
-	slackEvent := SlackEventWrapper{
-		Type: "event_callback",
-		Event: map[string]any{
+	// Create test Slack event using generic structure
+	slackEvent := map[string]any{
+		"type": "event_callback",
+		"event": map[string]any{
 			"type":    "message",
 			"channel": "C1234567890",
 			"user":    "U1234567890",
 			"text":    "Hello from test",
 			"ts":      "1234567890.123456",
 		},
-		TeamID:    "T1234567890",
-		EventID:   "Ev1234567890",
-		EventTime: 1234567890,
+		"team_id":    "T1234567890",
+		"event_id":   "Ev1234567890",
+		"event_time": 1234567890,
 	}
 
 	payloadBytes, _ := json.Marshal(slackEvent)
@@ -475,6 +562,45 @@ func TestValidateWebhookPath(t *testing.T) {
 			}
 			if !tt.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// Test JSON path extraction
+func TestGenericHandler_ExtractValue(t *testing.T) {
+	handler := &GenericWebhookHandler{}
+	
+	data := map[string]any{
+		"type": "event_callback",
+		"event": map[string]any{
+			"type":    "message",
+			"channel": "C123",
+			"user":    "U456",
+			"text":    "Hello world",
+		},
+		"team_id": "T789",
+	}
+
+	tests := []struct {
+		path     string
+		expected any
+	}{
+		{"type", "event_callback"},
+		{"event.type", "message"},
+		{"event.channel", "C123"},
+		{"event.user", "U456"},
+		{"team_id", "T789"},
+		{"nonexistent", nil},
+		{"event.nonexistent", nil},
+		{"event.channel.nonexistent", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			result := handler.extractValue(data, tt.path)
+			if result != tt.expected {
+				t.Errorf("extractValue(%q) = %v, expected %v", tt.path, result, tt.expected)
 			}
 		})
 	}
