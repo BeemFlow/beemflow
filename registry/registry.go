@@ -38,6 +38,34 @@ type RegistryEntry struct {
 	RequiredScopes    []OAuthScope      `json:"required_scopes,omitempty"`
 	ClientID          string            `json:"client_id,omitempty"`
 	ClientSecret      string            `json:"client_secret,omitempty"`
+	// Webhook fields
+	Webhook *WebhookConfig `json:"webhook,omitempty"`
+}
+
+// WebhookConfig defines webhook configuration for a provider
+type WebhookConfig struct {
+	Enabled   bool                    `json:"enabled"`
+	Path      string                  `json:"path"`                // e.g. "/slack"
+	Secret    string                  `json:"secret"`              // e.g. "$env:SLACK_WEBHOOK_SECRET"
+	Signature *WebhookSignatureConfig `json:"signature,omitempty"` // Signature verification config
+	Events    []WebhookEvent          `json:"events"`
+}
+
+// WebhookSignatureConfig defines how to verify webhook signatures
+type WebhookSignatureConfig struct {
+	Header          string `json:"header"`            // e.g. "X-Slack-Signature"
+	TimestampHeader string `json:"timestamp_header"`  // e.g. "X-Slack-Request-Timestamp"
+	Algorithm       string `json:"algorithm"`         // e.g. "hmac-sha256"
+	Format          string `json:"format"`            // e.g. "v0={signature}"
+	MaxAge          int    `json:"max_age,omitempty"` // Max age in seconds (default: 300)
+}
+
+// WebhookEvent defines how a specific event type should be handled using JSON path extraction
+type WebhookEvent struct {
+	Type    string            `json:"type"`    // Event identifier (e.g. "message", "push")
+	Topic   string            `json:"topic"`   // BeemFlow event bus topic (e.g. "slack.message")
+	Match   map[string]any    `json:"match"`   // JSON path conditions to match this event
+	Extract map[string]string `json:"extract"` // JSON path mappings for field extraction
 }
 
 // ListOptions allows filtering and pagination for registry queries.

@@ -489,8 +489,8 @@
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"
     ],
-    "client_id": "${GOOGLE_CLIENT_ID}",
-    "client_secret": "${GOOGLE_CLIENT_SECRET}"
+    "client_id": "$env:GOOGLE_CLIENT_ID",
+    "client_secret": "$env:GOOGLE_CLIENT_SECRET"
   },
   {
     "type": "oauth_provider",
@@ -577,8 +577,8 @@
     "required_scopes": [
       "user"
     ],
-    "client_id": "${GITHUB_CLIENT_ID}",
-    "client_secret": "${GITHUB_CLIENT_SECRET}"
+    "client_id": "$env:GITHUB_CLIENT_ID",
+    "client_secret": "$env:GITHUB_CLIENT_SECRET"
   },
   {
     "type": "tool",
@@ -855,8 +855,8 @@
     "icon": "🐦",
     "authorization_url": "https://twitter.com/i/oauth2/authorize",
     "token_url": "https://api.twitter.com/2/oauth2/token",
-    "client_id": "${X_CLIENT_ID}",
-    "client_secret": "${X_CLIENT_SECRET}",
+    "client_id": "$env:X_CLIENT_ID",
+    "client_secret": "$env:X_CLIENT_SECRET",
     "scopes": [
       "users.read",
       "tweet.read",
@@ -1126,8 +1126,8 @@
     "icon": "💬",
     "authorization_url": "https://slack.com/oauth/v2/authorize",
     "token_url": "https://slack.com/api/oauth.v2.access",
-    "client_id": "${SLACK_CLIENT_ID}",
-    "client_secret": "${SLACK_CLIENT_SECRET}",
+    "client_id": "$env:SLACK_CLIENT_ID",
+    "client_secret": "$env:SLACK_CLIENT_SECRET",
     "scopes": [
       "users:read",
       "users:read.email",
@@ -1178,6 +1178,95 @@
       "reactions:write": "Add and edit emoji reactions",
       "search:read": "Search messages, files, and other content",
       "team:read": "View the workspace name, domain, and icon"
+    },
+    "webhook": {
+      "enabled": true,
+      "path": "/slack",
+      "secret": "$env:SLACK_WEBHOOK_SECRET",
+      "signature": {
+        "header": "X-Slack-Signature",
+        "timestamp_header": "X-Slack-Request-Timestamp",
+        "algorithm": "hmac-sha256",
+        "format": "v0={signature}",
+        "max_age": 300
+      },
+      "events": [
+        {
+          "type": "message",
+          "topic": "slack.message",
+          "match": {
+            "type": "event_callback",
+            "event.type": "message"
+          },
+          "extract": {
+            "channel": "event.channel",
+            "user": "event.user",
+            "text": "event.text",
+            "ts": "event.ts",
+            "thread_ts": "event.thread_ts",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
+        },
+        {
+          "type": "app_mention",
+          "topic": "slack.mention",
+          "match": {
+            "type": "event_callback",
+            "event.type": "app_mention"
+          },
+          "extract": {
+            "channel": "event.channel",
+            "user": "event.user",
+            "text": "event.text",
+            "ts": "event.ts",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
+        },
+        {
+          "type": "reaction_added",
+          "topic": "slack.reaction_added",
+          "match": {
+            "type": "event_callback",
+            "event.type": "reaction_added"
+          },
+          "extract": {
+            "user": "event.user",
+            "reaction": "event.reaction",
+            "item": "event.item",
+            "item_user": "event.item_user",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
+        },
+        {
+          "type": "reaction_removed",
+          "topic": "slack.reaction_removed",
+          "match": {
+            "type": "event_callback",
+            "event.type": "reaction_removed"
+          },
+          "extract": {
+            "user": "event.user",
+            "reaction": "event.reaction",
+            "item": "event.item",
+            "item_user": "event.item_user",
+            "team_id": "team_id",
+            "event_id": "event_id"
+          }
+        },
+        {
+          "type": "url_verification",
+          "topic": "slack.url_verification",
+          "match": {
+            "type": "url_verification"
+          },
+          "extract": {
+            "challenge": "challenge"
+          }
+        }
+      ]
     }
   },
   {

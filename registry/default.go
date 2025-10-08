@@ -4,8 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"os"
-	"regexp"
+
+	"github.com/beemflow/beemflow/utils"
 )
 
 //go:embed default.json
@@ -90,52 +90,26 @@ func (d *DefaultRegistry) GetOAuthProvider(ctx context.Context, name string) (*R
 	return nil, nil // Not found
 }
 
-// expandOAuthProviderEnvVars expands environment variables in OAuth provider fields
+// expandOAuthProviderEnvVars expands environment variables in OAuth provider fields using $env: format
 func expandOAuthProviderEnvVars(entry RegistryEntry) RegistryEntry {
-	envVarPattern := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-	
 	expanded := entry
-	
+
 	// Expand environment variables in OAuth provider fields
 	if expanded.ClientID != "" {
-		expanded.ClientID = envVarPattern.ReplaceAllStringFunc(expanded.ClientID, func(match string) string {
-			envVar := match[2 : len(match)-1] // Remove ${ and }
-			if val := os.Getenv(envVar); val != "" {
-				return val
-			}
-			return match // Keep original if env var not found
-		})
+		expanded.ClientID = utils.ExpandEnvValue(expanded.ClientID)
 	}
-	
+
 	if expanded.ClientSecret != "" {
-		expanded.ClientSecret = envVarPattern.ReplaceAllStringFunc(expanded.ClientSecret, func(match string) string {
-			envVar := match[2 : len(match)-1] // Remove ${ and }
-			if val := os.Getenv(envVar); val != "" {
-				return val
-			}
-			return match // Keep original if env var not found
-		})
+		expanded.ClientSecret = utils.ExpandEnvValue(expanded.ClientSecret)
 	}
-	
+
 	if expanded.AuthorizationURL != "" {
-		expanded.AuthorizationURL = envVarPattern.ReplaceAllStringFunc(expanded.AuthorizationURL, func(match string) string {
-			envVar := match[2 : len(match)-1] // Remove ${ and }
-			if val := os.Getenv(envVar); val != "" {
-				return val
-			}
-			return match // Keep original if env var not found
-		})
+		expanded.AuthorizationURL = utils.ExpandEnvValue(expanded.AuthorizationURL)
 	}
-	
+
 	if expanded.TokenURL != "" {
-		expanded.TokenURL = envVarPattern.ReplaceAllStringFunc(expanded.TokenURL, func(match string) string {
-			envVar := match[2 : len(match)-1] // Remove ${ and }
-			if val := os.Getenv(envVar); val != "" {
-				return val
-			}
-			return match // Keep original if env var not found
-		})
+		expanded.TokenURL = utils.ExpandEnvValue(expanded.TokenURL)
 	}
-	
+
 	return expanded
 }
