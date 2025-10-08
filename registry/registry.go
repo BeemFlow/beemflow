@@ -38,6 +38,23 @@ type RegistryEntry struct {
 	RequiredScopes    []OAuthScope      `json:"required_scopes,omitempty"`
 	ClientID          string            `json:"client_id,omitempty"`
 	ClientSecret      string            `json:"client_secret,omitempty"`
+	// Webhook fields
+	Webhook           *WebhookConfig    `json:"webhook,omitempty"`
+}
+
+// WebhookConfig defines webhook configuration for a provider
+type WebhookConfig struct {
+	Enabled   bool           `json:"enabled"`
+	Path      string         `json:"path"`        // e.g. "/slack"
+	SecretEnv string         `json:"secret_env"`  // e.g. "SLACK_WEBHOOK_SECRET"
+	Events    []WebhookEvent `json:"events"`
+}
+
+// WebhookEvent defines how a specific event type should be handled
+type WebhookEvent struct {
+	Type    string   `json:"type"`    // e.g. "message", "app_mention"
+	Topic   string   `json:"topic"`   // e.g. "slack.message", "slack.mention"
+	Filters []string `json:"filters"` // Fields to extract: ["user", "text", "channel"]
 }
 
 // ListOptions allows filtering and pagination for registry queries.
