@@ -49,14 +49,11 @@ func NewMCPCommand(info config.MCPServerConfig) *exec.Cmd {
 	cmd := exec.Command(info.Command, info.Args...)
 	cmd.Env = os.Environ()
 	for k, v := range info.Env {
-		// Support "$env:VARNAME" placeholders
-		if strings.HasPrefix(v, "$env:") {
-			envKey := strings.TrimPrefix(v, "$env:")
-			if val := os.Getenv(envKey); val != "" {
-				cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, val))
-			}
-		} else {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		// Expand environment variables using shared utility
+		expanded := utils.ExpandEnvValue(v)
+		// Only add if the value was successfully expanded (changed) or is a literal value
+		if expanded != v || !strings.HasPrefix(v, "$env:") {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, expanded))
 		}
 	}
 	return cmd

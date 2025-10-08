@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"regexp"
 	"unicode"
 
 	"github.com/beemflow/beemflow/constants"
@@ -185,10 +187,10 @@ func ToTitle(s string) string {
 	if s == "" {
 		return s
 	}
-	
+
 	runes := []rune(s)
 	result := make([]rune, len(runes))
-	
+
 	// Capitalize first letter and letters after spaces
 	capitalizeNext := true
 	for i, r := range runes {
@@ -198,12 +200,12 @@ func ToTitle(s string) string {
 		} else {
 			result[i] = unicode.ToLower(r)
 		}
-		
+
 		if unicode.IsSpace(r) {
 			capitalizeNext = true
 		}
 	}
-	
+
 	return string(result)
 }
 
@@ -273,4 +275,31 @@ func SafeIntAssert(v any) (int, bool) {
 func SafeBoolAssert(v any) (bool, bool) {
 	b, ok := v.(bool)
 	return b, ok
+}
+
+// ============================================================================
+// TEMPLATE PATTERN EXPANSION
+// ============================================================================
+
+var (
+	// EnvVarPattern matches $env:VARNAME format for environment variables
+	EnvVarPattern = regexp.MustCompile(`\$env:([A-Za-z_][A-Za-z0-9_]*)`)
+
+	// OAuthPattern matches $oauth:provider:integration format for OAuth tokens
+	OAuthPattern = regexp.MustCompile(`\$oauth:([a-z_]+):([a-z_]+)`)
+)
+
+// ExpandEnvValue expands environment variables in a value string using $env:VARNAME format.
+// Examples:
+//   - "$env:OPENAI_API_KEY" -> value of OPENAI_API_KEY env var
+//   - "Bearer $env:TOKEN" -> "Bearer <token-value>"
+//   - "$env:MISSING_VAR" -> "$env:MISSING_VAR" (unchanged if not found)
+func ExpandEnvValue(value string) string {
+	return EnvVarPattern.ReplaceAllStringFunc(value, func(match string) string {
+		varName := match[5:] // Remove "$env:" prefix
+		if envVal := os.Getenv(varName); envVal != "" {
+			return envVal
+		}
+		return match // Keep original if env var not found
+	})
 }

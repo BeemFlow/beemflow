@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,18 +57,18 @@ func NewManager(mux *http.ServeMux, eventBus event.EventBus, registryManager *re
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.closed {
 		return nil // Already closed
 	}
-	
+
 	m.closed = true
-	
+
 	// Clear routes (HTTP mux doesn't support route removal, but we track them)
 	if len(m.routes) > 0 {
 		utils.Debug("Webhook manager closed, %d routes were registered", len(m.routes))
 	}
-	
+
 	return nil
 }
 
@@ -79,11 +78,11 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 	m.mu.RLock()
 	closed := m.closed
 	m.mu.RUnlock()
-	
+
 	if closed {
 		return m.errWrap.Failf("manager is closed")
 	}
-	
+
 	entries, err := m.registry.ListAllServers(ctx, registry.ListOptions{})
 	if err != nil {
 		return m.errWrap.Wrapf(err, "failed to load registry entries")
@@ -91,7 +90,7 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 
 	webhooksRegistered := 0
 	var errors []string
-	
+
 	for _, entry := range entries {
 		if entry.Type == "oauth_provider" && entry.Webhook != nil && entry.Webhook.Enabled {
 			if err := m.registerWebhookEndpoint(entry); err != nil {
@@ -108,11 +107,11 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 	if len(errors) > 0 && webhooksRegistered == 0 {
 		return m.errWrap.Failf("failed to register any webhooks: %s", strings.Join(errors, "; "))
 	}
-	
+
 	if len(errors) > 0 {
 		utils.Warn("Some webhooks failed to register: %s", strings.Join(errors, "; "))
 	}
-	
+
 	utils.Info("Webhook manager loaded %d webhook endpoints", webhooksRegistered)
 	return nil
 }
@@ -130,21 +129,21 @@ func (m *Manager) registerWebhookEndpoint(entry registry.RegistryEntry) error {
 
 	// Create the endpoint path: /webhooks + provider's path
 	endpoint := "/webhooks" + entry.Webhook.Path
-	
+
 	// Create generic handler for this webhook
 	handler := m.getWebhookHandler(entry)
 
 	// Create HTTP handler function
 	webhookHandler := m.createWebhookHandler(entry, handler)
-	
+
 	// Register with HTTP mux
 	m.mux.HandleFunc(endpoint, webhookHandler)
-	
+
 	// Track registered routes (with proper locking)
-	m.mu.Lock() 
+	m.mu.Lock()
 	m.routes = append(m.routes, endpoint)
 	m.mu.Unlock()
-	
+
 	utils.Debug("Registered webhook endpoint: %s for service: %s", endpoint, entry.Name)
 	return nil
 }
@@ -162,16 +161,16 @@ func (m *Manager) createWebhookHandler(entry registry.RegistryEntry, handler *Ge
 		}
 
 		// Verify webhook signature if configured
-		if entry.Webhook.SecretEnv != "" {
-			secret := os.Getenv(entry.Webhook.SecretEnv) 
-			if secret != "" {
+		if entry.Webhook.Secret != "" {
+			secret := utils.ExpandEnvValue(entry.Webhook.Secret)
+			if secret != "" && secret != entry.Webhook.Secret {
 				if !handler.VerifySignature(r, secret) {
 					utils.ErrorCtx(ctx, "Invalid webhook signature for %s from %s", entry.Name, r.RemoteAddr)
 					utils.WriteHTTPError(w, "Invalid signature", http.StatusUnauthorized)
 					return
 				}
 			} else {
-				utils.Warn("Webhook secret environment variable %s not set for %s", entry.Webhook.SecretEnv, entry.Name)
+				utils.Warn("Webhook secret environment variable not set for %s", entry.Name)
 			}
 		}
 
@@ -207,7 +206,7 @@ func (m *Manager) getWebhookHandler(entry registry.RegistryEntry) *GenericWebhoo
 	if entry.Webhook != nil && entry.Webhook.Signature != nil {
 		signatureConfig = entry.Webhook.Signature
 	}
-	
+
 	return &GenericWebhookHandler{
 		signatureConfig: signatureConfig,
 	}
@@ -223,26 +222,26 @@ func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) 
 		// No signature verification configured
 		return true
 	}
-	
+
 	sig := r.Header.Get(h.signatureConfig.Header)
 	timestamp := r.Header.Get(h.signatureConfig.TimestampHeader)
-	
+
 	if sig == "" || (h.signatureConfig.TimestampHeader != "" && timestamp == "") {
 		return false
 	}
-	
+
 	// Check timestamp age if configured
 	if h.signatureConfig.TimestampHeader != "" {
 		ts, err := strconv.ParseInt(timestamp, 10, 64)
 		if err != nil {
 			return false
 		}
-		
+
 		maxAge := h.signatureConfig.MaxAge
 		if maxAge == 0 {
 			maxAge = 300 // Default 5 minutes
 		}
-		
+
 		if time.Now().Unix()-ts > int64(maxAge) {
 			return false
 		}
@@ -254,7 +253,7 @@ func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) 
 		return false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-	
+
 	// Build signature string based on format
 	var baseString string
 	if h.signatureConfig.TimestampHeader != "" {
@@ -262,17 +261,17 @@ func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) 
 	} else {
 		baseString = string(bodyBytes)
 	}
-	
+
 	// Calculate expected signature
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(baseString))
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
-	
+
 	// Apply format template
 	if h.signatureConfig.Format != "" {
 		expectedSig = strings.ReplaceAll(h.signatureConfig.Format, "{signature}", expectedSig)
 	}
-	
+
 	return hmac.Equal([]byte(sig), []byte(expectedSig))
 }
 
@@ -292,7 +291,7 @@ func (h *GenericWebhookHandler) ParseEvents(r *http.Request, eventConfigs []regi
 	}
 
 	var events []ParsedEvent
-	
+
 	// Check each event configuration
 	for _, eventConfig := range eventConfigs {
 		// Check if this payload matches the event configuration
@@ -304,14 +303,14 @@ func (h *GenericWebhookHandler) ParseEvents(r *http.Request, eventConfigs []regi
 					eventData[key] = value
 				}
 			}
-			
+
 			events = append(events, ParsedEvent{
 				Topic: eventConfig.Topic,
 				Data:  eventData,
 			})
 		}
 	}
-	
+
 	return events, nil
 }
 
@@ -330,17 +329,17 @@ func (h *GenericWebhookHandler) matchesEvent(payload map[string]any, match map[s
 func (h *GenericWebhookHandler) extractValue(data map[string]any, path string) any {
 	parts := strings.Split(path, ".")
 	current := data
-	
+
 	for i, part := range parts {
 		if current == nil {
 			return nil
 		}
-		
+
 		// Handle the last part of the path
 		if i == len(parts)-1 {
 			return current[part]
 		}
-		
+
 		// Navigate deeper into the structure
 		if nextLevel, ok := current[part].(map[string]any); ok {
 			current = nextLevel
@@ -348,7 +347,7 @@ func (h *GenericWebhookHandler) extractValue(data map[string]any, path string) a
 			return nil
 		}
 	}
-	
+
 	return current
 }
 
@@ -361,14 +360,14 @@ func validateWebhookPath(path string) error {
 	if path == "" {
 		return fmt.Errorf("webhook path cannot be empty")
 	}
-	
+
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("webhook path must start with /")
 	}
-	
+
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("webhook path cannot contain '..'")
 	}
-	
+
 	return nil
 }

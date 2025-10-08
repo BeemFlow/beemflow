@@ -16,6 +16,7 @@ import (
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
 	"github.com/beemflow/beemflow/storage"
+	"github.com/beemflow/beemflow/utils"
 )
 
 // TestHTTPAdapter_PathParameterSubstitution tests path parameter replacement in manifest URLs
@@ -521,19 +522,19 @@ func TestHTTPAdapter_EnvironmentExpansion(t *testing.T) {
 	defer os.Unsetenv("TEST_VAR")
 
 	// Test valid expansion
-	result := expandEnvValue("$env:TEST_VAR")
+	result := utils.ExpandEnvValue("$env:TEST_VAR")
 	if result != "test-value" {
 		t.Errorf("expected test-value, got %s", result)
 	}
 
 	// Test non-env value
-	result = expandEnvValue("regular-value")
+	result = utils.ExpandEnvValue("regular-value")
 	if result != "regular-value" {
 		t.Errorf("expected regular-value, got %s", result)
 	}
 
 	// Test missing environment variable
-	result = expandEnvValue("$env:MISSING_VAR")
+	result = utils.ExpandEnvValue("$env:MISSING_VAR")
 	if result != "$env:MISSING_VAR" {
 		t.Errorf("expected original value for missing env var, got %s", result)
 	}

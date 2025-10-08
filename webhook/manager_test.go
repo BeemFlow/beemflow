@@ -49,15 +49,15 @@ func (m *mockEventBus) Subscribe(ctx context.Context, topic string, handler func
 // Test helper to create a mock registry with generic webhook config
 func createMockRegistry(includeSlackWebhook bool) *registry.RegistryManager {
 	entries := []registry.RegistryEntry{}
-	
+
 	if includeSlackWebhook {
 		entries = append(entries, registry.RegistryEntry{
 			Type: "oauth_provider",
 			Name: "slack",
 			Webhook: &registry.WebhookConfig{
-				Enabled:   true,
-				Path:      "/slack",
-				SecretEnv: "SLACK_WEBHOOK_SECRET",
+				Enabled: true,
+				Path:    "/slack",
+				Secret:  "$env:SLACK_WEBHOOK_SECRET",
 				Signature: &registry.WebhookSignatureConfig{
 					Header:          "X-Slack-Signature",
 					TimestampHeader: "X-Slack-Request-Timestamp",
@@ -97,7 +97,7 @@ func createMockRegistry(includeSlackWebhook bool) *registry.RegistryManager {
 						},
 					},
 					{
-						Type: "url_verification",
+						Type:  "url_verification",
 						Topic: "slack.url_verification",
 						Match: map[string]any{
 							"type": "url_verification",
@@ -138,19 +138,19 @@ func TestManager_NewManager(t *testing.T) {
 	regManager := createMockRegistry(false)
 
 	manager := NewManager(mux, eventBus, regManager)
-	
+
 	if manager == nil {
 		t.Fatal("NewManager returned nil")
 	}
-	
+
 	if manager.mux != mux {
 		t.Error("Manager mux not set correctly")
 	}
-	
+
 	if manager.eventBus != eventBus {
 		t.Error("Manager eventBus not set correctly")
 	}
-	
+
 	if manager.registry != regManager {
 		t.Error("Manager registry not set correctly")
 	}
@@ -160,21 +160,21 @@ func TestManager_Close(t *testing.T) {
 	mux := http.NewServeMux()
 	eventBus := &mockEventBus{}
 	regManager := createMockRegistry(false)
-	
+
 	manager := NewManager(mux, eventBus, regManager)
-	
+
 	// Should be able to close without error
 	err := manager.Close()
 	if err != nil {
 		t.Errorf("Close() returned error: %v", err)
 	}
-	
+
 	// Second close should also work
 	err = manager.Close()
 	if err != nil {
 		t.Errorf("Second Close() returned error: %v", err)
 	}
-	
+
 	// Operations after close should fail
 	err = manager.LoadProvidersWithWebhooks(context.Background())
 	if err == nil {
@@ -186,20 +186,20 @@ func TestManager_LoadProvidersWithWebhooks(t *testing.T) {
 	mux := http.NewServeMux()
 	eventBus := &mockEventBus{}
 	regManager := createMockRegistry(true) // Include Slack provider
-	
+
 	manager := NewManager(mux, eventBus, regManager)
 	defer manager.Close()
-	
+
 	err := manager.LoadProvidersWithWebhooks(context.Background())
 	if err != nil {
 		t.Errorf("LoadProvidersWithWebhooks failed: %v", err)
 	}
-	
+
 	// Should have registered the Slack webhook handler
 	if len(manager.routes) == 0 {
 		t.Error("No routes were registered")
 	}
-	
+
 	expectedRoute := "/webhooks/slack"
 	found := false
 	for _, route := range manager.routes {
@@ -242,7 +242,7 @@ func TestGenericHandler_VerifySignature(t *testing.T) {
 				MaxAge:          300,
 			},
 			headers: map[string]string{
-				"X-Slack-Signature":          validSignature,
+				"X-Slack-Signature":         validSignature,
 				"X-Slack-Request-Timestamp": timestamp,
 			},
 			body:        body,
@@ -259,7 +259,7 @@ func TestGenericHandler_VerifySignature(t *testing.T) {
 				MaxAge:          300,
 			},
 			headers: map[string]string{
-				"X-Slack-Signature":          "v0=invalid",
+				"X-Slack-Signature":         "v0=invalid",
 				"X-Slack-Request-Timestamp": timestamp,
 			},
 			body:        body,
@@ -292,7 +292,7 @@ func TestGenericHandler_VerifySignature(t *testing.T) {
 				MaxAge:          300,
 			},
 			headers: map[string]string{
-				"X-Slack-Signature":          validSignature,
+				"X-Slack-Signature":         validSignature,
 				"X-Slack-Request-Timestamp": fmt.Sprintf("%d", time.Now().Unix()-400),
 			},
 			body:        body,
@@ -330,7 +330,7 @@ func TestGenericHandler_VerifySignature(t *testing.T) {
 
 func TestGenericHandler_ParseEvents(t *testing.T) {
 	handler := &GenericWebhookHandler{}
-	
+
 	eventConfigs := []registry.WebhookEvent{
 		{
 			Type:  "message",
@@ -360,11 +360,11 @@ func TestGenericHandler_ParseEvents(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		payload       map[string]any
-		expectEvents  int
-		expectTopic   string
-		expectError   bool
+		name         string
+		payload      map[string]any
+		expectEvents int
+		expectTopic  string
+		expectError  bool
 	}{
 		{
 			name: "Valid message event",
@@ -414,19 +414,19 @@ func TestGenericHandler_ParseEvents(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(payloadBytes))
 
 			events, err := handler.ParseEvents(req, eventConfigs)
-			
+
 			if tt.expectError && err == nil {
 				t.Error("Expected error but got none")
 			}
-			
+
 			if !tt.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
-			
+
 			if len(events) != tt.expectEvents {
 				t.Errorf("Expected %d events, got %d", tt.expectEvents, len(events))
 			}
-			
+
 			if tt.expectEvents > 0 && events[0].Topic != tt.expectTopic {
 				t.Errorf("Expected topic %s, got %s", tt.expectTopic, events[0].Topic)
 			}
@@ -442,10 +442,10 @@ func TestWebhookIntegration_GenericSlackWebhook(t *testing.T) {
 	mux := http.NewServeMux()
 	eventBus := &mockEventBus{}
 	regManager := createMockRegistry(true)
-	
+
 	manager := NewManager(mux, eventBus, regManager)
 	defer manager.Close()
-	
+
 	err := manager.LoadProvidersWithWebhooks(context.Background())
 	if err != nil {
 		t.Fatalf("LoadProvidersWithWebhooks failed: %v", err)
@@ -468,7 +468,7 @@ func TestWebhookIntegration_GenericSlackWebhook(t *testing.T) {
 
 	payloadBytes, _ := json.Marshal(slackEvent)
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
-	
+
 	// Create signature
 	baseString := fmt.Sprintf("v0:%s:%s", timestamp, string(payloadBytes))
 	mac := hmac.New(sha256.New, []byte("test_secret"))
@@ -480,34 +480,34 @@ func TestWebhookIntegration_GenericSlackWebhook(t *testing.T) {
 	req.Header.Set("X-Slack-Signature", signature)
 	req.Header.Set("X-Slack-Request-Timestamp", timestamp)
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	// Record response
 	rec := httptest.NewRecorder()
-	
+
 	// Execute webhook
 	mux.ServeHTTP(rec, req)
-	
+
 	// Check response
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d. Body: %s", rec.Code, rec.Body.String())
 	}
-	
+
 	// Check that event was published
 	if len(eventBus.publishedEvents) == 0 {
 		t.Fatal("No events were published")
 	}
-	
+
 	publishedEvent := eventBus.publishedEvents[0]
 	if publishedEvent.topic != "slack.message" {
 		t.Errorf("Expected topic 'slack.message', got '%s'", publishedEvent.topic)
 	}
-	
+
 	// Check event data
 	eventData, ok := publishedEvent.payload.(map[string]any)
 	if !ok {
 		t.Fatal("Published event data is not a map")
 	}
-	
+
 	if eventData["text"] != "Hello from test" {
 		t.Errorf("Expected text 'Hello from test', got '%v'", eventData["text"])
 	}
@@ -516,7 +516,7 @@ func TestWebhookIntegration_GenericSlackWebhook(t *testing.T) {
 func TestWebhookManager_ErrorHandling(t *testing.T) {
 	mux := http.NewServeMux()
 	eventBus := &mockEventBus{}
-	
+
 	// Create registry with invalid webhook config
 	invalidEntry := registry.RegistryEntry{
 		Type: "oauth_provider",
@@ -526,13 +526,13 @@ func TestWebhookManager_ErrorHandling(t *testing.T) {
 			Path:    "", // Invalid empty path
 		},
 	}
-	
+
 	mockReg := &mockLocalRegistry{entries: []registry.RegistryEntry{invalidEntry}}
 	regManager := registry.NewRegistryManager(mockReg)
-	
+
 	manager := NewManager(mux, eventBus, regManager)
 	defer manager.Close()
-	
+
 	// This should complete without fatal error, but log warnings
 	err := manager.LoadProvidersWithWebhooks(context.Background())
 	if err == nil {
@@ -548,8 +548,8 @@ func TestValidateWebhookPath(t *testing.T) {
 	}{
 		{"/slack", false},
 		{"/github", false},
-		{"", true},          // Empty path
-		{"slack", true},     // Missing leading slash
+		{"", true},           // Empty path
+		{"slack", true},      // Missing leading slash
 		{"/slack/../", true}, // Path traversal
 		{"/valid/path", false},
 	}
@@ -570,7 +570,7 @@ func TestValidateWebhookPath(t *testing.T) {
 // Test JSON path extraction
 func TestGenericHandler_ExtractValue(t *testing.T) {
 	handler := &GenericWebhookHandler{}
-	
+
 	data := map[string]any{
 		"type": "event_callback",
 		"event": map[string]any{

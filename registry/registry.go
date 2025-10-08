@@ -39,16 +39,16 @@ type RegistryEntry struct {
 	ClientID          string            `json:"client_id,omitempty"`
 	ClientSecret      string            `json:"client_secret,omitempty"`
 	// Webhook fields
-	Webhook           *WebhookConfig    `json:"webhook,omitempty"`
+	Webhook *WebhookConfig `json:"webhook,omitempty"`
 }
 
 // WebhookConfig defines webhook configuration for a provider
 type WebhookConfig struct {
-	Enabled   bool                  `json:"enabled"`
-	Path      string                `json:"path"`        // e.g. "/slack"
-	SecretEnv string                `json:"secret_env"`  // e.g. "SLACK_WEBHOOK_SECRET"
+	Enabled   bool                    `json:"enabled"`
+	Path      string                  `json:"path"`                // e.g. "/slack"
+	Secret    string                  `json:"secret"`              // e.g. "$env:SLACK_WEBHOOK_SECRET"
 	Signature *WebhookSignatureConfig `json:"signature,omitempty"` // Signature verification config
-	Events    []WebhookEvent        `json:"events"`
+	Events    []WebhookEvent          `json:"events"`
 }
 
 // WebhookSignatureConfig defines how to verify webhook signatures
@@ -62,7 +62,7 @@ type WebhookSignatureConfig struct {
 
 // WebhookEvent defines how a specific event type should be handled using JSON path extraction
 type WebhookEvent struct {
-	Type    string            `json:"type"`    // Event identifier (e.g. "message", "push")  
+	Type    string            `json:"type"`    // Event identifier (e.g. "message", "push")
 	Topic   string            `json:"topic"`   // BeemFlow event bus topic (e.g. "slack.message")
 	Match   map[string]any    `json:"match"`   // JSON path conditions to match this event
 	Extract map[string]string `json:"extract"` // JSON path mappings for field extraction

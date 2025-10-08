@@ -489,8 +489,8 @@
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"
     ],
-    "client_id": "${GOOGLE_CLIENT_ID}",
-    "client_secret": "${GOOGLE_CLIENT_SECRET}"
+    "client_id": "$env:GOOGLE_CLIENT_ID",
+    "client_secret": "$env:GOOGLE_CLIENT_SECRET"
   },
   {
     "type": "oauth_provider",
@@ -577,8 +577,8 @@
     "required_scopes": [
       "user"
     ],
-    "client_id": "${GITHUB_CLIENT_ID}",
-    "client_secret": "${GITHUB_CLIENT_SECRET}"
+    "client_id": "$env:GITHUB_CLIENT_ID",
+    "client_secret": "$env:GITHUB_CLIENT_SECRET"
   },
   {
     "type": "tool",
@@ -855,8 +855,8 @@
     "icon": "🐦",
     "authorization_url": "https://twitter.com/i/oauth2/authorize",
     "token_url": "https://api.twitter.com/2/oauth2/token",
-    "client_id": "${X_CLIENT_ID}",
-    "client_secret": "${X_CLIENT_SECRET}",
+    "client_id": "$env:X_CLIENT_ID",
+    "client_secret": "$env:X_CLIENT_SECRET",
     "scopes": [
       "users.read",
       "tweet.read",
@@ -1126,8 +1126,8 @@
     "icon": "💬",
     "authorization_url": "https://slack.com/oauth/v2/authorize",
     "token_url": "https://slack.com/api/oauth.v2.access",
-    "client_id": "${SLACK_CLIENT_ID}",
-    "client_secret": "${SLACK_CLIENT_SECRET}",
+    "client_id": "$env:SLACK_CLIENT_ID",
+    "client_secret": "$env:SLACK_CLIENT_SECRET",
     "scopes": [
       "users:read",
       "users:read.email",
@@ -1182,7 +1182,7 @@
     "webhook": {
       "enabled": true,
       "path": "/slack",
-      "secret_env": "SLACK_WEBHOOK_SECRET",
+      "secret": "$env:SLACK_WEBHOOK_SECRET",
       "signature": {
         "header": "X-Slack-Signature",
         "timestamp_header": "X-Slack-Request-Timestamp",
