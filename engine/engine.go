@@ -1019,11 +1019,17 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 		return nil
 	}
 
-	// Execute iterations with provided steps
-	if step.Parallel {
-		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list, step.Steps)
+	// Resolve dependencies for nested steps before execution
+	stepsToExecute, err := e.resolveForeachStepOrder(step.Steps)
+	if err != nil {
+		return fmt.Errorf("failed to resolve dependencies in foreach block: %w", err)
 	}
-	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list, step.Steps)
+
+	// Execute iterations with dependency-resolved steps
+	if step.Parallel {
+		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list, stepsToExecute)
+	}
+	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list, stepsToExecute)
 }
 
 // executeForeachParallel handles parallel foreach execution
@@ -1149,6 +1155,46 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 		stepCtx.SetOutput(stepID, make(map[string]any))
 	}
 	return nil
+}
+
+// resolveForeachStepOrder resolves dependencies for steps within a foreach block
+// Returns steps in dependency-resolved execution order, or original order if no dependencies
+func (e *Engine) resolveForeachStepOrder(steps []model.Step) ([]model.Step, error) {
+	// Check if any step has dependencies
+	hasDependencies := false
+	for i := range steps {
+		if len(steps[i].DependsOn) > 0 {
+			hasDependencies = true
+			break
+		}
+	}
+
+	// If no dependencies, return steps in original order (fast path)
+	if !hasDependencies {
+		return steps, nil
+	}
+
+	// Resolve dependencies using topological sort
+	stepIDs, err := topologicalSort(steps)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build step map for quick lookup
+	stepMap := make(map[string]*model.Step)
+	for i := range steps {
+		stepMap[steps[i].ID] = &steps[i]
+	}
+
+	// Reorder steps according to resolved dependencies
+	orderedSteps := make([]model.Step, 0, len(steps))
+	for _, stepID := range stepIDs {
+		if step, exists := stepMap[stepID]; exists {
+			orderedSteps = append(orderedSteps, *step)
+		}
+	}
+
+	return orderedSteps, nil
 }
 
 // executeToolCall handles individual tool execution
