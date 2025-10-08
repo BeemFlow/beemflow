@@ -167,7 +167,7 @@ func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 	flow, err := parser.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return model.Flow{}, nil
+			return model.Flow{}, utils.Errorf("flow '%s' not found", name)
 		}
 		return model.Flow{}, err
 	}
@@ -268,34 +268,29 @@ func findLatestRunForFlow(runs []*model.Run, flowName string) *model.Run {
 
 // isBetterRunStatus determines if status1 is better than status2
 func isBetterRunStatus(status1, status2 model.RunStatus) bool {
-	// When timestamps are equal, prefer more recent statuses (waiting > succeeded > failed)
-	// This ensures that paused runs are not incorrectly overridden by older succeeded runs
-
-	// Prefer waiting runs over succeeded runs (for equal timestamps)
-	if status1 == model.RunWaiting && status2 == model.RunSucceeded {
-		return true
-	}
-	if status1 == model.RunSucceeded && status2 == model.RunWaiting {
-		return false
-	}
-
-	// Prefer succeeded runs over failed runs
-	if status1 == model.RunSucceeded && status2 == model.RunFailed {
-		return true
-	}
-	if status1 == model.RunFailed && status2 == model.RunSucceeded {
-		return false
+	// Define priority order: RUNNING > WAITING > PENDING > SUCCEEDED > FAILED > SKIPPED
+	// When timestamps are equal, prefer more "active" or "important" statuses
+	statusPriority := map[model.RunStatus]int{
+		model.RunRunning:   6,
+		model.RunWaiting:   5,
+		model.RunPending:   4,
+		model.RunSucceeded: 3,
+		model.RunFailed:    2,
+		model.RunSkipped:   1,
 	}
 
-	// Prefer waiting runs over failed runs
-	if status1 == model.RunWaiting && status2 == model.RunFailed {
-		return true
+	priority1, ok1 := statusPriority[status1]
+	priority2, ok2 := statusPriority[status2]
+
+	// Handle unknown statuses (shouldn't happen, but be defensive)
+	if !ok1 {
+		priority1 = 0
 	}
-	if status1 == model.RunFailed && status2 == model.RunWaiting {
-		return false
+	if !ok2 {
+		priority2 = 0
 	}
 
-	return false
+	return priority1 > priority2
 }
 
 // tryFindPausedRun attempts to find a paused run when await_event is involved
