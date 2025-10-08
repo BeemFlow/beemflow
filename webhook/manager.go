@@ -26,17 +26,15 @@ type Manager struct {
 	mux      *http.ServeMux
 	eventBus event.EventBus
 	registry *registry.RegistryManager
-	handlers map[string]ServiceHandler
 	routes   []string // Track registered routes for cleanup
 	mu       sync.RWMutex
 	closed   bool
 	errWrap  *utils.ErrorWrapper
 }
 
-// ServiceHandler defines the interface for service-specific webhook handlers
-type ServiceHandler interface {
-	VerifySignature(r *http.Request, secret string) bool
-	ParseEvents(r *http.Request, eventConfigs []registry.WebhookEvent) ([]ParsedEvent, error)
+// GenericWebhookHandler handles webhooks using configuration-driven parsing
+type GenericWebhookHandler struct {
+	signatureConfig *registry.WebhookSignatureConfig
 }
 
 // ParsedEvent represents an event extracted from a webhook
@@ -51,7 +49,6 @@ func NewManager(mux *http.ServeMux, eventBus event.EventBus, registryManager *re
 		mux:      mux,
 		eventBus: eventBus,
 		registry: registryManager,
-		handlers: make(map[string]ServiceHandler),
 		routes:   make([]string, 0),
 		errWrap:  utils.NewErrorWrapper("webhook.manager"),
 	}
@@ -63,28 +60,16 @@ func (m *Manager) Close() error {
 	defer m.mu.Unlock()
 	
 	if m.closed {
-		return nil
+		return nil // Already closed
 	}
+	
 	m.closed = true
 	
-	// Note: Go's http.ServeMux doesn't support route removal
-	// This is a known limitation. Routes remain registered until server shutdown.
-	utils.Debug("Webhook manager closed, %d routes were registered", len(m.routes))
-	
-	return nil
-}
-
-// RegisterServiceHandler registers a service-specific handler with thread safety
-func (m *Manager) RegisterServiceHandler(service string, handler ServiceHandler) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	if m.closed {
-		return m.errWrap.Failf("manager is closed")
+	// Clear routes (HTTP mux doesn't support route removal, but we track them)
+	if len(m.routes) > 0 {
+		utils.Debug("Webhook manager closed, %d routes were registered", len(m.routes))
 	}
 	
-	m.handlers[service] = handler
-	utils.Debug("Registered service handler: %s", service)
 	return nil
 }
 
@@ -125,9 +110,9 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 	}
 	
 	if len(errors) > 0 {
-		utils.Warn("Some webhook registrations failed but continuing with %d registered", webhooksRegistered)
+		utils.Warn("Some webhooks failed to register: %s", strings.Join(errors, "; "))
 	}
-
+	
 	utils.Info("Webhook manager loaded %d webhook endpoints", webhooksRegistered)
 	return nil
 }
@@ -135,7 +120,7 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 // registerWebhookEndpoint creates an HTTP handler for a webhook-enabled provider
 func (m *Manager) registerWebhookEndpoint(entry registry.RegistryEntry) error {
 	if entry.Webhook == nil {
-		return m.errWrap.Failf("webhook config is nil for %s", entry.Name)
+		return m.errWrap.Failf("webhook config is nil")
 	}
 
 	// Validate webhook path
@@ -146,11 +131,8 @@ func (m *Manager) registerWebhookEndpoint(entry registry.RegistryEntry) error {
 	// Create the endpoint path: /webhooks + provider's path
 	endpoint := "/webhooks" + entry.Webhook.Path
 	
-	// Get or create service handler
-	handler := m.getServiceHandler(entry.Name)
-	if handler == nil {
-		return m.errWrap.Failf("no handler available for service: %s", entry.Name)
-	}
+	// Create generic handler for this webhook
+	handler := m.getWebhookHandler(entry)
 
 	// Create HTTP handler function
 	webhookHandler := m.createWebhookHandler(entry, handler)
@@ -168,20 +150,20 @@ func (m *Manager) registerWebhookEndpoint(entry registry.RegistryEntry) error {
 }
 
 // createWebhookHandler creates the actual HTTP handler function following existing patterns
-func (m *Manager) createWebhookHandler(entry registry.RegistryEntry, handler ServiceHandler) http.HandlerFunc {
+func (m *Manager) createWebhookHandler(entry registry.RegistryEntry, handler *GenericWebhookHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		utils.Debug("Webhook received: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
 		// Only accept POST requests
 		if r.Method != http.MethodPost {
-			utils.WriteHTTPError(w, "Only POST method allowed", http.StatusMethodNotAllowed)
+			utils.WriteHTTPError(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Verify webhook signature if secret is configured
+		// Verify webhook signature if configured
 		if entry.Webhook.SecretEnv != "" {
-			secret := os.Getenv(entry.Webhook.SecretEnv)
+			secret := os.Getenv(entry.Webhook.SecretEnv) 
 			if secret != "" {
 				if !handler.VerifySignature(r, secret) {
 					utils.ErrorCtx(ctx, "Invalid webhook signature for %s from %s", entry.Name, r.RemoteAddr)
@@ -193,7 +175,7 @@ func (m *Manager) createWebhookHandler(entry registry.RegistryEntry, handler Ser
 			}
 		}
 
-		// Parse events from the webhook payload
+		// Parse events from the webhook payload using generic parsing
 		events, err := handler.ParseEvents(r, entry.Webhook.Events)
 		if err != nil {
 			utils.ErrorCtx(ctx, "Failed to parse webhook events for %s: %v", entry.Name, err)
@@ -201,206 +183,178 @@ func (m *Manager) createWebhookHandler(entry registry.RegistryEntry, handler Ser
 			return
 		}
 
-		// Publish each event to the event bus
-		publishedCount := 0
+		// Publish events to the event bus
 		for _, event := range events {
 			if err := m.eventBus.Publish(event.Topic, event.Data); err != nil {
 				utils.ErrorCtx(ctx, "Failed to publish event %s: %v", event.Topic, err)
-				continue
+				utils.WriteHTTPError(w, "Internal server error", http.StatusInternalServerError)
+				return
 			}
-			publishedCount++
-			utils.Debug("Published event: %s with data: %+v", event.Topic, event.Data)
+			utils.Debug("Published webhook event: %s with data: %+v", event.Topic, event.Data)
 		}
 
-		// Return success with JSON response following existing patterns
-		response := map[string]any{
-			"status":           "ok",
-			"events_received":  len(events),
-			"events_published": publishedCount,
-		}
-		
-		if err := utils.WriteHTTPJSON(w, response); err != nil {
+		// Return success response
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("OK")); err != nil {
 			utils.ErrorCtx(ctx, "Failed to write response for %s webhook: %v", entry.Name, err)
 		}
 	}
 }
 
-// getServiceHandler retrieves or creates a handler for a service with proper locking
-func (m *Manager) getServiceHandler(serviceName string) ServiceHandler {
-	// First check if we already have a handler (read lock)
-	m.mu.RLock()
-	if handler, exists := m.handlers[serviceName]; exists {
-		m.mu.RUnlock()
-		return handler
-	}
-	m.mu.RUnlock()
-	
-	// Need to create handler (write lock)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	
-	// Double-check in case another goroutine created it
-	if handler, exists := m.handlers[serviceName]; exists {
-		return handler
+// getWebhookHandler creates a generic handler for the webhook entry
+func (m *Manager) getWebhookHandler(entry registry.RegistryEntry) *GenericWebhookHandler {
+	var signatureConfig *registry.WebhookSignatureConfig
+	if entry.Webhook != nil && entry.Webhook.Signature != nil {
+		signatureConfig = entry.Webhook.Signature
 	}
 	
-	// Auto-register built-in handlers
-	var handler ServiceHandler
-	switch serviceName {
-	case "slack":
-		handler = NewSlackHandler()
-	default:
-		return nil
+	return &GenericWebhookHandler{
+		signatureConfig: signatureConfig,
 	}
-	
-	if handler != nil {
-		m.handlers[serviceName] = handler
-		utils.Debug("Auto-registered handler for service: %s", serviceName)
-	}
-	
-	return handler
 }
 
 // ============================================================================
-// SLACK HANDLER IMPLEMENTATION
+// GENERIC WEBHOOK HANDLER IMPLEMENTATION
 // ============================================================================
 
-// SlackHandler implements ServiceHandler for Slack webhooks
-type SlackHandler struct{}
-
-// SlackEventWrapper represents the outer structure of Slack Event API payloads
-type SlackEventWrapper struct {
-	Token       string                 `json:"token"`
-	TeamID      string                 `json:"team_id"`
-	APIAppID    string                 `json:"api_app_id"`
-	Event       map[string]any         `json:"event"`
-	Type        string                 `json:"type"`
-	Challenge   string                 `json:"challenge,omitempty"` // For URL verification
-	EventID     string                 `json:"event_id,omitempty"`
-	EventTime   int64                  `json:"event_time,omitempty"`
-}
-
-// NewSlackHandler creates a new Slack webhook handler
-func NewSlackHandler() *SlackHandler {
-	return &SlackHandler{}
-}
-
-// VerifySignature verifies Slack webhook signature with proper body handling
-func (h *SlackHandler) VerifySignature(r *http.Request, secret string) bool {
-	// Get Slack headers
-	slackSignature := r.Header.Get("X-Slack-Signature")
-	slackTimestamp := r.Header.Get("X-Slack-Request-Timestamp")
-	
-	if slackSignature == "" || slackTimestamp == "" {
-		utils.Debug("Missing Slack signature headers")
-		return false
+// VerifySignature verifies webhook signature using configuration-driven approach
+func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) bool {
+	if h.signatureConfig == nil {
+		// No signature verification configured
+		return true
 	}
-
-	// Parse timestamp and verify it's not too old (5 minutes)
-	timestamp, err := strconv.ParseInt(slackTimestamp, 10, 64)
-	if err != nil {
-		utils.Debug("Invalid timestamp in Slack webhook: %v", err)
+	
+	sig := r.Header.Get(h.signatureConfig.Header)
+	timestamp := r.Header.Get(h.signatureConfig.TimestampHeader)
+	
+	if sig == "" || (h.signatureConfig.TimestampHeader != "" && timestamp == "") {
 		return false
 	}
 	
-	if time.Now().Unix()-timestamp > 300 {
-		utils.Debug("Slack webhook timestamp too old")
-		return false
+	// Check timestamp age if configured
+	if h.signatureConfig.TimestampHeader != "" {
+		ts, err := strconv.ParseInt(timestamp, 10, 64)
+		if err != nil {
+			return false
+		}
+		
+		maxAge := h.signatureConfig.MaxAge
+		if maxAge == 0 {
+			maxAge = 300 // Default 5 minutes
+		}
+		
+		if time.Now().Unix()-ts > int64(maxAge) {
+			return false
+		}
 	}
 
 	// Read and restore request body
-	body, err := io.ReadAll(r.Body)
+	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		utils.Debug("Failed to read request body: %v", err)
 		return false
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body)) // Restore body for later use
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	
-	// Rebuild the signature base string
-	baseString := fmt.Sprintf("v0:%s:%s", slackTimestamp, string(body))
+	// Build signature string based on format
+	var baseString string
+	if h.signatureConfig.TimestampHeader != "" {
+		baseString = fmt.Sprintf("v0:%s:%s", timestamp, string(bodyBytes))
+	} else {
+		baseString = string(bodyBytes)
+	}
 	
 	// Calculate expected signature
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(baseString))
-	expectedSig := "v0=" + hex.EncodeToString(mac.Sum(nil))
+	expectedSig := hex.EncodeToString(mac.Sum(nil))
 	
-	// Compare signatures
-	return hmac.Equal([]byte(expectedSig), []byte(slackSignature))
+	// Apply format template
+	if h.signatureConfig.Format != "" {
+		expectedSig = strings.ReplaceAll(h.signatureConfig.Format, "{signature}", expectedSig)
+	}
+	
+	return hmac.Equal([]byte(sig), []byte(expectedSig))
 }
 
-// ParseEvents extracts events from Slack webhook payload
-func (h *SlackHandler) ParseEvents(r *http.Request, eventConfigs []registry.WebhookEvent) ([]ParsedEvent, error) {
-	body, err := io.ReadAll(r.Body)
+// ParseEvents extracts events using generic JSON path extraction
+func (h *GenericWebhookHandler) ParseEvents(r *http.Request, eventConfigs []registry.WebhookEvent) ([]ParsedEvent, error) {
+	// Read request body
+	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read request body: %w", err)
 	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-	var slackEvent SlackEventWrapper
-	if err := json.Unmarshal(body, &slackEvent); err != nil {
-		return nil, fmt.Errorf("failed to parse Slack event: %w", err)
-	}
-
-	// Handle URL verification challenge
-	if slackEvent.Type == "url_verification" && slackEvent.Challenge != "" {
-		utils.Debug("Received Slack URL verification challenge")
-		// This is handled by returning the challenge in the HTTP response
-		// For now, we don't generate events for this
-		return []ParsedEvent{}, nil
+	// Parse JSON payload
+	var payload map[string]any
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON payload: %w", err)
 	}
 
 	var events []ParsedEvent
 	
-	// Process the inner event
-	if slackEvent.Event != nil && slackEvent.Type == "event_callback" {
-		eventType, ok := slackEvent.Event["type"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing or invalid event type")
-		}
-
-		// Map to configured event topics
-		for _, config := range eventConfigs {
-			if config.Type == eventType {
-				eventData := make(map[string]any)
-				
-				// Extract configured fields from the inner event
-				for _, field := range config.Filters {
-					if value, exists := slackEvent.Event[field]; exists {
-						eventData[field] = value
-					}
+	// Check each event configuration
+	for _, eventConfig := range eventConfigs {
+		// Check if this payload matches the event configuration
+		if h.matchesEvent(payload, eventConfig.Match) {
+			// Extract data using JSON paths
+			eventData := make(map[string]any)
+			for key, jsonPath := range eventConfig.Extract {
+				if value := h.extractValue(payload, jsonPath); value != nil {
+					eventData[key] = value
 				}
-				
-				// Add some wrapper-level context that might be useful
-				eventData["team_id"] = slackEvent.TeamID
-				eventData["event_id"] = slackEvent.EventID
-				eventData["event_time"] = slackEvent.EventTime
-				
-				events = append(events, ParsedEvent{
-					Topic: config.Topic,
-					Data:  eventData,
-				})
 			}
+			
+			events = append(events, ParsedEvent{
+				Topic: eventConfig.Topic,
+				Data:  eventData,
+			})
 		}
 	}
 	
 	return events, nil
 }
 
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
+// matchesEvent checks if payload matches the event match conditions
+func (h *GenericWebhookHandler) matchesEvent(payload map[string]any, match map[string]any) bool {
+	for path, expectedValue := range match {
+		actualValue := h.extractValue(payload, path)
+		if actualValue != expectedValue {
+			return false
+		}
+	}
+	return true
+}
 
-// extractFieldsFromPayload extracts specified fields from a payload map
-func extractFieldsFromPayload(payload map[string]any, filters []string) map[string]any {
-	extracted := make(map[string]any)
+// extractValue extracts a value from JSON using dot notation path
+func (h *GenericWebhookHandler) extractValue(data map[string]any, path string) any {
+	parts := strings.Split(path, ".")
+	current := data
 	
-	for _, field := range filters {
-		if value, exists := payload[field]; exists {
-			extracted[field] = value
+	for i, part := range parts {
+		if current == nil {
+			return nil
+		}
+		
+		// Handle the last part of the path
+		if i == len(parts)-1 {
+			return current[part]
+		}
+		
+		// Navigate deeper into the structure
+		if nextLevel, ok := current[part].(map[string]any); ok {
+			current = nextLevel
+		} else {
+			return nil
 		}
 	}
 	
-	return extracted
+	return current
 }
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
 
 // validateWebhookPath ensures webhook path is valid
 func validateWebhookPath(path string) error {
