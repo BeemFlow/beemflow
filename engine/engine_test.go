@@ -330,7 +330,7 @@ func TestExecute_AllStepTypes(t *testing.T) {
 			If:         "x > 0",
 			Foreach:    "{{list}}",
 			As:         "item",
-			Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+			Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{vars.item}}"}}},
 			Parallel:   true,
 			Retry:      &model.RetrySpec{Attempts: 2, DelaySec: 1},
 			AwaitEvent: &model.AwaitEventSpec{Source: "bus", Match: map[string]interface{}{"key": "value"}, Timeout: "10s"},
@@ -361,7 +361,7 @@ func TestExecute_Concurrency(t *testing.T) {
 }
 
 func TestAwaitEventResume_RoundTrip(t *testing.T) {
-	// Load the test flow using DSL parser (supports both YAML and CUE)
+	// Load the test flow using CUE parser
 	parser := cue.NewParser()
 	flow, err := parser.ParseFile("../flows/examples/await_resume_demo.flow.cue")
 	if err != nil {
@@ -1440,11 +1440,11 @@ func TestEvaluateCondition(t *testing.T) {
 			want: true,
 		},
 		{
-			name:      "nil value as false",
+			name:      "undefined variable causes error",
 			condition: "{{ vars.missing_var }}",
 			stepCtx:   NewStepContext(map[string]any{}, map[string]any{}, map[string]any{}),
 			want:      false,
-			wantErr:   true, // Undefined variables now cause errors
+			wantErr:   true, // Undefined variables now cause errors in CUE
 		},
 		{
 			name:      "empty string as false",

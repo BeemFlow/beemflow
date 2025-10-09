@@ -25,7 +25,7 @@ var (
 	DefaultLocalRegistryPath = filepath.Join(DefaultConfigDir, "registry.json")
 	// DefaultSQLiteDSN is the default data source name for SQLite storage.
 	DefaultSQLiteDSN = filepath.Join(DefaultConfigDir, "flow.db")
-	// DefaultFlowsDir is the default directory for flow YAMLs.
+	// DefaultFlowsDir is the default directory for flow definitions.
 	DefaultFlowsDir = "flows"
 )
 

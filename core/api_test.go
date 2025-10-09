@@ -211,6 +211,9 @@ func TestValidateFlow_FileNotFound(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for missing file, got nil")
 	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("expected 'not found' or 'no such file' error, got %v", err)
+	}
 }
 
 func TestValidateFlow_SchemaError(t *testing.T) {

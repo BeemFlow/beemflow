@@ -5,52 +5,63 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/model"
 )
 
 func TestFlowModel_UnmarshalAllFields(t *testing.T) {
-	yamlData := `
-name: all_fields
-on: cli.manual
-vars:
-  num: 1
-steps:
-  - id: s1
-    use: core.echo
-    with:
-      key: val
-    if: "x > 0"
-    foreach: "{{list}}"
-    as: item
-    steps:
-      - id: d1
-        use: core.echo
-        with:
-          text: "{{item}}"
-    parallel: true
-    retry:
-      attempts: 3
-      delay_sec: 2
-    await_event:
-      source: bus
-      match:
-        key: "value"
-      timeout: "30s"
-    wait:
-      seconds: 5
-      until: "2025-01-01"
-catch:
-  - id: e1
-    use: core.echo
-    with:
-      text: "err"
+	cueData := `
+name: "all_fields"
+on: "cli.manual"
+vars: {
+	num: 1
+}
+steps: [{
+	id: "s1"
+	use: "core.echo"
+	with: {
+		key: "val"
+	}
+	if: "x > 0"
+	foreach: "{{list}}"
+	as: "item"
+	steps: [{
+		id: "d1"
+		use: "core.echo"
+		with: {
+			text: "{{vars.item}}"
+		}
+	}]
+	parallel: true
+	retry: {
+		attempts: 3
+		delay_sec: 2
+	}
+	await_event: {
+		source: "bus"
+		match: {
+			key: "value"
+		}
+		timeout: "30s"
+	}
+	wait: {
+		seconds: 5
+		until: "2025-01-01"
+	}
+}]
+catch: [{
+	id: "e1"
+	use: "core.echo"
+	with: {
+		text: "err"
+	}
+}]
 `
 
-	var f model.Flow
-	if err := yaml.Unmarshal([]byte(yamlData), &f); err != nil {
-		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	parser := cue.NewParser()
+	f, err := parser.ParseString(cueData)
+	if err != nil {
+		t.Fatalf("CUE parse failed: %v", err)
 	}
 
 	if f.Name != "all_fields" {
@@ -160,7 +171,7 @@ func TestStep_OnlyRequiredFields(t *testing.T) {
 
 func TestStep_UnknownFieldsIgnored(t *testing.T) {
 	// This is a compile-time struct, so unknown fields are not possible in Go,
-	// but YAML/JSON unmarshal should ignore them (see parser tests).
+	// but CUE/JSON unmarshal should ignore them (see parser tests).
 }
 
 func TestFlow_EmptyStepsCatch(t *testing.T) {

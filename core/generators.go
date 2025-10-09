@@ -422,7 +422,7 @@ func generateCLICommand(op *OperationDefinition) *cobra.Command {
 				// Handle specific error types for exit codes (only when not testing)
 				errStr := err.Error()
 				switch {
-				case strings.Contains(errStr, "YAML parse error"):
+				case strings.Contains(errStr, "CUE parse error"):
 					os.Exit(1)
 				case strings.Contains(errStr, "schema validation error"):
 					os.Exit(2)
@@ -471,7 +471,7 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 				// Handle specific error types for exit codes (only when not testing)
 				errStr := err.Error()
 				switch {
-				case strings.Contains(errStr, "YAML parse error"):
+				case strings.Contains(errStr, "CUE parse error"):
 					os.Exit(1)
 				case strings.Contains(errStr, "schema validation error"):
 					os.Exit(2)

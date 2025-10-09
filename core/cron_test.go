@@ -405,16 +405,16 @@ func TestCron_ValidationError(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow WITHOUT schedule.cron trigger
-	testFlow := `name: non_cron_workflow
-on: http.request
-
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Not a cron workflow"
-`
-	flowPath := filepath.Join(tmpDir, "non_cron_workflow.flow.yaml")
+	testFlow := `name: "non_cron_workflow"
+on: "http.request"
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Not a cron workflow"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "non_cron_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -431,8 +431,8 @@ steps:
 
 	op.HTTPHandler(w, req)
 
-	// Should get not found (endpoint not found)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// Should get bad request (workflow exists but doesn't have schedule.cron trigger)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCron_ErrorHandling(t *testing.T) {

@@ -272,7 +272,7 @@ steps: [{
 
 func TestRunFlowExecution_InvalidFile(t *testing.T) {
 	stderr, code := captureStderrExit(func() {
-		runFlowExecution(&cobra.Command{}, []string{"/nonexistent/file.yaml"}, "", "")
+		runFlowExecution(&cobra.Command{}, []string{"/nonexistent/file.flow.cue"}, "", "")
 	})
 
 	if code != 1 {

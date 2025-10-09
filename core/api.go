@@ -181,7 +181,7 @@ func ValidateFlow(ctx context.Context, name string) error {
 	flow, err := parser.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // treat missing as valid for test robustness
+			return utils.Errorf("flow '%s' not found", name)
 		}
 		return err
 	}
