@@ -9,13 +9,13 @@ import (
 
 // Flow represents a complete workflow
 #Flow: {
-	name:        string
+	name:         string  // Required field
 	description?: string
 	version?:     string
-	on:           #Trigger | [#Trigger, ...#Trigger]
+	on:           #Trigger | [#Trigger, ...#Trigger]  // Required field
 	cron?:        string // Cron expression for schedule.cron
 	vars?:        #Vars
-	steps:        [#Step, ...#Step]
+	steps:        [#Step, ...#Step] & [_, ...] // Required field with at least one step
 	catch?:       [#Step, ...#Step]
 	mcpServers?:  #MCPServers
 }
@@ -124,5 +124,6 @@ import (
 #now: string // Current timestamp (populated at runtime)
 
 // Helper functions for template filters (implemented in Go)
-#base64Encode: func(s) { "base64_encode_placeholder" }
-#durationFormat: func(n, unit) { "duration_format_placeholder" }
+// These are placeholders for runtime functions
+#base64Encode: string
+#durationFormat: string
