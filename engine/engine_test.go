@@ -322,10 +322,10 @@ func TestExecute_AllStepTypes(t *testing.T) {
 			Use:        "core.echo",
 			With:       map[string]interface{}{"text": "hi"},
 			If:         "x > 0",
-			Foreach:    "{{list}}",
-			As:         "item",
-			Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{vars.item}}"}}},
-			Parallel:   true,
+		Foreach:    "{{list}}",
+		As:         "item",
+		Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+		Parallel:   true,
 			Retry:      &model.RetrySpec{Attempts: 2, DelaySec: 1},
 			AwaitEvent: &model.AwaitEventSpec{Source: "bus", Match: map[string]interface{}{"key": "value"}, Timeout: "10s"},
 			Wait:       &model.WaitSpec{Seconds: 5, Until: "2025-01-01"},
@@ -512,7 +512,7 @@ func TestExecute_ArrayAccessInTemplate(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
 	f := &model.Flow{
 		Name:  "array_access",
-		Steps: []model.Step{{ID: "s1", Use: "core.echo", With: map[string]interface{}{"text": "First: {{ event.arr[0].val }}, Second: {{ event.arr[1].val }}"}}},
+		Steps: []model.Step{{ID: "s1", Use: "core.echo", With: map[string]interface{}{"text": "First: {{event.arr[0].val}}, Second: {{event.arr[1].val}}"}}},
 	}
 	arr := []map[string]any{{"val": "a"}, {"val": "b"}}
 	outputs, err := e.Execute(context.Background(), f, map[string]any{"arr": arr})
@@ -918,14 +918,14 @@ func TestExecuteForeachSequential(t *testing.T) {
 		Foreach:  "{{items}}",
 		As:       "item",
 		Parallel: false,
-		Steps: []model.Step{
-			{
-				ID:  "process_{{vars.item}}",
-				Use: "core.echo",
-				With: map[string]any{
-					"text": "Processing {{vars.item}}",
-				},
+	Steps: []model.Step{
+		{
+			ID:  "process_{{item}}",
+			Use: "core.echo",
+			With: map[string]any{
+				"text": "Processing {{item}}",
 			},
+		},
 		},
 	}
 

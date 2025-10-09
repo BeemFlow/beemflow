@@ -10,7 +10,8 @@ import (
 )
 
 func TestFlowModel_UnmarshalAllFields(t *testing.T) {
-	cueData := `
+	cueData := `package beemflow
+
 name: "all_fields"
 on: "cli.manual"
 vars: {
@@ -27,10 +28,10 @@ steps: [{
 	as: "item"
 	steps: [{
 		id: "d1"
-		use: "core.echo"
-		with: {
-			text: "{{vars.item}}"
-		}
+	use: "core.echo"
+	with: {
+		text: "{{item}}"
+	}
 	}]
 	parallel: true
 	retry: {

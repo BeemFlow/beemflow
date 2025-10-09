@@ -59,7 +59,9 @@ func TestCronPathTraversal(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a valid workflow
-	testFlow := `name: "test_workflow"
+	testFlow := `package beemflow
+
+name: "test_workflow"
 on: "schedule.cron"
 steps: [{
 	id: "test"
@@ -305,7 +307,9 @@ func TestCron_TriggerWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: "test_cron_workflow"
+	testFlow := `package beemflow
+
+name: "test_cron_workflow"
 on: "schedule.cron"
 cron: "0 9 * * *"
 
@@ -355,7 +359,9 @@ func TestCron_SpecificWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: "specific_workflow"
+	testFlow := `package beemflow
+
+name: "specific_workflow"
 on: "schedule.cron"
 cron: "0 * * * *"
 
@@ -405,7 +411,9 @@ func TestCron_ValidationError(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow WITHOUT schedule.cron trigger
-	testFlow := `name: "non_cron_workflow"
+	testFlow := `package beemflow
+
+name: "non_cron_workflow"
 on: "http.request"
 steps: [{
 	id: "echo"
@@ -442,7 +450,9 @@ func TestCron_ErrorHandling(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow that will fail (missing required step)
-	testFlow := `name: "failing_workflow"
+	testFlow := `package beemflow
+
+name: "failing_workflow"
 on: "schedule.cron"
 steps: [{
 	id: "fail_step"
@@ -490,7 +500,9 @@ func TestCron_Security(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow
-	testFlow := `name: "secure_workflow"
+	testFlow := `package beemflow
+
+name: "secure_workflow"
 on: "schedule.cron"
 steps: [{
 	id: "test"
