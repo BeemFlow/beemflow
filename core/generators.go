@@ -32,18 +32,15 @@ func EnableCLIExitCodes() {
 
 // GenerateHTTPHandlers creates HTTP handlers for all operations
 func GenerateHTTPHandlers(mux *http.ServeMux) {
-	GenerateHTTPHandlersForOperations(mux, GetAllOperations())
-}
-
-// GenerateHTTPHandlersForOperations creates HTTP handlers for specified operations
-func GenerateHTTPHandlersForOperations(mux *http.ServeMux, operations map[string]*OperationDefinition) {
+	// Inline the call - no need for separate function that just calls another
+	operations := GetAllOperations()
+	
 	// Group operations by HTTP path to handle multiple methods on same path
 	pathOperations := make(map[string][]*OperationDefinition)
 	for _, op := range operations {
 		if op.SkipHTTP {
 			continue
 		}
-		// Skip operations with empty HTTPPath to prevent invalid patterns
 		if op.HTTPPath == "" {
 			continue
 		}
@@ -180,7 +177,6 @@ func GenerateMCPTools() []mcp.ToolRegistration {
 		// Create tool registration with proper handler
 		handler := generateMCPHandler(op)
 
-		// Skip operations that don't have supported handlers
 		if handler == nil {
 			continue
 		}
@@ -328,7 +324,6 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	default:
-		// Skip unsupported types
 		return nil
 	}
 }
@@ -499,17 +494,14 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 
 // addCLIFlags adds flags to a CLI command based on the args type
 func addCLIFlags(cmd *cobra.Command, argsType reflect.Type) {
-	// Skip if no args type provided
 	if argsType == nil {
 		return
 	}
 
-	// Skip if not a struct type
 	if argsType.Kind() != reflect.Struct {
 		return
 	}
 
-	// Skip empty structs
 	if argsType.NumField() == 0 {
 		return
 	}
@@ -705,12 +697,10 @@ func outputCLIResult(result any) error {
 
 // HandleCLIFileArgs handles CLI commands that can take file input or stdin
 func HandleCLIFileArgs(cmd *cobra.Command, args []string, flagName string) ([]byte, error) {
-	// Check if there's a positional argument (file path)
 	if len(args) > 0 {
 		return os.ReadFile(args[0])
 	}
 
-	// Check if there's a flag value
 	if flagValue, err := cmd.Flags().GetString(flagName); err == nil && flagValue != "" {
 		// If it looks like a file path, read it
 		if _, err := os.Stat(flagValue); err == nil {
@@ -757,13 +747,10 @@ func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 		// Inject dependencies into context
 		ctx := r.Context()
 
-		// Get config and inject into context
+		// Get config and inject into context (single call, reuse)
 		if cfg, err := GetConfig(); err == nil && cfg != nil {
 			ctx = WithConfig(ctx, cfg)
-		}
-
-		// Get storage and inject into context
-		if cfg, err := GetConfig(); err == nil && cfg != nil {
+			// While we have config, also inject storage
 			if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
 				ctx = WithStore(ctx, store)
 			}
@@ -784,6 +771,3 @@ func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 	}
 }
 
-// ============================================================================
-// END OF FILE - Simplified by removing unnecessary "Unified" wrappers
-// ============================================================================

@@ -20,7 +20,6 @@ import (
 	"github.com/beemflow/beemflow/cue"
 	beemhttp "github.com/beemflow/beemflow/http"
 	"github.com/beemflow/beemflow/model"
-	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
@@ -481,7 +480,11 @@ func newOAuthProvidersListCmd() *cobra.Command {
 		Short: "List configured OAuth providers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -515,7 +518,11 @@ func newOAuthProvidersAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -563,7 +570,11 @@ func newOAuthProvidersRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -586,7 +597,11 @@ func newOAuthCredentialsListCmd() *cobra.Command {
 		Short: "List OAuth credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -625,7 +640,11 @@ func newOAuthCredentialsAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -684,7 +703,11 @@ func newOAuthCredentialsRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -720,12 +743,3 @@ func newOAuthCredentialsRemoveCmd() *cobra.Command {
 	}
 }
 
-// getStoreFromConfig creates a storage instance from the current config
-func getStoreFromConfig() (storage.Storage, error) {
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return api.GetStoreFromConfig(cfg)
-}

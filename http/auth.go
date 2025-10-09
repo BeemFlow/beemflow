@@ -572,9 +572,7 @@ func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// ============================================================================
 // WEB-BASED OAUTH AUTHORIZATION FLOWS
-// ============================================================================
 
 // WebOAuthHandler provides web-based OAuth flows for external service authorization
 type WebOAuthHandler struct {

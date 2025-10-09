@@ -105,6 +105,11 @@ type RunsAccess struct {
 
 // Previous returns outputs from the most recent previous run of the same workflow
 func (r *RunsAccess) Previous() map[string]any {
+	if r.storage == nil {
+		utils.Warn("RunsAccess storage is nil, returning empty outputs")
+		return map[string]any{}
+	}
+
 	runs, err := r.storage.ListRuns(r.ctx)
 	if err != nil || len(runs) == 0 {
 		return map[string]any{}
@@ -112,17 +117,14 @@ func (r *RunsAccess) Previous() map[string]any {
 
 	// Find the most recent successful run from the same workflow
 	for _, run := range runs {
-		// Only consider runs from the same workflow
 		if run.FlowName != r.flowName {
 			continue
 		}
 
-		// Skip the current run
 		if r.currentRunID != uuid.Nil && run.ID == r.currentRunID {
 			continue
 		}
 
-		// Only return successful runs
 		if run.Status != model.RunSucceeded {
 			continue
 		}
@@ -221,7 +223,7 @@ func NewDefaultAdapterRegistry(ctx context.Context) *adapter.Registry {
 
 // loadRegistryTools loads tools from all standard registries using the factory
 func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
-	// Load config to get custom registry configuration
+	// Load config to get custom registry configuration (ignore errors, will use defaults)
 	cfg, _ := config.LoadConfig(constants.ConfigFileName)
 
 	// Create standard registry manager using the factory
@@ -309,7 +311,6 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 	utils.Info("Starting flow execution: %s (run_id: %s)", flow.Name, runID)
 
-	// Check if this is a duplicate run
 	if runID == uuid.Nil {
 		utils.Info("Duplicate run detected for flow %s, skipping execution", flow.Name)
 		e.updateMetrics(func(m *ExecutionMetrics) { m.SuccessfulExecutions++ })
@@ -333,6 +334,10 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 // setupExecutionContext prepares the execution environment
 func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, event map[string]any) (*StepContext, uuid.UUID) {
+	if e.Storage == nil {
+		utils.Warn("Storage is nil in setupExecutionContext, continuing without persistence")
+	}
+
 	// Collect env secrets and merge with event-supplied secrets
 	secretsMap := e.collectSecrets(event)
 
@@ -342,30 +347,32 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 	// Create deterministic run ID based on flow name, event data, and time window
 	runID := generateDeterministicRunID(flow.Name, event)
 
-	// Check if this run already exists (deduplication)
-	existingRun, err := e.Storage.GetRun(ctx, runID)
-	if err == nil && existingRun != nil {
-		// Run already exists, check if it's recent (within 1 minute)
-		if time.Since(existingRun.StartedAt) < 1*time.Minute {
-			// This is a duplicate run within the deduplication window
-			utils.Info("Duplicate run detected for %s, skipping (existing run: %s)", flow.Name, existingRun.ID)
-			return stepCtx, uuid.Nil // Return nil ID to signal duplicate
+	// Guard against nil storage
+	if e.Storage != nil {
+		existingRun, err := e.Storage.GetRun(ctx, runID)
+		if err == nil && existingRun != nil {
+			// Run already exists, check if it's recent (within 1 minute)
+			if time.Since(existingRun.StartedAt) < 1*time.Minute {
+				// This is a duplicate run within the deduplication window
+				utils.Info("Duplicate run detected for %s, skipping (existing run: %s)", flow.Name, existingRun.ID)
+				return stepCtx, uuid.Nil // Return nil ID to signal duplicate
+			}
+			// Older run with same ID, generate a new unique ID
+			runID = uuid.New()
 		}
-		// Older run with same ID, generate a new unique ID
-		runID = uuid.New()
-	}
 
-	run := &model.Run{
-		ID:        runID,
-		FlowName:  flow.Name,
-		Event:     event,
-		Vars:      flow.Vars,
-		Status:    model.RunRunning,
-		StartedAt: time.Now(),
-	}
+		run := &model.Run{
+			ID:        runID,
+			FlowName:  flow.Name,
+			Event:     event,
+			Vars:      flow.Vars,
+			Status:    model.RunRunning,
+			StartedAt: time.Now(),
+		}
 
-	if err := e.Storage.SaveRun(ctx, run); err != nil {
-		utils.ErrorCtx(ctx, "SaveRun failed: %v", "error", err)
+		if err := e.Storage.SaveRun(ctx, run); err != nil {
+			utils.ErrorCtx(ctx, "SaveRun failed: %v", "error", err)
+		}
 	}
 
 	return stepCtx, runID
@@ -487,6 +494,10 @@ func buildDependencyGraph(steps []model.Step) map[string][]string {
 // topologicalSort performs topological sorting using Kahn's algorithm
 // Returns execution order or error if circular dependency detected
 func topologicalSort(steps []model.Step) ([]string, error) {
+	if len(steps) == 0 {
+		return []string{}, nil
+	}
+
 	// Build adjacency list and in-degree map
 	graph := make(map[string][]string)      // step -> dependents
 	inDegree := make(map[string]int)        // step -> number of dependencies
@@ -495,6 +506,9 @@ func topologicalSort(steps []model.Step) ([]string, error) {
 	// Initialize
 	for i := range steps {
 		step := &steps[i]
+		if step.ID == "" {
+			return nil, fmt.Errorf("step at index %d has empty ID", i)
+		}
 		stepMap[step.ID] = step
 		inDegree[step.ID] = 0
 		graph[step.ID] = []string{}
@@ -600,7 +614,6 @@ func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Fl
 
 // determineExecutionOrder calculates the order to execute steps based on dependencies
 func (e *Engine) determineExecutionOrder(steps []model.Step, startIdx int) ([]string, error) {
-	// Check if any step has dependencies
 	hasDependencies := false
 	for i := startIdx; i < len(steps); i++ {
 		if len(steps[i].DependsOn) > 0 {
@@ -900,7 +913,6 @@ func (e *Engine) GetCompletedOutputs(token string) map[string]any {
 
 // executeStep runs a single step (use/with) and stores output.
 func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
-	// Check if condition first - skip step if condition is false
 	if step.If != "" {
 		utils.Debug("Evaluating condition for step %s: %s", stepID, step.If)
 		shouldExecute, err := e.evaluateCondition(step.If, stepCtx)
@@ -909,7 +921,6 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 		}
 		utils.Debug("Condition result for step %s: %v", stepID, shouldExecute)
 		if !shouldExecute {
-			// Skip this step - condition not met
 			utils.Debug("Skipping step %s - condition not met: %s", stepID, step.If)
 			stepCtx.SetOutput(stepID, map[string]any{"status": "skipped"})
 			return nil
@@ -997,14 +1008,26 @@ func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) 
 
 // executeForeachBlock handles foreach loop execution
 func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
+	if step == nil {
+		return fmt.Errorf("step cannot be nil")
+	}
+	if stepCtx == nil {
+		return fmt.Errorf("step context cannot be nil")
+	}
+
 	context := e.prepareTemplateContext(stepCtx)
 
 	// Handle both {{ }} wrapped expressions and direct expressions
 	trimmed := strings.TrimSpace(step.Foreach)
+
+	if trimmed == "" {
+		return fmt.Errorf("foreach expression cannot be empty")
+	}
+
 	var list []any
 	var err error
 
-	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+	if len(trimmed) >= 4 && strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
 		innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
 		list, err = e.evaluateForeachExpression(innerExpr, context)
 	} else {
@@ -1160,7 +1183,6 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 // resolveForeachStepOrder resolves dependencies for steps within a foreach block
 // Returns steps in dependency-resolved execution order, or original order if no dependencies
 func (e *Engine) resolveForeachStepOrder(steps []model.Step) ([]model.Step, error) {
-	// Check if any step has dependencies
 	hasDependencies := false
 	for i := range steps {
 		if len(steps[i].DependsOn) > 0 {
@@ -1414,9 +1436,16 @@ func isValidIdentifier(s string) bool {
 // evaluateCondition evaluates a condition expression and returns whether it's true
 // Uses CUE's native boolean evaluation instead of custom isTruthy logic
 func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool, error) {
+	if stepCtx == nil {
+		return false, fmt.Errorf("step context cannot be nil")
+	}
+
 	trimmed := strings.TrimSpace(condition)
 
-	// Only accept expressions wrapped in {{ }}
+	if len(trimmed) < 4 {
+		return false, fmt.Errorf("condition is too short")
+	}
+
 	if !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
 		return false, fmt.Errorf("condition must use template syntax")
 	}
@@ -1469,9 +1498,12 @@ func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepI
 
 // resolveTemplatesRecursively applies template resolution to all string values in a nested structure
 func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+
 	switch v := value.(type) {
 	case string:
-		// Only process strings that contain template syntax
 		if !strings.Contains(v, "{{") {
 			return v, nil
 		}
@@ -1679,15 +1711,6 @@ func (sc *StepContext) Snapshot() ContextSnapshot {
 	}
 }
 
-// CronScheduler is a stub for cron-based triggers.
-type CronScheduler struct {
-	// Extend this struct to support cron-based triggers (see SPEC.md for ideas).
-}
-
-func NewCronScheduler() *CronScheduler {
-	return &CronScheduler{}
-}
-
 // Close cleans up all adapters and resources managed by the Engine.
 func (e *Engine) Close() error {
 	if e.Adapters != nil {
@@ -1808,6 +1831,9 @@ func NewDefaultEngine(ctx context.Context) *Engine {
 
 // copyMap creates a shallow copy of a map[string]any.
 func copyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return make(map[string]any)
+	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
@@ -1815,9 +1841,6 @@ func copyMap(in map[string]any) map[string]any {
 	return out
 }
 
-// =============================================================================
-// BEAUTIFICATION HELPERS
-// =============================================================================
 
 // setEmptyOutputAndError sets an empty output for a step and returns an error
 // This helper eliminates repetitive error handling patterns throughout the engine
@@ -1845,7 +1868,6 @@ func maskSensitiveFields(inputs map[string]any) map[string]any {
 	masked := make(map[string]any)
 
 	for k, v := range inputs {
-		// Check if this is a sensitive field
 		if isSensitiveField(k) {
 			// Mask the value but show it exists
 			if str, ok := v.(string); ok && len(str) > 0 {

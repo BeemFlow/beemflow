@@ -14,6 +14,7 @@ import (
 )
 
 // PostgresStorage implements Storage using PostgreSQL as the backend.
+// OAuth methods are not implemented - use SQLite storage for OAuth in development.
 type PostgresStorage struct {
 	db *sql.DB
 }
@@ -24,25 +25,15 @@ var _ Storage = (*PostgresStorage)(nil)
 func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
+		return nil, err
 	}
 
-	// Test the connection
 	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping postgres database: %w", err)
+		return nil, err
 	}
 
-	// Configure connection pool settings
-	// Keep connections minimal for efficiency
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(30 * time.Second)
-
-	// Create tables if not exist
 	if err := createPostgresTables(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to create postgres tables: %w", err)
+		return nil, err
 	}
 
 	return &PostgresStorage{db: db}, nil
@@ -227,7 +218,7 @@ func (s *PostgresStorage) SavePausedRun(ctx context.Context, token string, pause
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO paused_runs (token, flow, step_idx, step_ctx, outputs)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT(token) DO UPDATE SET 
+ON CONFLICT(token) DO UPDATE SET
 	flow = EXCLUDED.flow,
 	step_idx = EXCLUDED.step_idx,
 	step_ctx = EXCLUDED.step_ctx,
@@ -248,6 +239,7 @@ func (s *PostgresStorage) LoadPausedRuns(ctx context.Context) (map[string]any, e
 		var token string
 		var flowBytes, stepCtxBytes, outputsBytes []byte
 		var stepIdx int
+
 		if err := rows.Scan(&token, &flowBytes, &stepIdx, &stepCtxBytes, &outputsBytes); err != nil {
 			continue
 		}
@@ -255,6 +247,7 @@ func (s *PostgresStorage) LoadPausedRuns(ctx context.Context) (map[string]any, e
 		var flow model.Flow
 		var stepCtx map[string]any
 		var outputs map[string]any
+
 		if err := json.Unmarshal(flowBytes, &flow); err != nil {
 			continue
 		}
@@ -265,13 +258,12 @@ func (s *PostgresStorage) LoadPausedRuns(ctx context.Context) (map[string]any, e
 			continue
 		}
 
-		result[token] = PausedRunPersist{
-			Flow:    &flow,
-			StepIdx: stepIdx,
-			StepCtx: stepCtx,
-			Outputs: outputs,
-			Token:   token,
-			RunID:   runIDFromStepCtx(stepCtx),
+		result[token] = map[string]any{
+			"flow":     &flow,
+			"step_idx": stepIdx,
+			"step_ctx": stepCtx,
+			"outputs":  outputs,
+			"token":    token,
 		}
 	}
 	return result, nil
@@ -291,12 +283,11 @@ FROM runs ORDER BY started_at DESC`)
 	}
 	defer rows.Close()
 
-	runs := []*model.Run{} // Initialize as empty slice instead of nil
+	var runs []*model.Run
 	for rows.Next() {
 		var run model.Run
 		var event, vars []byte
-		if err := rows.Scan(&run.ID, &run.FlowName, &event, &vars,
-			&run.Status, &run.StartedAt, &run.EndedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.FlowName, &event, &vars, &run.Status, &run.StartedAt, &run.EndedAt); err != nil {
 			continue
 		}
 		if err := json.Unmarshal(event, &run.Event); err != nil {
@@ -311,7 +302,6 @@ FROM runs ORDER BY started_at DESC`)
 }
 
 func (s *PostgresStorage) DeleteRun(ctx context.Context, id uuid.UUID) error {
-	// Steps will be deleted automatically due to CASCADE
 	_, err := s.db.ExecContext(ctx, `DELETE FROM runs WHERE id = $1`, id)
 	return err
 }
@@ -342,91 +332,69 @@ LIMIT 1`, flowName)
 	return &run, nil
 }
 
-// OAuth credential methods (stubs - not implemented for PostgreSQL yet)
-
+// OAuth methods not implemented for PostgreSQL - use SQLite for local development
 func (s *PostgresStorage) SaveOAuthCredential(ctx context.Context, cred *model.OAuthCredential) error {
-	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthCredential(ctx context.Context, provider, integration string) (*model.OAuthCredential, error) {
-	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) ListOAuthCredentials(ctx context.Context) ([]*model.OAuthCredential, error) {
-	return nil, utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) DeleteOAuthCredential(ctx context.Context, id string) error {
-	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) RefreshOAuthCredential(ctx context.Context, id string, newToken string, expiresAt *time.Time) error {
-	return utils.Errorf("OAuth credentials not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
-// OAuth provider methods (stubs - not implemented for PostgreSQL yet)
-
 func (s *PostgresStorage) SaveOAuthProvider(ctx context.Context, provider *model.OAuthProvider) error {
-	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthProvider(ctx context.Context, id string) (*model.OAuthProvider, error) {
-	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) ListOAuthProviders(ctx context.Context) ([]*model.OAuthProvider, error) {
-	return nil, utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) DeleteOAuthProvider(ctx context.Context, id string) error {
-	return utils.Errorf("OAuth providers not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
-// OAuth client methods (stubs - not implemented for PostgreSQL yet)
 func (s *PostgresStorage) SaveOAuthClient(ctx context.Context, client *model.OAuthClient) error {
-	return utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthClient(ctx context.Context, id string) (*model.OAuthClient, error) {
-	return nil, utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) ListOAuthClients(ctx context.Context) ([]*model.OAuthClient, error) {
-	return nil, utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) DeleteOAuthClient(ctx context.Context, id string) error {
-	return utils.Errorf("OAuth clients not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
-// OAuth token methods (stubs - not implemented for PostgreSQL yet)
 func (s *PostgresStorage) SaveOAuthToken(ctx context.Context, token *model.OAuthToken) error {
-	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthTokenByCode(ctx context.Context, code string) (*model.OAuthToken, error) {
-	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthTokenByAccess(ctx context.Context, access string) (*model.OAuthToken, error) {
-	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) GetOAuthTokenByRefresh(ctx context.Context, refresh string) (*model.OAuthToken, error) {
-	return nil, utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return nil, errOAuthNotImpl
 }
-
 func (s *PostgresStorage) DeleteOAuthTokenByCode(ctx context.Context, code string) error {
-	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
 }
-
 func (s *PostgresStorage) DeleteOAuthTokenByAccess(ctx context.Context, access string) error {
-	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+	return errOAuthNotImpl
+}
+func (s *PostgresStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error {
+	return errOAuthNotImpl
 }
 
-func (s *PostgresStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error {
-	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
-}
+var errOAuthNotImpl = utils.Errorf("OAuth not implemented for PostgreSQL - use SQLite or memory storage")
 
 // Close closes the underlying PostgreSQL database connection.
 func (s *PostgresStorage) Close() error {

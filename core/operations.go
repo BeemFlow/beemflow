@@ -170,44 +170,10 @@ func GetOperationsMapByGroups(groups []string) map[string]*OperationDefinition {
 	return filtered
 }
 
-// Handler functions to reduce cyclomatic complexity of init()
-func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
-	file, _ := cmd.Flags().GetString("file")
-
-	// Check that exactly one input method is specified
-	if name == "" && file == "" {
-		return fmt.Errorf("either --name or --file must be specified")
-	}
-	if name != "" && file != "" {
-		return fmt.Errorf("only one of --name or --file can be specified")
-	}
-
-	if file != "" {
-		// Parse and validate file directly
-		parser := cue.NewParser()
-		_, err := parser.ParseFile(file)
-		if err != nil {
-			utils.Error("CUE parse error: %v\n", err)
-			return fmt.Errorf("CUE parse error: %w", err)
-		}
-	} else {
-		// Use flow name service
-		err := ValidateFlow(cmd.Context(), name)
-		if err != nil {
-			utils.Error("Validation error: %v\n", err)
-			return fmt.Errorf("validation error: %w", err)
-		}
-	}
-
-	utils.User("Validation OK: flow is valid!")
-	return nil
-}
-
+// validateFlowHandler - unified handler for both CLI and API
 func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*ValidateFlowArgs)
 
-	// Check that exactly one input method is specified
 	if a.Name == "" && a.File == "" {
 		return nil, fmt.Errorf("either name or file must be specified")
 	}
@@ -215,16 +181,14 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("only one of name or file can be specified")
 	}
 
+	parser := cue.NewParser()
 	if a.File != "" {
-		// Parse and validate file directly
-		parser := cue.NewParser()
 		_, err := parser.ParseFile(a.File)
 		if err != nil {
 			return nil, fmt.Errorf("CUE parse error: %w", err)
 		}
 	} else {
-		err := ValidateFlow(ctx, a.Name)
-		if err != nil {
+		if err := ValidateFlow(ctx, a.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -232,57 +196,27 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	return map[string]any{"status": "valid", "message": "Validation OK: flow is valid!"}, nil
 }
 
-func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
+func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	file, _ := cmd.Flags().GetString("file")
-	outPath, _ := cmd.Flags().GetString("output")
 
-	// Check that exactly one input method is specified
-	if name == "" && file == "" {
-		return fmt.Errorf("either --name or --file must be specified")
-	}
-	if name != "" && file != "" {
-		return fmt.Errorf("only one of --name or --file can be specified")
-	}
-
-	var diagram string
-	var err error
-
-	if file != "" {
-		// Parse file directly and generate diagram
-		parser := cue.NewParser()
-		flow, parseErr := parser.ParseFile(file)
-		if parseErr != nil {
-			utils.Error("CUE parse error: %v\n", parseErr)
-			return fmt.Errorf("CUE parse error: %w", parseErr)
-		}
-		diagram, err = graph.ExportMermaid(flow)
-	} else {
-		// Use flow name service
-		diagram, err = GraphFlow(cmd.Context(), name)
-	}
-
+	result, err := validateFlowHandler(cmd.Context(), &ValidateFlowArgs{Name: name, File: file})
 	if err != nil {
-		utils.Error("Graph export error: %v\n", err)
-		return fmt.Errorf("graph export error: %w", err)
+		return err
 	}
 
-	if outPath != "" {
-		if err := os.WriteFile(outPath, []byte(diagram), 0644); err != nil {
-			utils.Error("Failed to write graph to %s: %v\n", outPath, err)
-			return fmt.Errorf("failed to write graph to %s: %w", outPath, err)
+	if msg, ok := result.(map[string]any); ok {
+		if message, ok := msg["message"].(string); ok {
+			utils.User("%s", message)
 		}
-		utils.User("Graph written to %s", outPath)
-	} else {
-		utils.Info("%s", diagram)
 	}
 	return nil
 }
 
+// graphFlowHandler - unified handler for both CLI and API
 func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*GraphFlowArgs)
 
-	// Check that exactly one input method is specified
 	if a.Name == "" && a.File == "" {
 		return nil, fmt.Errorf("either name or file must be specified")
 	}
@@ -294,7 +228,6 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	var err error
 
 	if a.File != "" {
-		// Parse file directly and generate diagram
 		parser := cue.NewParser()
 		flow, parseErr := parser.ParseFile(a.File)
 		if parseErr != nil {
@@ -314,21 +247,29 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	return map[string]any{"diagram": diagram}, nil
 }
 
-func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("exactly one file argument required")
-	}
-	file := args[0]
-	parser := cue.NewParser()
-	_, err := parser.ParseFile(file)
+func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("file")
+	outPath, _ := cmd.Flags().GetString("output")
+
+	result, err := graphFlowHandler(cmd.Context(), &GraphFlowArgs{Name: name, File: file})
 	if err != nil {
-		utils.Error("CUE parse error: %v\n", err)
-		return fmt.Errorf("CUE parse error: %w", err)
+		return err
 	}
-	utils.User("Lint OK: flow is valid!")
+
+	diagram := result.(map[string]any)["diagram"].(string)
+	if outPath != "" {
+		if err := os.WriteFile(outPath, []byte(diagram), 0644); err != nil {
+			return fmt.Errorf("failed to write graph to %s: %w", outPath, err)
+		}
+		utils.User("Graph written to %s", outPath)
+	} else {
+		utils.Info("%s", diagram)
+	}
 	return nil
 }
 
+// lintFlowHandler - unified handler for both CLI and API
 func lintFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*FlowFileArgs)
 	parser := cue.NewParser()
@@ -337,6 +278,22 @@ func lintFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("CUE parse error: %w", err)
 	}
 	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
+}
+
+func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("exactly one file argument required")
+	}
+	result, err := lintFlowHandler(cmd.Context(), &FlowFileArgs{File: args[0]})
+	if err != nil {
+		return err
+	}
+	if msg, ok := result.(map[string]any); ok {
+		if message, ok := msg["message"].(string); ok {
+			utils.User("%s", message)
+		}
+	}
+	return nil
 }
 
 // handleInstallToolCLI handles the CLI command for tool installation
@@ -738,7 +695,6 @@ func init() {
 				return nil, fmt.Errorf("OpenAPI spec is required")
 			}
 
-			// Check if it's a file path by trying to stat it
 			if _, err := os.Stat(openapiContent); err == nil {
 				// It's a valid file path, read the contents
 				data, err := os.ReadFile(openapiContent)
@@ -804,7 +760,6 @@ func init() {
 
 			// Print each tool in table format
 			for _, entry := range entries {
-				// Only show tools, not MCP servers
 				if entry.Type != "tool" {
 					continue
 				}
@@ -1172,7 +1127,6 @@ func init() {
 				return
 			}
 
-			// Check if it has schedule.cron trigger
 			hasCron := false
 			switch on := flow.On.(type) {
 			case string:
@@ -1256,7 +1210,3 @@ type ConvertOpenAPIExtendedArgs struct {
 	BaseURL string `json:"base_url" flag:"base-url" description:"Base URL override"`
 	Output  string `json:"-" flag:"output" description:"Output file path (default: stdout)"`
 }
-
-// ============================================================================
-// END OF FILE
-// ============================================================================

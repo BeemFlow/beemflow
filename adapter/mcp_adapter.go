@@ -148,25 +148,46 @@ func (a *MCPAdapter) callHTTPTool(endpoint, tool string, inputs map[string]any) 
 func (a *MCPAdapter) setupStdioClient(ctx context.Context, host string, cfg config.MCPServerConfig) (*mcp.Client, error) {
 	// Check if process is already running
 	a.mu.Lock()
+
+	// Check if adapter has been closed
+	if a.closed {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("adapter has been closed")
+	}
+
 	cmd := a.processes[host]
 	pipes := a.pipes[host]
-	a.mu.Unlock()
 
 	if cmd == nil {
+		// Unlock while starting process (expensive operation)
+		a.mu.Unlock()
 		var err error
 		_, pipes, err = a.startMCPProcess(host, cfg)
 		if err != nil {
 			return nil, err
 		}
+
+		// Reacquire lock and double-check state (TOCTOU protection)
+		a.mu.Lock()
+		if a.closed {
+			a.mu.Unlock()
+			return nil, fmt.Errorf("adapter was closed during process startup")
+		}
+		a.mu.Unlock()
+	} else {
+		a.mu.Unlock()
 	}
 
 	transport := mcpstdio.NewStdioServerTransportWithIO(pipes.stdout, pipes.stdin)
 	client := mcp.NewClient(transport)
 
-	if _, err := client.Initialize(ctx); err != nil {
+	// Initialize without holding the lock (network operation)
+	_, err := client.Initialize(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("failed to initialize MCP stdio client: %w", err)
 	}
 
+	// Store client with lock
 	a.mu.Lock()
 	a.clients[host] = client
 	a.mu.Unlock()
@@ -275,16 +296,25 @@ func (a *MCPAdapter) formatMCPResponse(resp interface{}) (map[string]any, error)
 // Execute calls a tool on the specified MCP server.
 // Supports both HTTP and stdio transports with clean separation of concerns.
 func (a *MCPAdapter) Execute(ctx context.Context, inputs map[string]any) (map[string]any, error) {
+	if inputs == nil {
+		return nil, fmt.Errorf("inputs cannot be nil")
+	}
+
 	// Parse and validate request
 	host, tool, err := a.validateMCPRequest(inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check for existing client
+	// Check for existing client with lock
 	a.mu.Lock()
 	client, exists := a.clients[host]
+	closed := a.closed
 	a.mu.Unlock()
+
+	if closed {
+		return nil, fmt.Errorf("MCP adapter has been closed")
+	}
 
 	if !exists {
 		// Load server configuration
@@ -307,6 +337,10 @@ func (a *MCPAdapter) Execute(ctx context.Context, inputs map[string]any) (map[st
 		default:
 			return nil, fmt.Errorf("MCP server '%s' config is missing 'command' or 'http' transport config", host)
 		}
+	}
+
+	if client == nil {
+		return nil, fmt.Errorf("MCP client is nil for host %s", host)
 	}
 
 	// Validate tool exists on stdio server

@@ -73,9 +73,7 @@ func TestRegistryRegisterGet(t *testing.T) {
 	}
 }
 
-// ========================================
 // INTEGRATION TESTS - Real behavior testing
-// ========================================
 
 // TestCoreAdapterRealExecution tests the actual core adapter with real operations
 func TestCoreAdapterRealExecution(t *testing.T) {

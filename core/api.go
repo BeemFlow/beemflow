@@ -21,11 +21,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// GetDefaultRegistry returns the default registry with OAuth providers
-func GetDefaultRegistry() registry.OAuthRegistry {
-	return registry.NewDefaultRegistry()
-}
-
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
 func GetStoreFromConfig(cfg *config.Config) (storage.Storage, error) {
@@ -99,6 +94,7 @@ func InitializeConfig(configPath string, flowsDirOverride string) (*config.Confi
 }
 
 // GetConfig returns the cached config or loads it if not cached.
+// This is the centralized config accessor - all code should use this instead of LoadConfig directly.
 func GetConfig() (*config.Config, error) {
 	if cachedConfig != nil {
 		return cachedConfig, nil
@@ -115,7 +111,6 @@ func ResetConfigCache() {
 func ListFlows(ctx context.Context) ([]string, error) {
 	utils.Debug("ListFlows: Reading from flowsDir: %s", flowsDir)
 
-	// Check if directory exists
 	if _, err := os.Stat(flowsDir); os.IsNotExist(err) {
 		utils.Debug("ListFlows: Directory does not exist: %s", flowsDir)
 		return []string{}, nil
@@ -129,12 +124,10 @@ func ListFlows(ctx context.Context) ([]string, error) {
 			return err
 		}
 
-		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
 
-		// Check if it's a flow file
 		if strings.HasSuffix(info.Name(), constants.FlowFileExtension) {
 			// Get relative path from flowsDir
 			relPath, err := filepath.Rel(flowsDir, path)
@@ -204,7 +197,6 @@ func GraphFlow(ctx context.Context, name string) (string, error) {
 
 // createEngineFromConfig creates a new engine instance with storage from config
 func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
-	// Check if store is already in context (e.g., from tests)
 	if store := GetStoreFromContext(ctx); store != nil {
 		return engine.NewEngine(
 			engine.NewDefaultAdapterRegistry(ctx),
@@ -476,7 +468,6 @@ func ListTools(ctx context.Context) ([]map[string]any, error) {
 	for _, a := range adapters {
 		m := a.Manifest()
 		if m != nil {
-			// Only include if not an MCP server
 			if m.Kind != constants.MCPServerKind {
 				tools = append(tools, map[string]any{
 					"name":        m.Name,
@@ -528,9 +519,7 @@ func ListMCPServers(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
-// ============================================================================
 // REGISTRY FEDERATION API (for Runtime-to-Runtime Communication)
-// ============================================================================
 
 // RegistryIndexResponse represents the registry index response
 type RegistryIndexResponse struct {
@@ -627,7 +616,6 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 
 	manifests := []registry.ToolManifest{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
-		// Only include tools, not MCP servers
 		if entry.Type == "tool" {
 			manifests = append(manifests, registry.ToolManifest{
 				Name:        entry.Name,
@@ -742,7 +730,6 @@ func InstallToolFromManifest(ctx context.Context, manifest string) (map[string]a
 	var manifestData []byte
 	var err error
 
-	// Check if it's a file path
 	if _, statErr := os.Stat(manifest); statErr == nil {
 		// It's a file, read it
 		manifestData, err = os.ReadFile(manifest)
@@ -768,14 +755,21 @@ func InstallToolFromManifest(ctx context.Context, manifest string) (map[string]a
 	// Convert to RegistryEntry format
 	var toolsToInstall []registry.RegistryEntry
 	for _, tool := range tools {
+		// Inline helper - used only here
+		getStr := func(key string) string {
+			if v, ok := tool[key].(string); ok {
+				return v
+			}
+			return ""
+		}
 		entry := registry.RegistryEntry{
 			Registry:    "local",
 			Type:        "tool",
-			Name:        getString(tool, "name"),
-			Description: getString(tool, "description"),
-			Kind:        getString(tool, "kind"),
-			Endpoint:    getString(tool, "endpoint"),
-			Method:      getString(tool, "method"),
+			Name:        getStr("name"),
+			Description: getStr("description"),
+			Kind:        getStr("kind"),
+			Endpoint:    getStr("endpoint"),
+			Method:      getStr("method"),
 		}
 
 		if params, ok := tool["parameters"].(map[string]any); ok {
@@ -860,14 +854,6 @@ func installToolsToLocalRegistry(ctx context.Context, tools []registry.RegistryE
 		"count":   installedCount,
 		"message": fmt.Sprintf("Installed %d tools successfully", installedCount),
 	}, nil
-}
-
-// getString is a helper to safely get string values from map
-func getString(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
 }
 
 // Context keys for storing dependencies

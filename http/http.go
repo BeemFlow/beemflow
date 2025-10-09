@@ -59,6 +59,10 @@ func init() {
 // NewHandler creates the HTTP handler with all routes configured.
 // This is useful for testing without starting a real server.
 func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("config cannot be nil")
+	}
+
 	// Initialize tracing
 	initTracerFromConfig(cfg)
 
@@ -85,7 +89,9 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Get storage for OAuth setup
 	store, err := api.GetStoreFromConfig(cfg)
 	if err != nil {
-		baseCleanup()
+		if baseCleanup != nil {
+			baseCleanup()
+		}
 		return nil, nil, err
 	}
 
@@ -96,23 +102,31 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Load OAuth templates
 	if err := templateRenderer.LoadOAuthTemplates(); err != nil {
 		utils.Error("Failed to load OAuth templates: %v", err)
-		sessionStore.Close()
-		baseCleanup()
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
+		if baseCleanup != nil {
+			baseCleanup()
+		}
 		return nil, nil, err
 	}
 
 	// Setup OAuth client routes (always enabled for connecting to external services)
 	baseURL := getOAuthIssuerURL(cfg)
-	registry := api.GetDefaultRegistry()
-	RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
+	// No need for wrapper - call registry directly
+	RegisterWebOAuthRoutes(mux, store, registry.NewDefaultRegistry(), baseURL, sessionStore, templateRenderer)
 
 	// Setup OAuth server endpoints only if OAuth server is enabled
 	var oauthServer *auth.OAuthServer
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
 		oauthServer = setupOAuthServer(cfg, store)
 		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
-			sessionStore.Close()
-			baseCleanup()
+			if sessionStore != nil {
+				sessionStore.Close()
+			}
+			if baseCleanup != nil {
+				baseCleanup()
+			}
 			return nil, nil, err
 		}
 	}
@@ -146,17 +160,27 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		"http.root",
 	)
 
-	// Create combined cleanup function
+	// Create combined cleanup function with defensive nil checks
 	cleanup := func() {
+		var cleanupErrors []error
+
 		if webhookManager != nil {
 			if err := webhookManager.Close(); err != nil {
+				cleanupErrors = append(cleanupErrors, err)
 				utils.Error("Failed to close webhook manager: %v", err)
 			}
 		}
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
-		baseCleanup()
+		if baseCleanup != nil {
+			baseCleanup()
+		}
+
+		// Log if there were any cleanup errors
+		if len(cleanupErrors) > 0 {
+			utils.Warn("Encountered %d error(s) during cleanup", len(cleanupErrors))
+		}
 	}
 
 	return wrappedMux, cleanup, nil
@@ -331,9 +355,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// ============================================================================
 // TEST UTILITIES (consolidated from test_utils.go)
-// ============================================================================
 
 // UpdateRunEvent updates the event for a run.
 // Used for tests and directly accesses the storage layer.
@@ -400,17 +422,17 @@ func setupWebhookRoutes(mux *http.ServeMux, cfg *config.Config) (*webhook.Manage
 	// Get registry manager using the factory pattern
 	factory := registry.NewFactory()
 	registryManager := factory.CreateStandardManager(context.Background(), cfg)
-	
+
 	// Create webhook manager
 	webhookManager := webhook.NewManager(mux, eventBus, registryManager)
-	
+
 	// Load providers with webhooks from registry
 	ctx := context.Background()
 	if err := webhookManager.LoadProvidersWithWebhooks(ctx); err != nil {
 		webhookManager.Close() // Cleanup on error
 		return nil, fmt.Errorf("failed to load webhook providers: %w", err)
 	}
-	
+
 	utils.Info("Webhook routes setup completed")
 	return webhookManager, nil
 }

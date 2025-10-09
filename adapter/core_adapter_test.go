@@ -156,7 +156,6 @@ func TestCoreAdapter_Echo_EmptyInputs(t *testing.T) {
 	}
 }
 
-// ========== OpenAPI Conversion Tests ==========
 
 // TestCoreAdapter_ConvertOpenAPI_JSONString tests OpenAPI conversion with JSON string
 func TestCoreAdapter_ConvertOpenAPI_JSONString(t *testing.T) {

@@ -287,12 +287,6 @@ func TestExecuteNoop(t *testing.T) {
 	}
 }
 
-func TestNewCronScheduler(t *testing.T) {
-	s := NewCronScheduler()
-	if s == nil {
-		t.Error("expected NewCronScheduler not nil")
-	}
-}
 
 func TestExecute_NilFlow(t *testing.T) {
 	e := NewDefaultEngine(context.Background())
@@ -745,9 +739,7 @@ func TestInMemoryFallback_ListAndGetRun(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // COMPREHENSIVE COVERAGE TESTS
-// ============================================================================
 
 // TestExecuteParallelBlock tests the parallel block execution with 100% coverage
 func TestExecuteParallelBlock(t *testing.T) {

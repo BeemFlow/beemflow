@@ -672,25 +672,25 @@ func TestHTTPAdapter_ResponseProcessing(t *testing.T) {
 // TestHTTPAdapter_SafeAssertions tests safe type assertion functions
 func TestHTTPAdapter_SafeAssertions(t *testing.T) {
 	// Test safeStringAssert
-	if result, ok := safeStringAssert("test"); !ok || result != "test" {
+	if result, ok := utils.SafeStringAssert("test"); !ok || result != "test" {
 		t.Errorf("expected (test, true), got (%s, %v)", result, ok)
 	}
-	if result, ok := safeStringAssert(123); ok || result != "" {
+	if result, ok := utils.SafeStringAssert(123); ok || result != "" {
 		t.Errorf("expected (\"\", false) for non-string, got (%s, %v)", result, ok)
 	}
-	if result, ok := safeStringAssert(nil); ok || result != "" {
+	if result, ok := utils.SafeStringAssert(nil); ok || result != "" {
 		t.Errorf("expected (\"\", false) for nil, got (%s, %v)", result, ok)
 	}
 
 	// Test safeMapAssert
 	testMap := map[string]any{"key": "value"}
-	if result, ok := safeMapAssert(testMap); !ok || result["key"] != "value" {
+	if result, ok := utils.SafeMapAssert(testMap); !ok || result["key"] != "value" {
 		t.Errorf("expected map with key=value, got %v, %v", result, ok)
 	}
-	if result, ok := safeMapAssert("not a map"); ok || len(result) != 0 {
+	if result, ok := utils.SafeMapAssert("not a map"); ok || len(result) != 0 {
 		t.Errorf("expected (empty map, false) for non-map, got (%v, %v)", result, ok)
 	}
-	if result, ok := safeMapAssert(nil); ok || len(result) != 0 {
+	if result, ok := utils.SafeMapAssert(nil); ok || len(result) != 0 {
 		t.Errorf("expected (empty map, false) for nil, got (%v, %v)", result, ok)
 	}
 }
@@ -1030,9 +1030,7 @@ func TestHTTPAdapter_ExecuteGenericRequest_EdgeCases(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // OAUTH TESTS
-// ============================================================================
 
 // TestHTTPAdapter_ExpandValue_EnvironmentVariables tests environment variable expansion
 func TestHTTPAdapter_ExpandValue_EnvironmentVariables(t *testing.T) {

@@ -44,6 +44,16 @@ type ParsedEvent struct {
 
 // NewManager creates a new webhook manager following existing patterns
 func NewManager(mux *http.ServeMux, eventBus event.EventBus, registryManager *registry.RegistryManager) *Manager {
+	if mux == nil {
+		utils.Warn("Creating webhook manager with nil mux")
+	}
+	if eventBus == nil {
+		utils.Warn("Creating webhook manager with nil eventBus")
+	}
+	if registryManager == nil {
+		utils.Warn("Creating webhook manager with nil registryManager")
+	}
+
 	return &Manager{
 		mux:      mux,
 		eventBus: eventBus,
@@ -74,6 +84,10 @@ func (m *Manager) Close() error {
 
 // LoadProvidersWithWebhooks scans the registry for providers with webhook configs and registers them
 func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
+	if m == nil {
+		return fmt.Errorf("webhook manager is nil")
+	}
+
 	// Check if closed without holding lock for long
 	m.mu.RLock()
 	closed := m.closed
@@ -81,6 +95,10 @@ func (m *Manager) LoadProvidersWithWebhooks(ctx context.Context) error {
 
 	if closed {
 		return m.errWrap.Failf("manager is closed")
+	}
+
+	if m.registry == nil {
+		return m.errWrap.Failf("registry manager is nil")
 	}
 
 	entries, err := m.registry.ListAllServers(ctx, registry.ListOptions{})
@@ -212,12 +230,15 @@ func (m *Manager) getWebhookHandler(entry registry.RegistryEntry) *GenericWebhoo
 	}
 }
 
-// ============================================================================
 // GENERIC WEBHOOK HANDLER IMPLEMENTATION
-// ============================================================================
 
 // VerifySignature verifies webhook signature using configuration-driven approach
 func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) bool {
+	if h == nil || r == nil {
+		utils.Warn("VerifySignature called with nil handler or request")
+		return false
+	}
+
 	if h.signatureConfig == nil {
 		// No signature verification configured
 		return true
@@ -248,6 +269,11 @@ func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) 
 	}
 
 	// Read and restore request body
+	if r.Body == nil {
+		utils.Warn("Request body is nil in VerifySignature")
+		return false
+	}
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		return false
@@ -277,6 +303,16 @@ func (h *GenericWebhookHandler) VerifySignature(r *http.Request, secret string) 
 
 // ParseEvents extracts events using generic JSON path extraction
 func (h *GenericWebhookHandler) ParseEvents(r *http.Request, eventConfigs []registry.WebhookEvent) ([]ParsedEvent, error) {
+	if h == nil {
+		return nil, fmt.Errorf("handler is nil")
+	}
+	if r == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	if r.Body == nil {
+		return nil, fmt.Errorf("request body is nil")
+	}
+
 	// Read request body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -351,9 +387,7 @@ func (h *GenericWebhookHandler) extractValue(data map[string]any, path string) a
 	return current
 }
 
-// ============================================================================
 // UTILITY FUNCTIONS
-// ============================================================================
 
 // validateWebhookPath ensures webhook path is valid
 func validateWebhookPath(path string) error {
