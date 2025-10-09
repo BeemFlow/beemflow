@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/cue"
@@ -107,6 +109,11 @@ func ResetConfigCache() {
 	cachedConfig = nil
 }
 
+// ParseFlowFile parses a CUE flow file
+func ParseFlowFile(path string) (*model.Flow, error) {
+	return cue.NewParser().ParseFile(path)
+}
+
 // ListFlows returns the names of all available flows.
 func ListFlows(ctx context.Context) ([]string, error) {
 	utils.Debug("ListFlows: Reading from flowsDir: %s", flowsDir)
@@ -156,8 +163,7 @@ func ListFlows(ctx context.Context) ([]string, error) {
 // GetFlow returns the parsed flow definition for the given name.
 func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 	path := buildFlowPath(name)
-	parser := cue.NewParser()
-	flow, err := parser.ParseFile(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return model.Flow{}, utils.Errorf("flow '%s' not found", name)
@@ -170,8 +176,7 @@ func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 // ValidateFlow validates the given flow by name.
 func ValidateFlow(ctx context.Context, name string) error {
 	path := buildFlowPath(name)
-	parser := cue.NewParser()
-	_, err := parser.ParseFile(path)
+	_, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return utils.Errorf("flow '%s' not found", name)
@@ -184,8 +189,7 @@ func ValidateFlow(ctx context.Context, name string) error {
 // GraphFlow returns the Mermaid diagram for the given flow.
 func GraphFlow(ctx context.Context, name string) (string, error) {
 	path := buildFlowPath(name)
-	parser := cue.NewParser()
-	flow, err := parser.ParseFile(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -195,13 +199,97 @@ func GraphFlow(ctx context.Context, name string) (string, error) {
 	return graph.ExportMermaid(flow)
 }
 
-// createEngineFromConfig creates a new engine instance with storage from config
+// EngineDependencies holds all initialized application dependencies
+// Use this for dependency injection into HTTP server, CLI, MCP server, etc.
+type EngineDependencies struct {
+	Engine   *engine.Engine
+	Storage  storage.Storage
+	EventBus event.EventBus
+	Registry *registry.RegistryManager
+	Cleanup  func()
+}
+
+// InitializeEngine creates an engine with all dependencies
+// Returns EngineDependencies for consumption by transport layers (HTTP, CLI, MCP)
+func InitializeEngine(cfg *config.Config) (*EngineDependencies, error) {
+	// Initialize storage
+	store, err := GetStoreFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize event bus
+	var bus event.EventBus
+	if cfg.Event != nil {
+		bus, err = event.NewEventBusFromConfig(cfg.Event)
+		if err != nil {
+			utils.WarnCtx(context.Background(), "Failed to create event bus: %v, using in-memory fallback", "error", err)
+			bus = event.NewInProcEventBus()
+		}
+	} else {
+		bus = event.NewInProcEventBus()
+	}
+
+	// Initialize blob store
+	var blobStore blob.BlobStore
+	if cfg.Blob != nil {
+		blobConfig := &blob.BlobConfig{
+			Driver: cfg.Blob.Driver,
+			Bucket: cfg.Blob.Bucket,
+		}
+		blobStore, err = blob.NewDefaultBlobStore(context.Background(), blobConfig)
+		if err != nil {
+			utils.WarnCtx(context.Background(), "Failed to create blob store: %v, using nil fallback", "error", err)
+			blobStore = nil
+		}
+	}
+
+	// Initialize registry
+	registryMgr := registry.NewStandardManager(context.Background(), cfg)
+
+	// Create engine
+	adapters := engine.NewDefaultAdapterRegistry(context.Background())
+	eng := engine.NewEngine(adapters, bus, blobStore, store)
+
+	// Create cleanup function
+	cleanup := func() {
+		if eng != nil {
+			if err := eng.Close(); err != nil {
+				utils.Error("Failed to close engine: %v", err)
+			}
+		}
+		if store != nil {
+			if closer, ok := store.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					utils.Error("Failed to close storage: %v", err)
+				}
+			}
+		}
+		if blobStore != nil {
+			if closer, ok := blobStore.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					utils.Error("Failed to close blob store: %v", err)
+				}
+			}
+		}
+	}
+
+	return &EngineDependencies{
+		Engine:   eng,
+		Storage:  store,
+		EventBus: bus,
+		Registry: registryMgr,
+		Cleanup:  cleanup,
+	}, nil
+}
+
+// createEngineFromConfig creates a lightweight engine for API operations
 func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 	if store := GetStoreFromContext(ctx); store != nil {
 		return engine.NewEngine(
 			engine.NewDefaultAdapterRegistry(ctx),
 			event.NewInProcEventBus(),
-			nil, // blob store not needed here
+			nil,
 			store,
 		), nil
 	}
@@ -219,7 +307,7 @@ func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 	return engine.NewEngine(
 		engine.NewDefaultAdapterRegistry(ctx),
 		event.NewInProcEventBus(),
-		nil, // blob store not needed here
+		nil,
 		store,
 	), nil
 }
@@ -232,8 +320,7 @@ func buildFlowPath(flowName string) string {
 // parseFlowByName loads and parses a flow file by name
 func parseFlowByName(flowName string) (*model.Flow, error) {
 	path := buildFlowPath(flowName)
-	parser := cue.NewParser()
-	flow, err := parser.ParseFile(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -460,7 +547,7 @@ func RunSpec(ctx context.Context, flow *model.Flow, eventData map[string]any) (u
 	return latest.ID, outputs, nil
 }
 
-// ListTools returns all registered tool manifests (name, description, kind, etc).
+// ListTools returns all registered tool manifests (name, description, kind, etc) - for tests.
 func ListTools(ctx context.Context) ([]map[string]any, error) {
 	eng := engine.NewDefaultEngine(ctx)
 	adapters := eng.Adapters.All()
@@ -477,19 +564,6 @@ func ListTools(ctx context.Context) ([]map[string]any, error) {
 					"type":        constants.ToolType,
 				})
 			}
-		}
-	}
-	// Also include MCP servers from the registry
-	mcps, err := eng.ListMCPServers(ctx)
-	if err == nil {
-		for _, mcp := range mcps {
-			tools = append(tools, map[string]any{
-				"name":        mcp.Name,
-				"description": "MCP server",
-				"kind":        constants.MCPServerKind,
-				"endpoint":    mcp.Config.Endpoint,
-				"type":        constants.MCPServerKind,
-			})
 		}
 	}
 	return tools, nil
@@ -532,23 +606,9 @@ type RegistryIndexResponse struct {
 
 // GetRegistryIndex returns the complete registry index for this runtime
 func GetRegistryIndex(ctx context.Context) (*RegistryIndexResponse, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
+
+	mgr := registry.NewAPIManager()
 	return createRegistryResponse(ctx, mgr)
-}
-
-// GetRegistryTool returns a specific tool by name
-func GetRegistryTool(ctx context.Context, name string) (*registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
-	return mgr.GetServer(ctx, name)
-}
-
-// GetRegistryStats returns statistics about all registries
-func GetRegistryStats(ctx context.Context) (map[string]registry.RegistryStats, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
-	return mgr.GetRegistryStats(ctx), nil
 }
 
 // createRegistryResponse creates the registry response from a manager
@@ -605,9 +665,9 @@ func GetToolManifest(ctx context.Context, name string) (*registry.ToolManifest, 
 // ListToolManifests returns all tool manifests from the local registry
 func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 	// Use the standard registry manager to get tools from all registries
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 	if err != nil {
@@ -632,9 +692,9 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 
 // SearchMCPServers searches for MCP servers in registries
 func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
@@ -652,9 +712,9 @@ func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEnt
 
 // SearchTools searches for tools in registries
 func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
@@ -673,9 +733,9 @@ func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, e
 // InstallMCPServer installs an MCP server to the config file
 func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, error) {
 	// Get the server spec from registry
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	server, err := mgr.GetServer(ctx, serverName)
 	if err != nil || server == nil {
@@ -709,9 +769,9 @@ func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, e
 
 // InstallToolFromRegistry installs a tool from the registry by name
 func InstallToolFromRegistry(ctx context.Context, toolName string) (map[string]any, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	tool, err := mgr.GetServer(ctx, toolName)
 	if err != nil || tool == nil {

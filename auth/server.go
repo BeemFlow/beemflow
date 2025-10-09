@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
@@ -136,7 +139,7 @@ func NewOAuthServer(cfg *OAuthConfig, store storage.Storage) *OAuthServer {
 
 // HandleMetadataDiscovery serves the OAuth 2.0 Authorization Server Metadata
 func (o *OAuthServer) HandleMetadataDiscovery(w http.ResponseWriter, r *http.Request) {
-	if !enforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
+	if !EnforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
 		return
 	}
 
@@ -158,8 +161,8 @@ func (o *OAuthServer) HandleMetadataDiscovery(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(metadata)
 }
 
-// enforceHTTPS ensures OAuth endpoints are accessed over HTTPS in production
-func enforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
+// EnforceHTTPS ensures OAuth endpoints are accessed over HTTPS in production
+func EnforceHTTPS(w http.ResponseWriter, r *http.Request) bool {
 	// Always allow localhost/development
 	if strings.Contains(r.Host, "localhost") || strings.Contains(r.Host, "127.0.0.1") {
 		return true
@@ -193,7 +196,7 @@ func (o *OAuthServer) enforceRateLimit(w http.ResponseWriter, r *http.Request) b
 
 // HandleDynamicClientRegistration handles OAuth 2.0 Dynamic Client Registration
 func (o *OAuthServer) HandleDynamicClientRegistration(w http.ResponseWriter, r *http.Request) {
-	if !enforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
+	if !EnforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
 		return
 	}
 
@@ -315,6 +318,24 @@ func generateClientSecret() string {
 	return base64.RawURLEncoding.EncodeToString(bytes)
 }
 
+// GeneratePKCEChallenge generates PKCE code verifier and S256 challenge for OAuth 2.0
+// Used by OAuth client flows to prevent authorization code interception
+func GeneratePKCEChallenge() (verifier, challenge string, err error) {
+	// Generate cryptographically random verifier (43-128 characters)
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+
+	// Generate S256 challenge from verifier
+	h := sha256.New()
+	h.Write([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	return verifier, challenge, nil
+}
+
 // isValidRedirectURI validates a redirect URI according to OAuth 2.1 best practices
 func (s *OAuthServer) isValidRedirectURI(uri string) bool {
 	u, err := url.Parse(uri)
@@ -357,7 +378,7 @@ func (s *OAuthServer) isValidRedirectURI(uri string) bool {
 
 // HandleAuthorize handles OAuth authorization requests
 func (o *OAuthServer) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
-	if !enforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
+	if !EnforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
 		return
 	}
 
@@ -406,7 +427,7 @@ func (o *OAuthServer) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 // HandleToken handles OAuth token requests
 func (o *OAuthServer) HandleToken(w http.ResponseWriter, r *http.Request) {
-	if !enforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
+	if !EnforceHTTPS(w, r) || !o.enforceRateLimit(w, r) {
 		return
 	}
 
@@ -551,4 +572,189 @@ func (c *OAuthClientInfo) GetRedirectURI() string {
 		return c.client.RedirectURIs[0]
 	}
 	return ""
+}
+
+// SetupOAuthServer creates an OAuth server instance from config
+// AuthMiddleware provides OAuth 2.1 authentication for HTTP endpoints
+type AuthMiddleware struct {
+	store         storage.Storage
+	oauthServer   *OAuthServer
+	requiredScope string
+}
+
+// NewAuthMiddleware creates a new authentication middleware
+func NewAuthMiddleware(store storage.Storage, oauthServer *OAuthServer, requiredScope string) *AuthMiddleware {
+	if requiredScope == "" {
+		requiredScope = "mcp"
+	}
+	return &AuthMiddleware{
+		store:         store,
+		oauthServer:   oauthServer,
+		requiredScope: requiredScope,
+	}
+}
+
+// Middleware returns an HTTP handler that wraps the provided handler with authentication
+func (a *AuthMiddleware) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract token from Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			a.unauthorized(w, r, "Missing authorization header")
+			return
+		}
+
+		// Parse Bearer token
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			a.unauthorized(w, r, "Invalid authorization header format")
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Validate token and get user info
+		tokenInfo, err := a.store.GetOAuthTokenByAccess(r.Context(), token)
+		if err != nil || tokenInfo == nil {
+			utils.Debug("Token validation failed: %v", err)
+			a.unauthorized(w, r, "Invalid or expired token")
+			return
+		}
+
+		// Check if token is expired
+		if tokenInfo.AccessExpiresIn > 0 {
+			accessExpiry := tokenInfo.AccessCreateAt.Add(tokenInfo.AccessExpiresIn)
+			if time.Now().After(accessExpiry) {
+				utils.Debug("Token has expired")
+				a.unauthorized(w, r, "Token has expired")
+				return
+			}
+		}
+
+		// Store user ID in context for downstream handlers
+		ctx := context.WithValue(r.Context(), "user_id", tokenInfo.UserID)
+		r = r.WithContext(ctx)
+
+		// Token is valid, proceed
+		next.ServeHTTP(w, r)
+	})
+}
+
+// unauthorized sends an HTTP 401 Unauthorized response with OAuth challenge
+func (a *AuthMiddleware) unauthorized(w http.ResponseWriter, _ *http.Request, message string) {
+	// According to MCP spec, when authorization is required but not provided,
+	// servers should respond with HTTP 401 Unauthorized
+
+	w.Header().Set("WWW-Authenticate", `Bearer realm="MCP Server", error="invalid_token", error_description="`+message+`"`)
+	w.WriteHeader(http.StatusUnauthorized)
+
+	// Use proper JSON marshaling to prevent injection
+	response := map[string]string{
+		"error":   "unauthorized",
+		"message": message,
+	}
+	if jsonData, err := json.Marshal(response); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonData)
+	} else {
+		// Fallback if JSON marshaling fails
+		w.Write([]byte(`{"error": "unauthorized", "message": "Authentication failed"}`))
+	}
+}
+
+// OptionalMiddleware returns middleware that makes authentication optional
+// If no token is provided, the request proceeds without user context
+// If a token is provided, it must be valid
+func (a *AuthMiddleware) OptionalMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+
+		if authHeader != "" {
+			// Token provided, validate it and extract user ID
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				a.unauthorized(w, r, "Invalid authorization header format")
+				return
+			}
+
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+
+			// Validate token and get user info
+			tokenInfo, err := a.store.GetOAuthTokenByAccess(r.Context(), token)
+			if err != nil || tokenInfo == nil {
+				utils.Debug("Token validation failed: %v", err)
+				a.unauthorized(w, r, "Invalid or expired token")
+				return
+			}
+
+			// Check if token is expired
+			if tokenInfo.AccessExpiresIn > 0 {
+				accessExpiry := tokenInfo.AccessCreateAt.Add(tokenInfo.AccessExpiresIn)
+				if time.Now().After(accessExpiry) {
+					utils.Debug("Token has expired")
+					a.unauthorized(w, r, "Token has expired")
+					return
+				}
+			}
+
+			// Store user ID in context for downstream handlers
+			ctx := context.WithValue(r.Context(), "user_id", tokenInfo.UserID)
+			r = r.WithContext(ctx)
+		}
+
+		// No token or valid token, proceed
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SetupOAuthServer creates and returns an OAuth server instance
+func SetupOAuthServer(cfg *config.Config, store storage.Storage) *OAuthServer {
+	// Create OAuth server configuration
+	oauthCfg := &OAuthConfig{
+		Issuer:                  GetOAuthIssuerURL(cfg),
+		ClientID:                "beemflow",         // Default client ID
+		ClientSecret:            "beemflow-secret",  // Default client secret (should be configurable)
+		TokenExpiry:             3600 * time.Second, // 1 hour
+		RefreshExpiry:           7200 * time.Second, // 2 hours
+		AllowLocalhostRedirects: strings.Contains(GetOAuthIssuerURL(cfg), "localhost") || strings.Contains(GetOAuthIssuerURL(cfg), "127.0.0.1"),
+	}
+
+	// Create OAuth server
+	oauthServer := NewOAuthServer(oauthCfg, store)
+
+	return oauthServer
+}
+
+// SetupOAuthHandlers adds OAuth 2.1 endpoints to the HTTP server
+func SetupOAuthHandlers(mux *http.ServeMux, cfg *config.Config, store storage.Storage) error {
+	oauthServer := SetupOAuthServer(cfg, store)
+
+	// Register OAuth endpoints
+	mux.HandleFunc("/.well-known/oauth-authorization-server", oauthServer.HandleMetadataDiscovery)
+	mux.HandleFunc("/oauth/authorize", oauthServer.HandleAuthorize)
+	mux.HandleFunc("/oauth/token", oauthServer.HandleToken)
+	mux.HandleFunc("/oauth/register", oauthServer.HandleDynamicClientRegistration)
+
+	return nil
+}
+func GetOAuthIssuerURL(cfg *config.Config) string {
+	baseURL := "http://localhost:3330" // default HTTP server port
+
+	if cfg.HTTP != nil {
+		host := "localhost"
+		if cfg.HTTP.Host != "" {
+			host = cfg.HTTP.Host
+		}
+
+		port := 3330
+		if cfg.HTTP.Port != 0 {
+			port = cfg.HTTP.Port
+		}
+
+		if host == "0.0.0.0" {
+			host = "localhost"
+		}
+
+		baseURL = fmt.Sprintf("http://%s:%d", host, port)
+	}
+
+	return baseURL
 }

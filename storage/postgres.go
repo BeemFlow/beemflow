@@ -87,13 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_steps_started_at ON steps(started_at DESC);
 }
 
 func (s *PostgresStorage) SaveRun(ctx context.Context, run *model.Run) error {
-	event, err := json.Marshal(run.Event)
+	event, vars, err := marshalRunFields(run)
 	if err != nil {
-		return fmt.Errorf("failed to marshal run event: %w", err)
-	}
-	vars, err := json.Marshal(run.Vars)
-	if err != nil {
-		return fmt.Errorf("failed to marshal run vars: %w", err)
+		return err
 	}
 
 	_, err = s.db.ExecContext(ctx, `
@@ -133,9 +129,9 @@ FROM runs WHERE id = $1`, id)
 }
 
 func (s *PostgresStorage) SaveStep(ctx context.Context, step *model.StepRun) error {
-	outputs, err := json.Marshal(step.Outputs)
+	outputs, err := marshalStepOutputs(step)
 	if err != nil {
-		return fmt.Errorf("failed to marshal step outputs: %w", err)
+		return err
 	}
 
 	_, err = s.db.ExecContext(ctx, `
@@ -170,8 +166,8 @@ FROM steps WHERE run_id = $1 ORDER BY started_at`, runID)
 			&step.StartedAt, &step.EndedAt, &outputs, &step.Error); err != nil {
 			continue
 		}
-		if err := json.Unmarshal(outputs, &step.Outputs); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal outputs: %w", err)
+		if err := unmarshalStepOutputs(outputs, &step); err != nil {
+			return nil, err
 		}
 		steps = append(steps, &step)
 	}

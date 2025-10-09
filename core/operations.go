@@ -14,7 +14,6 @@ import (
 
 	"github.com/beemflow/beemflow/adapter"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/docs"
 	"github.com/beemflow/beemflow/graph"
 	"github.com/beemflow/beemflow/mcp"
@@ -125,7 +124,7 @@ func GetAllOperations() map[string]*OperationDefinition {
 	return operationRegistry
 }
 
-// GetOperationsByGroups returns operations filtered by the specified groups
+// GetOperationsByGroups returns operations filtered by the specified groups (for tests)
 func GetOperationsByGroups(groups []string) []*OperationDefinition {
 	if len(groups) == 0 {
 		// Return all operations as slice
@@ -150,7 +149,7 @@ func GetOperationsByGroups(groups []string) []*OperationDefinition {
 	return filtered
 }
 
-// GetOperationsMapByGroups returns operations filtered by the specified groups as a map
+// GetOperationsMapByGroups returns operations filtered by the specified groups as a map (for tests)
 func GetOperationsMapByGroups(groups []string) map[string]*OperationDefinition {
 	if len(groups) == 0 {
 		return operationRegistry
@@ -181,9 +180,8 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("only one of name or file can be specified")
 	}
 
-	parser := cue.NewParser()
 	if a.File != "" {
-		_, err := parser.ParseFile(a.File)
+		_, err := ParseFlowFile(a.File)
 		if err != nil {
 			return nil, fmt.Errorf("CUE parse error: %w", err)
 		}
@@ -228,8 +226,7 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	var err error
 
 	if a.File != "" {
-		parser := cue.NewParser()
-		flow, parseErr := parser.ParseFile(a.File)
+		flow, parseErr := ParseFlowFile(a.File)
 		if parseErr != nil {
 			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
 		}
@@ -272,8 +269,7 @@ func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
 // lintFlowHandler - unified handler for both CLI and API
 func lintFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*FlowFileArgs)
-	parser := cue.NewParser()
-	_, err := parser.ParseFile(a.File)
+	_, err := ParseFlowFile(a.File)
 	if err != nil {
 		return nil, fmt.Errorf("CUE parse error: %w", err)
 	}
@@ -746,9 +742,9 @@ func init() {
 			ctx := context.Background()
 
 			// Use registry manager to get full registry entry info
-			factory := registry.NewFactory()
+
 			cfg := GetConfigFromContext(ctx)
-			mgr := factory.CreateStandardManager(ctx, cfg)
+			mgr := registry.NewStandardManager(ctx, cfg)
 
 			entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 			if err != nil {
@@ -834,8 +830,8 @@ func init() {
 			}
 
 			// List servers from all registries
-			factory := registry.NewFactory()
-			manager := factory.CreateStandardManager(ctx, cfg)
+
+			manager := registry.NewStandardManager(ctx, cfg)
 			allEntries, err := manager.ListAllServers(ctx, registry.ListOptions{})
 			if err == nil {
 				for _, entry := range allEntries {

@@ -80,18 +80,9 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		}
 	})
 
-	// Initialize all dependencies (this could be moved to a separate DI package)
-	baseCleanup, err := api.InitializeDependencies(cfg)
+	// Initialize all application dependencies
+	deps, err := api.InitializeEngine(cfg)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	// Get storage for OAuth setup
-	store, err := api.GetStoreFromConfig(cfg)
-	if err != nil {
-		if baseCleanup != nil {
-			baseCleanup()
-		}
 		return nil, nil, err
 	}
 
@@ -105,27 +96,26 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
-		if baseCleanup != nil {
-			baseCleanup()
+		if deps.Cleanup != nil {
+			deps.Cleanup()
 		}
 		return nil, nil, err
 	}
 
 	// Setup OAuth client routes (always enabled for connecting to external services)
-	baseURL := getOAuthIssuerURL(cfg)
-	// No need for wrapper - call registry directly
-	RegisterWebOAuthRoutes(mux, store, registry.NewDefaultRegistry(), baseURL, sessionStore, templateRenderer)
+	baseURL := auth.GetOAuthIssuerURL(cfg)
+	RegisterWebOAuthRoutes(mux, deps.Storage, registry.NewDefaultRegistry(), baseURL, sessionStore, templateRenderer)
 
 	// Setup OAuth server endpoints only if OAuth server is enabled
 	var oauthServer *auth.OAuthServer
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
-		oauthServer = setupOAuthServer(cfg, store)
-		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
+		oauthServer = auth.SetupOAuthServer(cfg, deps.Storage)
+		if err := auth.SetupOAuthHandlers(mux, cfg, deps.Storage); err != nil {
 			if sessionStore != nil {
 				sessionStore.Close()
 			}
-			if baseCleanup != nil {
-				baseCleanup()
+			if deps.Cleanup != nil {
+				deps.Cleanup()
 			}
 			return nil, nil, err
 		}
@@ -134,15 +124,15 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Generate and register all operation handlers
 	api.GenerateHTTPHandlers(mux)
 
-	// Setup webhook endpoints
-	webhookManager, err := setupWebhookRoutes(mux, cfg)
+	// Setup webhook endpoints (dependencies injected)
+	webhookManager, err := setupWebhookRoutes(mux, deps.EventBus, deps.Registry)
 	if err != nil {
 		utils.Warn("Failed to setup webhook routes: %v", err)
 	}
 
 	// Setup MCP routes (auth required only when OAuth server is running)
 	mcpRequireAuth := oauthServer != nil
-	setupMCPRoutes(mux, store, oauthServer, mcpRequireAuth)
+	setupMCPRoutes(mux, deps.Storage, oauthServer, mcpRequireAuth)
 
 	// Register metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
@@ -173,8 +163,8 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
-		if baseCleanup != nil {
-			baseCleanup()
+		if deps.Cleanup != nil {
+			deps.Cleanup()
 		}
 
 		// Log if there were any cleanup errors
@@ -411,25 +401,13 @@ func UpdateRunEvent(id uuid.UUID, newEvent map[string]any) error {
 	return store.SaveRun(context.Background(), run)
 }
 
-// setupWebhookRoutes initializes webhook endpoints for registered providers
-func setupWebhookRoutes(mux *http.ServeMux, cfg *config.Config) (*webhook.Manager, error) {
-	// Get event bus
-	eventBus, err := event.NewEventBusFromConfig(cfg.Event)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create event bus: %w", err)
-	}
+// setupWebhookRoutes initializes webhook endpoints (dependencies injected)
+func setupWebhookRoutes(mux *http.ServeMux, eventBus event.EventBus, registryMgr *registry.RegistryManager) (*webhook.Manager, error) {
+	webhookManager := webhook.NewManager(mux, eventBus, registryMgr)
 
-	// Get registry manager using the factory pattern
-	factory := registry.NewFactory()
-	registryManager := factory.CreateStandardManager(context.Background(), cfg)
-
-	// Create webhook manager
-	webhookManager := webhook.NewManager(mux, eventBus, registryManager)
-
-	// Load providers with webhooks from registry
 	ctx := context.Background()
 	if err := webhookManager.LoadProvidersWithWebhooks(ctx); err != nil {
-		webhookManager.Close() // Cleanup on error
+		webhookManager.Close()
 		return nil, fmt.Errorf("failed to load webhook providers: %w", err)
 	}
 

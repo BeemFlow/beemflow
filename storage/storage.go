@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/beemflow/beemflow/model"
@@ -49,4 +51,26 @@ type Storage interface {
 	DeleteOAuthTokenByCode(ctx context.Context, code string) error
 	DeleteOAuthTokenByAccess(ctx context.Context, access string) error
 	DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error
+}
+
+// Package-private SQL marshaling helpers (shared by sqlite and postgres)
+
+func marshalRunFields(run *model.Run) (eventJSON, varsJSON []byte, err error) {
+	eventJSON, err = json.Marshal(run.Event)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal event: %w", err)
+	}
+	varsJSON, err = json.Marshal(run.Vars)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal vars: %w", err)
+	}
+	return eventJSON, varsJSON, nil
+}
+
+func marshalStepOutputs(step *model.StepRun) ([]byte, error) {
+	return json.Marshal(step.Outputs)
+}
+
+func unmarshalStepOutputs(outputsJSON []byte, step *model.StepRun) error {
+	return json.Unmarshal(outputsJSON, &step.Outputs)
 }

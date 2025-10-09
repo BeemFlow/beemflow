@@ -33,8 +33,3 @@ var (
 func DefaultLocalRegistryFullPath() string {
 	return DefaultLocalRegistryPath
 }
-
-// DefaultConfigDirFullPath returns the full path to the default config directory.
-func DefaultConfigDirFullPath() string {
-	return DefaultConfigDir
-}

@@ -17,7 +17,6 @@ import (
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
-	"github.com/beemflow/beemflow/cue"
 	beemhttp "github.com/beemflow/beemflow/http"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/utils"
@@ -172,8 +171,7 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 	}
 
 	// Parse the flow file
-	parser := cue.NewParser()
-	flow, err := parser.ParseFile(args[0])
+	flow, err := api.ParseFlowFile(args[0])
 	if err != nil {
 		utils.Error("Flow parse error: %v", err)
 		exit(1)
@@ -742,4 +740,3 @@ func newOAuthCredentialsRemoveCmd() *cobra.Command {
 		},
 	}
 }
-

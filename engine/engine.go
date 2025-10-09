@@ -227,8 +227,8 @@ func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
 	cfg, _ := config.LoadConfig(constants.ConfigFileName)
 
 	// Create standard registry manager using the factory
-	factory := registry.NewFactory()
-	mgr := factory.CreateStandardManager(ctx, cfg)
+
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	// Load all tools and register HTTP adapters
 	if tools, err := mgr.ListAllServers(ctx, registry.ListOptions{}); err == nil {
@@ -250,18 +250,6 @@ func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
 		}
 	} else {
 		utils.Warn("Registry loading failed: %v", err)
-	}
-}
-
-// NewEngineWithBlobStore creates a new Engine with a custom BlobStore.
-func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engine {
-	return &Engine{
-		Adapters:         NewDefaultAdapterRegistry(ctx),
-		EventBus:         event.NewInProcEventBus(),
-		BlobStore:        blobStore,
-		waiting:          make(map[string]*PausedRun),
-		completedOutputs: make(map[string]map[string]any),
-		Storage:          storage.NewMemoryStorage(),
 	}
 }
 
@@ -482,15 +470,6 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
-// buildDependencyGraph creates a map of step ID -> list of dependencies
-func buildDependencyGraph(steps []model.Step) map[string][]string {
-	graph := make(map[string][]string)
-	for _, step := range steps {
-		graph[step.ID] = step.DependsOn
-	}
-	return graph
-}
-
 // topologicalSort performs topological sorting using Kahn's algorithm
 // Returns execution order or error if circular dependency detected
 func topologicalSort(steps []model.Step) ([]string, error) {
@@ -672,7 +651,13 @@ func (e *Engine) handleAwaitEventStep(ctx context.Context, step *model.Step, flo
 	e.registerPausedRun(ctx, token, flow, stepCtx, stepIdx, runID)
 
 	// Setup event subscription for resume
-	e.setupResumeEventSubscription(ctx, token)
+	e.EventBus.Subscribe(ctx, constants.EventTopicResumePrefix+token, func(payload any) {
+		resumeEvent, ok := payload.(map[string]any)
+		if !ok {
+			return
+		}
+		e.Resume(ctx, token, resumeEvent)
+	})
 
 	return nil, constants.NewAwaitEventPauseError(step.ID, token)
 }
@@ -694,17 +679,6 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 	}
 
 	return renderedToken, nil
-}
-
-// setupResumeEventSubscription configures event bus subscription for resume events
-func (e *Engine) setupResumeEventSubscription(ctx context.Context, token string) {
-	e.EventBus.Subscribe(ctx, constants.EventTopicResumePrefix+token, func(payload any) {
-		resumeEvent, ok := payload.(map[string]any)
-		if !ok {
-			return
-		}
-		e.Resume(ctx, token, resumeEvent)
-	})
 }
 
 // handleExistingPausedRun manages cleanup of existing paused runs with the same token
@@ -842,7 +816,9 @@ func (e *Engine) continueExecutionAndStoreResults(ctx context.Context, token str
 
 	// Merge and store results
 	allOutputs := e.mergeResumeOutputs(paused, outputs)
-	e.storeCompletedOutputs(token, allOutputs)
+	e.mu.Lock()
+	e.completedOutputs[token] = allOutputs
+	e.mu.Unlock()
 
 	// Update storage with final run status
 	e.updateRunStatusAfterResume(ctx, paused, err)
@@ -864,13 +840,6 @@ func (e *Engine) mergeResumeOutputs(paused *PausedRun, newOutputs map[string]any
 
 	utils.Debug("Outputs map after resume for token %s: %+v", paused.Token, allOutputs)
 	return allOutputs
-}
-
-// storeCompletedOutputs safely stores the completed outputs for retrieval
-func (e *Engine) storeCompletedOutputs(token string, allOutputs map[string]any) {
-	e.mu.Lock()
-	e.completedOutputs[token] = allOutputs
-	e.mu.Unlock()
 }
 
 // updateRunStatusAfterResume updates the run status in storage after resumption
@@ -1104,8 +1073,10 @@ func (e *Engine) executeIterationSteps(ctx context.Context, steps []model.Step, 
 			return err
 		}
 
-		// Copy outputs back to main context
-		e.copyIterationOutput(iterStepCtx, mainStepCtx, renderedStepID)
+		// Copy output back to main context
+		if output, ok := iterStepCtx.GetOutput(renderedStepID); ok {
+			mainStepCtx.SetOutput(renderedStepID, output)
+		}
 	}
 	return nil
 }
@@ -1129,13 +1100,6 @@ func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, erro
 	}
 
 	return rendered, nil
-}
-
-// copyIterationOutput safely copies output from iteration context to main context
-func (e *Engine) copyIterationOutput(iterStepCtx, mainStepCtx *StepContext, renderedStepID string) {
-	if output, ok := iterStepCtx.GetOutput(renderedStepID); ok {
-		mainStepCtx.SetOutput(renderedStepID, output)
-	}
 }
 
 // collectParallelErrors waits for parallel operations and collects any errors
@@ -1268,18 +1232,13 @@ func (e *Engine) executeToolWithInputs(ctx context.Context, step *model.Step, st
 	// Auto-fill missing required parameters from manifest defaults
 	e.autoFillRequiredParams(adapterInst, inputs, stepCtx)
 
-	// Add special use parameter for specific tool types
-	e.addSpecialUseParameter(step.Use, inputs)
+	// Add __use parameter for MCP and core tools
+	if strings.HasPrefix(step.Use, constants.AdapterPrefixMCP) || strings.HasPrefix(step.Use, constants.AdapterPrefixCore) {
+		inputs[constants.ParamSpecialUse] = step.Use
+	}
 
 	// Execute the tool and handle results
 	return e.handleToolExecution(ctx, step.Use, stepID, stepCtx, adapterInst, inputs)
-}
-
-// addSpecialUseParameter adds the __use parameter for MCP and core tools
-func (e *Engine) addSpecialUseParameter(toolName string, inputs map[string]any) {
-	if strings.HasPrefix(toolName, constants.AdapterPrefixMCP) || strings.HasPrefix(toolName, constants.AdapterPrefixCore) {
-		inputs[constants.ParamSpecialUse] = toolName
-	}
 }
 
 // handleToolExecution executes the tool and processes outputs
@@ -1409,14 +1368,7 @@ func (e *Engine) updateMetrics(fn func(*ExecutionMetrics)) {
 	fn(&e.metrics)
 }
 
-// GetMetrics returns a copy of the current execution metrics
-func (e *Engine) GetMetrics() ExecutionMetrics {
-	e.metricsMutex.RLock()
-	defer e.metricsMutex.RUnlock()
-	return e.metrics
-}
-
-// isValidIdentifier checks if a string is a valid template identifier
+// isValidIdentifier checks if a string is a valid template identifier (for tests)
 // Valid identifiers are Go-style identifiers without template syntax
 func isValidIdentifier(s string) bool {
 	if s == "" {
@@ -1572,32 +1524,20 @@ func (e *Engine) autoFillRequiredParams(adapterInst adapter.Adapter, inputs map[
 		return
 	}
 
-	params, required := e.extractManifestParameters(manifest)
-	if params == nil || required == nil {
-		return
-	}
-
-	secrets := stepCtx.Snapshot().Secrets
-	e.fillMissingRequiredParameters(inputs, params, required, secrets)
-}
-
-// extractManifestParameters extracts parameters and required fields from adapter manifest
-func (e *Engine) extractManifestParameters(manifest *registry.ToolManifest) (map[string]any, []any) {
+	// Extract parameters and required fields
 	params, ok := utils.SafeMapAssert(manifest.Parameters[constants.DefaultKeyProperties])
 	if !ok {
-		return nil, nil
+		return
 	}
 
 	required, ok := utils.SafeSliceAssert(manifest.Parameters[constants.DefaultKeyRequired])
 	if !ok {
-		return nil, nil
+		return
 	}
 
-	return params, required
-}
+	secrets := stepCtx.Snapshot().Secrets
 
-// fillMissingRequiredParameters iterates through required parameters and fills missing ones
-func (e *Engine) fillMissingRequiredParameters(inputs, params map[string]any, required []any, secrets SecretsData) {
+	// Fill missing required parameters
 	for _, req := range required {
 		key, ok := utils.SafeStringAssert(req)
 		if !ok {
@@ -1605,35 +1545,18 @@ func (e *Engine) fillMissingRequiredParameters(inputs, params map[string]any, re
 		}
 
 		if _, present := inputs[key]; !present {
-			if defaultValue := e.resolveParameterDefault(params[key], secrets); defaultValue != nil {
-				inputs[key] = defaultValue
+			// Resolve default value from parameter definition
+			if paramDef, ok := utils.SafeMapAssert(params[key]); ok {
+				if def, ok := utils.SafeMapAssert(paramDef[constants.DefaultKeyDefault]); ok {
+					if envVar, ok := utils.SafeStringAssert(def[constants.EnvVarPrefix]); ok {
+						if val, ok := secrets[envVar]; ok {
+							inputs[key] = val
+						}
+					}
+				}
 			}
 		}
 	}
-}
-
-// resolveParameterDefault resolves default value from parameter definition and secrets
-func (e *Engine) resolveParameterDefault(paramDef any, secrets SecretsData) any {
-	prop, ok := utils.SafeMapAssert(paramDef)
-	if !ok {
-		return nil
-	}
-
-	def, ok := utils.SafeMapAssert(prop[constants.DefaultKeyDefault])
-	if !ok {
-		return nil
-	}
-
-	envVar, ok := utils.SafeStringAssert(def[constants.EnvVarPrefix])
-	if !ok {
-		return nil
-	}
-
-	if val, ok := secrets[envVar]; ok {
-		return val
-	}
-
-	return nil
 }
 
 // StepContext holds context for step execution (event, vars, outputs, secrets).
@@ -1763,7 +1686,7 @@ func (e *Engine) GetRunByID(ctx context.Context, id uuid.UUID) (*model.Run, erro
 	return run, nil
 }
 
-// ListMCPServers returns all MCP servers from the registry, using the provided context.
+// ListMCPServers returns all MCP servers from the registry, using the provided context (for tests).
 type MCPServerWithName struct {
 	Name   string
 	Config *config.MCPServerConfig
@@ -1780,14 +1703,14 @@ func (e *Engine) ListMCPServers(ctx context.Context) ([]*MCPServerWithName, erro
 	return e.convertToMCPServers(tools), nil
 }
 
-// loadRegistryTools loads all tools from the registry
+// loadRegistryTools loads all tools from the registry (for tests)
 func (e *Engine) loadRegistryTools(ctx context.Context) ([]registry.RegistryEntry, error) {
 	localReg := registry.NewLocalRegistry("")
 	regMgr := registry.NewRegistryManager(localReg)
 	return regMgr.ListAllServers(ctx, registry.ListOptions{})
 }
 
-// convertToMCPServers filters and converts registry entries to MCP server configs
+// convertToMCPServers filters and converts registry entries to MCP server configs (for tests)
 func (e *Engine) convertToMCPServers(tools []registry.RegistryEntry) []*MCPServerWithName {
 	var mcps []*MCPServerWithName
 	for _, entry := range tools {
@@ -1798,7 +1721,7 @@ func (e *Engine) convertToMCPServers(tools []registry.RegistryEntry) []*MCPServe
 	return mcps
 }
 
-// createMCPServerConfig creates an MCP server configuration from a registry entry
+// createMCPServerConfig creates an MCP server configuration from a registry entry (for tests)
 func (e *Engine) createMCPServerConfig(entry registry.RegistryEntry) *MCPServerWithName {
 	return &MCPServerWithName{
 		Name: entry.Name,
@@ -1810,6 +1733,18 @@ func (e *Engine) createMCPServerConfig(entry registry.RegistryEntry) *MCPServerW
 			Transport: entry.Transport,
 			Endpoint:  entry.Endpoint,
 		},
+	}
+}
+
+// NewEngineWithBlobStore creates a new Engine with a custom BlobStore (for tests).
+func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engine {
+	return &Engine{
+		Adapters:         NewDefaultAdapterRegistry(ctx),
+		EventBus:         event.NewInProcEventBus(),
+		BlobStore:        blobStore,
+		waiting:          make(map[string]*PausedRun),
+		completedOutputs: make(map[string]map[string]any),
+		Storage:          storage.NewMemoryStorage(),
 	}
 }
 
@@ -1840,7 +1775,6 @@ func copyMap(in map[string]any) map[string]any {
 	}
 	return out
 }
-
 
 // setEmptyOutputAndError sets an empty output for a step and returns an error
 // This helper eliminates repetitive error handling patterns throughout the engine
