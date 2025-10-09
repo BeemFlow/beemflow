@@ -65,6 +65,9 @@ func getEnvWithDefault(key, defaultValue string) string {
 func ServeWithConfig(config *ServerConfig, tools []ToolRegistration) error {
 	// Validate and normalize transport mode
 	if config.Transport != "stdio" && config.Transport != "http" {
+		if config.Transport != "" {
+			utils.Warn("Invalid MCP transport mode '%s', defaulting to 'stdio'. Valid modes: stdio, http", config.Transport)
+		}
 		config.Transport = "stdio" // Default to stdio for safety
 	}
 
