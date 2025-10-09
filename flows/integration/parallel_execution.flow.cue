@@ -89,13 +89,13 @@ steps: [
 					text: "UPPERCASE: {{ item }}"
 				}
 			},
-		{
-			id: "length"
-			use: "core.echo"
-			with: {
-				text: "Item {{ item }} has {{ len(item) }} characters"
+			{
+				id: "length"
+				use: "core.echo"
+				with: {
+					text: "Item {{ item }} has {{ len(item) }} characters"
+				}
 			}
-		}
 		]
 	},
 

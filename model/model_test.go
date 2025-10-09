@@ -179,7 +179,7 @@ func TestStep_NilAndEmptySubfields(t *testing.T) {
 		t.Errorf("expected With nil, got %+v", s.With)
 	}
 	if len(s.Steps) != 0 {
-		t.Errorf("expected Do nil or empty, got %+v", s.Steps)
+		t.Errorf("expected Steps nil or empty, got %+v", s.Steps)
 	}
 	// Parallel is a bool, so no nil/len check needed
 }
