@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/beemflow/beemflow/auth"
 	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/registry"
@@ -57,6 +59,10 @@ func init() {
 // NewHandler creates the HTTP handler with all routes configured.
 // This is useful for testing without starting a real server.
 func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("config cannot be nil")
+	}
+
 	// Initialize tracing
 	initTracerFromConfig(cfg)
 
@@ -74,16 +80,9 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		}
 	})
 
-	// Initialize all dependencies (this could be moved to a separate DI package)
-	baseCleanup, err := api.InitializeDependencies(cfg)
+	// Initialize all application dependencies
+	deps, err := api.InitializeEngine(cfg)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	// Get storage for OAuth setup
-	store, err := api.GetStoreFromConfig(cfg)
-	if err != nil {
-		baseCleanup()
 		return nil, nil, err
 	}
 
@@ -94,41 +93,46 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 	// Load OAuth templates
 	if err := templateRenderer.LoadOAuthTemplates(); err != nil {
 		utils.Error("Failed to load OAuth templates: %v", err)
-		sessionStore.Close()
-		baseCleanup()
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
+		if deps.Cleanup != nil {
+			deps.Cleanup()
+		}
 		return nil, nil, err
 	}
 
-	// Setup OAuth endpoints only if OAuth is enabled
+	// Setup OAuth client routes (always enabled for connecting to external services)
+	baseURL := auth.GetOAuthIssuerURL(cfg)
+	RegisterWebOAuthRoutes(mux, deps.Storage, registry.NewDefaultRegistry(), baseURL, sessionStore, templateRenderer)
+
+	// Setup OAuth server endpoints only if OAuth server is enabled
 	var oauthServer *auth.OAuthServer
 	if cfg.OAuth != nil && cfg.OAuth.Enabled {
-		oauthServer = setupOAuthServer(cfg, store)
-		if err := SetupOAuthHandlers(mux, cfg, store); err != nil {
-			sessionStore.Close()
-			baseCleanup()
+		oauthServer = auth.SetupOAuthServer(cfg, deps.Storage)
+		if err := auth.SetupOAuthHandlers(mux, cfg, deps.Storage); err != nil {
+			if sessionStore != nil {
+				sessionStore.Close()
+			}
+			if deps.Cleanup != nil {
+				deps.Cleanup()
+			}
 			return nil, nil, err
 		}
-
-		// Setup web-based OAuth authorization flows
-		baseURL := getOAuthIssuerURL(cfg)
-		// Use default registry for OAuth providers
-		registry := api.GetDefaultRegistry()
-		RegisterWebOAuthRoutes(mux, store, registry, baseURL, sessionStore, templateRenderer)
-
 	}
 
 	// Generate and register all operation handlers
 	api.GenerateHTTPHandlers(mux)
 
-	// Setup webhook endpoints
-	webhookManager, err := setupWebhookRoutes(mux, cfg)
+	// Setup webhook endpoints (dependencies injected)
+	webhookManager, err := setupWebhookRoutes(mux, deps.EventBus, deps.Registry)
 	if err != nil {
 		utils.Warn("Failed to setup webhook routes: %v", err)
 	}
 
 	// Setup MCP routes (auth required only when OAuth server is running)
 	mcpRequireAuth := oauthServer != nil
-	setupMCPRoutes(mux, store, oauthServer, mcpRequireAuth)
+	setupMCPRoutes(mux, deps.Storage, oauthServer, mcpRequireAuth)
 
 	// Register metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
@@ -146,17 +150,27 @@ func NewHandler(cfg *config.Config) (http.Handler, func(), error) {
 		"http.root",
 	)
 
-	// Create combined cleanup function
+	// Create combined cleanup function with defensive nil checks
 	cleanup := func() {
+		var cleanupErrors []error
+
 		if webhookManager != nil {
 			if err := webhookManager.Close(); err != nil {
+				cleanupErrors = append(cleanupErrors, err)
 				utils.Error("Failed to close webhook manager: %v", err)
 			}
 		}
 		if sessionStore != nil {
 			sessionStore.Close()
 		}
-		baseCleanup()
+		if deps.Cleanup != nil {
+			deps.Cleanup()
+		}
+
+		// Log if there were any cleanup errors
+		if len(cleanupErrors) > 0 {
+			utils.Warn("Encountered %d error(s) during cleanup", len(cleanupErrors))
+		}
 	}
 
 	return wrappedMux, cleanup, nil
@@ -186,17 +200,30 @@ func StartServer(cfg *config.Config) error {
 	return startServerWithGracefulShutdown(addr, handler)
 }
 
-// getServerAddress determines the server address from config
+// getServerAddress determines the server address from config and environment variables
 func getServerAddress(cfg *config.Config) string {
-	addr := ":3333" // default
+	// Check environment variable first
+	if portStr := os.Getenv(constants.EnvHTTPServerPort); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			host := constants.DefaultServerHost
+			if cfg.HTTP != nil && cfg.HTTP.Host != "" {
+				host = cfg.HTTP.Host
+			}
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+	}
+
+	// Fall back to config file
 	if cfg.HTTP != nil && cfg.HTTP.Port != 0 {
 		host := cfg.HTTP.Host
 		if host == "" {
 			host = "0.0.0.0"
 		}
-		addr = fmt.Sprintf("%s:%d", host, cfg.HTTP.Port)
+		return fmt.Sprintf("%s:%d", host, cfg.HTTP.Port)
 	}
-	return addr
+
+	// Default fallback
+	return fmt.Sprintf("%s:%d", constants.DefaultServerHost, constants.DefaultHTTPServerPort)
 }
 
 // startServerWithGracefulShutdown starts the HTTP server and handles graceful shutdown
@@ -318,9 +345,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// ============================================================================
 // TEST UTILITIES (consolidated from test_utils.go)
-// ============================================================================
 
 // UpdateRunEvent updates the event for a run.
 // Used for tests and directly accesses the storage layer.
@@ -376,28 +401,16 @@ func UpdateRunEvent(id uuid.UUID, newEvent map[string]any) error {
 	return store.SaveRun(context.Background(), run)
 }
 
-// setupWebhookRoutes initializes webhook endpoints for registered providers
-func setupWebhookRoutes(mux *http.ServeMux, cfg *config.Config) (*webhook.Manager, error) {
-	// Get event bus
-	eventBus, err := event.NewEventBusFromConfig(cfg.Event)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create event bus: %w", err)
-	}
+// setupWebhookRoutes initializes webhook endpoints (dependencies injected)
+func setupWebhookRoutes(mux *http.ServeMux, eventBus event.EventBus, registryMgr *registry.RegistryManager) (*webhook.Manager, error) {
+	webhookManager := webhook.NewManager(mux, eventBus, registryMgr)
 
-	// Get registry manager using the factory pattern
-	factory := registry.NewFactory()
-	registryManager := factory.CreateStandardManager(context.Background(), cfg)
-	
-	// Create webhook manager
-	webhookManager := webhook.NewManager(mux, eventBus, registryManager)
-	
-	// Load providers with webhooks from registry
 	ctx := context.Background()
 	if err := webhookManager.LoadProvidersWithWebhooks(ctx); err != nil {
-		webhookManager.Close() // Cleanup on error
+		webhookManager.Close()
 		return nil, fmt.Errorf("failed to load webhook providers: %w", err)
 	}
-	
+
 	utils.Info("Webhook routes setup completed")
 	return webhookManager, nil
 }

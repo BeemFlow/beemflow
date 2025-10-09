@@ -164,13 +164,9 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 }
 
 func (s *SqliteStorage) SaveRun(ctx context.Context, run *model.Run) error {
-	event, err := json.Marshal(run.Event)
+	event, vars, err := marshalRunFields(run)
 	if err != nil {
-		return fmt.Errorf("failed to marshal run event: %w", err)
-	}
-	vars, err := json.Marshal(run.Vars)
-	if err != nil {
-		return fmt.Errorf("failed to marshal run vars: %w", err)
+		return err
 	}
 	var endedAt any
 	if run.EndedAt != nil {
@@ -213,9 +209,9 @@ func (s *SqliteStorage) GetRun(ctx context.Context, id uuid.UUID) (*model.Run, e
 }
 
 func (s *SqliteStorage) SaveStep(ctx context.Context, step *model.StepRun) error {
-	outputs, err := json.Marshal(step.Outputs)
+	outputs, err := marshalStepOutputs(step)
 	if err != nil {
-		return fmt.Errorf("failed to marshal step outputs: %w", err)
+		return err
 	}
 	var endedAt any
 	if step.EndedAt != nil {
@@ -251,7 +247,7 @@ func (s *SqliteStorage) GetSteps(ctx context.Context, runID uuid.UUID) ([]*model
 		if parsedID, err := uuid.Parse(runIDStr); err == nil {
 			srun.RunID = parsedID
 		}
-		if err := json.Unmarshal(outputs, &srun.Outputs); err != nil {
+		if err := unmarshalStepOutputs(outputs, &srun); err != nil {
 			return nil, err
 		}
 		srun.StartedAt = time.Unix(startedAt, 0)

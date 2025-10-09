@@ -10,7 +10,7 @@
 2. [Architecture Overview](#architecture-overview)
 3. [The BeemFlow Protocol](#the-beemflow-protocol)
 4. [Workflow Language Specification](#workflow-language-specification)
-5. [Template System (Pongo2)](#template-system-pongo2)
+5. [Template System (CUE-based)](#template-system-cue-based)
 6. [Tool System & Registry](#tool-system--registry)
 7. [Runtime Execution Model](#runtime-execution-model)
 8. [MCP Integration](#mcp-integration)
@@ -32,7 +32,7 @@ BeemFlow is **GitHub Actions for every business process** — a text-first, AI-n
 
 ### Key Principles
 
-1. **Text > GUI**: Workflows are defined in human and AI-readable YAML/JSON, not drag-and-drop interfaces
+1. **Text > GUI**: Workflows are defined in human and AI-readable CUE/JSON, not drag-and-drop interfaces
 2. **Universal Protocol**: One workflow runs everywhere — CLI, HTTP API, or Model Context Protocol
 3. **AI-Native**: LLMs can read, write, and execute BeemFlow workflows as first-class citizens
 4. **Open Ecosystem**: No vendor lock-in, fully open-source, community-driven
@@ -52,6 +52,45 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 
 ## Architecture Overview
 
+### The Big Picture: CUE + BeemFlow
+
+**BeemFlow uses CUE as an evaluation engine, not a templating system.**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        Your Workflow                           │
+│  (Valid CUE file with {{ }} templates for runtime values)     │
+└─────────────────────────┬──────────────────────────────────────┘
+                          ↓
+         ┌────────────────────────────────────┐
+         │      BeemFlow Runtime Layer        │
+         │  • Extracts {{ expr }} patterns    │
+         │  • Injects runtime context         │
+         │  • Uses CUE to evaluate            │
+         │  • Orchestrates execution          │
+         └────────┬───────────────────────────┘
+                  ↓
+    ┌─────────────────────────────┐
+    │      CUE Evaluation         │
+    │  • Native operators         │
+    │  • Built-in functions       │
+    │  • Standard library         │
+    │  • Type system              │
+    └─────────────────────────────┘
+```
+
+**What's CUE vs BeemFlow?**
+
+| Feature | Who Provides It |
+|---------|-----------------|
+| Operators (`+`, `>`, `&&`, `!`) | Native CUE |
+| `len()`, `strings.ToUpper()` | Native CUE (built-in & stdlib) |
+| `{{ }}` template extraction | BeemFlow runtime layer |
+| `vars`, `env`, `secrets`, `outputs` | BeemFlow runtime context |
+| `item_index`, `item_row` in loops | BeemFlow loop orchestration |
+| `if`, `foreach`, `parallel` fields | BeemFlow workflow features |
+| Step execution & state management | BeemFlow engine |
+
 ### System Components
 
 ```
@@ -60,7 +99,7 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 ├───────────────┬──────────────┬──────────────┬───────────┤
 │   Protocol    │    Engine    │   Registry   │    MCP    │
 ├───────────────┼──────────────┼──────────────┼───────────┤
-│ YAML/JSON     │ Executor     │ Tool Store   │ Servers   │
+│ CUE/JSON      │ Executor     │ Tool Store   │ Servers   │
 │ Validation    │ Scheduler    │ Manifests    │ Bridge    │
 │ Templating    │ State Mgmt   │ Resolution   │ Protocol  │
 └───────────────┴──────────────┴──────────────┴───────────┘
@@ -83,7 +122,9 @@ This "automation-to-acquisition flywheel" enables technical entrepreneurs to own
 
 ### Flow Definition Structure
 
-```yaml
+```cue
+package beemflow
+
 # REQUIRED fields
 name: string                    # Unique workflow identifier
 on: trigger                     # Trigger type (see Triggers section)
@@ -101,7 +142,9 @@ mcpServers: {}                 # MCP server configurations
 
 BeemFlow supports multiple trigger types:
 
-```yaml
+```cue
+package beemflow
+
 # Manual CLI execution
 on: cli.manual
 
@@ -127,68 +170,99 @@ on:
 
 Every step MUST have an `id` and ONE primary action:
 
-```yaml
-# Tool execution step
-- id: unique_identifier
-  use: tool.name              # Tool to execute
-  with: {}                     # Tool parameters
-  
-# Parallel execution block
-- id: parallel_block
-  parallel: true
-  steps: []                    # Steps to run in parallel
-  
-# Loop execution
-- id: foreach_block
-  foreach: "{{ array }}"       # Array to iterate
-  as: item                     # Loop variable name
-  do: []                       # Steps to execute per item
-  
-# Event waiting
-- id: wait_for_event
-  await_event:
-    source: "system"
-    match: {key: value}
-    timeout: "1h"
-    
-# Time delay
-- id: delay
-  wait:
-    seconds: 30
+```cue
+package beemflow
+
+steps: [
+  // Tool execution step
+  {
+    id: unique_identifier
+    use: tool.name              // Tool to execute
+    with: {}                     // Tool parameters
+  },
+
+  // Parallel execution block
+  {
+    id: parallel_block
+    parallel: true
+    steps: []                    // Steps to run in parallel
+  },
+
+  // Loop execution
+  {
+    id: foreach_block
+    foreach: "{{ array }}"       // Array to iterate
+    as: item                     // Loop variable name
+    steps: []                       // Steps to execute per item
+  },
+
+  // Event waiting
+  {
+    id: wait_for_event
+    await_event: {
+      source: "system"
+      match: {key: value}
+      timeout: "1h"
+    }
+  },
+
+  // Time delay
+  {
+    id: delay
+    wait: {
+      seconds: 30
+    }
+  }
+]
 ```
 
 ### Optional Step Modifiers
 
-```yaml
-- id: step_with_modifiers
-  use: tool.name
-  with: {}
-  
-  # Conditional execution
-  if: "{{ condition }}"
-  
-  # Dependencies
-  depends_on: [step1, step2]
-  
-  # Retry configuration
-  retry:
-    attempts: 3
-    delay_sec: 5
+```cue
+package beemflow
+
+steps: [
+  {
+    id: step_with_modifiers
+    use: tool.name
+    with: {}
+
+    // Conditional execution
+    if: "{{ condition }}"
+
+    // Dependencies
+    depends_on: [step1, step2]
+
+    // Retry configuration
+    retry: {
+      attempts: 3
+      delay_sec: 5
+    }
+  }
+]
 ```
 
 ### IMPORTANT: Fields That Don't Exist
 
 These fields are commonly hallucinated but **DO NOT EXIST**:
 
-```yaml
-# ❌ THESE DON'T EXIST
-continue_on_error: true    # Use catch blocks instead
-timeout: 30s               # Only in await_event.timeout
-on_error: handler          # Use catch blocks
-on_success: next          # Doesn't exist
-break: true               # No flow control keywords
-continue: true            # No flow control keywords
-exit: true                # No flow control keywords
+```cue
+package beemflow
+
+steps: [
+  // ❌ THESE DON'T EXIST
+  {
+    id: example_step
+    use: tool.name
+    // continue_on_error: true    // ❌ Use catch blocks instead
+    // timeout: 30s               // ❌ Only in await_event.timeout
+    // on_error: handler          // ❌ Use catch blocks
+    // on_success: next          // ❌ Doesn't exist
+    // break: true               // ❌ No flow control keywords
+    // continue: true            // ❌ No flow control keywords
+    // exit: true                // ❌ No flow control keywords
+  }
+]
 ```
 
 ---
@@ -214,18 +288,17 @@ type Flow struct {
 
 type Step struct {
     ID         string          `yaml:"id"`          // REQUIRED
-    Use        string          `yaml:"use"`         
-    With       map[string]any  `yaml:"with"`        
-    DependsOn  []string        `yaml:"depends_on"`  
-    Parallel   bool            `yaml:"parallel"`    
-    If         string          `yaml:"if"`          
-    Foreach    string          `yaml:"foreach"`     
-    As         string          `yaml:"as"`          
-    Do         []Step          `yaml:"do"`          
-    Steps      []Step          `yaml:"steps"`       
-    Retry      *RetrySpec      `yaml:"retry"`       
-    AwaitEvent *AwaitEventSpec `yaml:"await_event"` 
-    Wait       *WaitSpec       `yaml:"wait"`        
+    Use        string          `yaml:"use"`         // Tool to execute
+    With       map[string]any  `yaml:"with"`        // Tool parameters
+    DependsOn  []string        `yaml:"depends_on"`  // Future: dependencies
+    Parallel   bool            `yaml:"parallel"`    // Parallel execution
+    If         string          `yaml:"if"`          // Conditional ({{ expression }})
+    Foreach    string          `yaml:"foreach"`     // Loop array ({{ array }})
+    As         string          `yaml:"as"`          // Loop variable (default: "item")
+    Steps      []Step          `yaml:"steps"`       // Child steps (foreach/parallel/sequential)
+    Retry      *RetrySpec      `yaml:"retry"`       // Future: retry config
+    AwaitEvent *AwaitEventSpec `yaml:"await_event"` // Event waiting
+    Wait       *WaitSpec       `yaml:"wait"`        // Future: time delay
 }
 
 type RetrySpec struct {
@@ -245,133 +318,271 @@ type WaitSpec struct {
 }
 ```
 
-### Validation Rules
+### Validation Rules (from cue/parser.go)
 
 1. **Step Requirements**: Every step must have ONE of:
    - `use` → Execute a tool
-   - `parallel: true` with `steps` → Parallel block
-   - `foreach` with `as` and `do` → Loop
+   - `steps` → Child steps (parallel/sequential/foreach body)
    - `await_event` → Wait for event
-   - `wait` → Time delay
+   - `wait` → Time delay (future)
 
 2. **Constraints**:
-   - `id` is always required and must be unique within scope
-   - `parallel: true` REQUIRES `steps` array
-   - `foreach` REQUIRES both `as` and `do`
-   - Cannot combine `use` with `parallel` or `foreach`
-   - Step IDs must be valid identifiers (alphanumeric + underscore)
+   - `id` is always required and must be unique within flow
+   - Flow name: 1-100 chars, alphanumeric + `-_.`
+   - Step ID: 1-50 chars, alphanumeric + `-_`
+   - Maximum 1000 steps per flow
+   - `parallel: true` requires `steps` array
+   - `foreach` requires `steps` array for loop body
+   - `if` conditions must use `{{ }}` template syntax
+   - Dangerous tool names (exec, shell, eval) are blocked by validation
 
 ---
 
-## Template System (Pongo2)
+## Template System (CUE-based)
 
-BeemFlow uses **Pongo2** templating (Django-like syntax) for variable interpolation and logic.
+### Architecture: Native CUE + BeemFlow Runtime
 
-### Variable Scopes
+BeemFlow uses **CUE's evaluation engine** for all template expressions. The `{{ }}` syntax is BeemFlow's runtime layer that:
+1. Extracts expressions from your workflow at runtime
+2. Injects runtime context (vars, env, secrets, outputs)
+3. Evaluates expressions using native CUE
+4. Replaces `{{ expr }}` with the result
 
-Always use explicit scopes for clarity:
+**This means:** You get CUE's full power (operators, functions, type system) plus BeemFlow's workflow-specific features (runtime context, loops, orchestration).
 
-```yaml
-{{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables
-{{ secrets.API_KEY }}          # Secrets (from .env or system)
-{{ event.field }}              # Event data
-{{ outputs.step_id.field }}    # Step outputs (preferred)
-{{ step_id.field }}            # Step outputs (shorthand)
-{{ runs.Previous.field }}      # Previous run data
+### Variable Scopes (BeemFlow Runtime Context)
+
+BeemFlow injects these namespaces for accessing runtime data:
+
+```cue
+package beemflow
+
+steps: [
+  {
+    id: template_example
+    use: core.echo
+    with: {
+      text: "{{ vars.MY_VAR }}"              // Flow variables
+    }
+  },
+  {
+    id: template_example2
+    use: core.echo
+    with: {
+      text: "{{ env.USER }}"                 // Environment variables
+    }
+  },
+  {
+    id: template_example3
+    use: core.echo
+    with: {
+      text: "{{ secrets.API_KEY }}"          // Secrets (from .env or system)
+    }
+  },
+  {
+    id: template_example4
+    use: core.echo
+    with: {
+      text: "{{ event.field }}"              // Event data
+    }
+  },
+  {
+    id: template_example5
+    use: core.echo
+    with: {
+      text: "{{ outputs.step_id.field }}"    // Step outputs (preferred)
+    }
+  },
+  {
+    id: template_example6
+    use: core.echo
+    with: {
+      text: "{{ step_id.field }}"            // Step outputs (shorthand)
+    }
+  },
+  {
+    id: template_example7
+    use: core.echo
+    with: {
+      text: "{{ runs.Previous.field }}"      // Previous run data
+    }
+  }
+]
 ```
 
 ### Array Access
 
-Pongo2 uses dot notation throughout:
+**Note**: CUE uses bracket notation for array indexing:
 
-```yaml
-{{ array.0 }}                  # First element
-{{ array.1 }}                  # Second element
-{{ data.rows.0.name }}         # Nested access
-{{ array[variable_index] }}    # Variable index
+```cue
+package beemflow
+
+steps: [
+  {
+    id: array_example1
+    use: core.echo
+    with: {
+      text: "{{ array.0 }}"                  // First element
+    }
+  },
+  {
+    id: array_example2
+    use: core.echo
+    with: {
+      text: "{{ array.1 }}"                  // Second element
+    }
+  },
+  {
+    id: array_example3
+    use: core.echo
+    with: {
+      text: "{{ data.rows.0.name }}"         // Nested access
+    }
+  },
+  {
+    id: array_example4
+    use: core.echo
+    with: {
+      text: "{{ array[variable_index] }}"    // Variable index
+    }
+  }
+]
 ```
 
-### Filters
+### Native CUE Operations
 
-```yaml
-{{ text | upper }}             # Convert to uppercase
-{{ text | lower }}             # Convert to lowercase
-{{ text | title }}             # Title case
-{{ array | length }}           # Array/string length
-{{ array | join:", " }}        # Join array elements
-{{ number | add:10 }}          # Math operations
-{{ text | truncate:50 }}       # Truncate string
-{{ value | escape }}           # HTML escape
+All these features come from **CUE itself** (not custom BeemFlow code):
+
+```cue
+package beemflow
+
+steps: [
+  {
+    id: length_example
+    use: core.echo
+    with: {
+      text: "{{ len(array) }}"              // ✅ CUE built-in len() function
+    }
+  },
+  {
+    id: string_ops
+    use: core.echo
+    with: {
+      text: "{{ 'Hello' + ' ' + 'World' }}" // ✅ CUE string concatenation
+    }
+  },
+  {
+    id: comparison
+    use: core.echo
+    with: {
+      text: "{{ value > 10 }}"              // ✅ CUE comparison operators
+    }
+  },
+  {
+    id: default_value
+    use: core.echo
+    with: {
+      text: "{{ value | 'default' }}"       // ✅ CUE disjunction (default values)
+    }
+  }
+]
 ```
 
-### Default Values
+### CUE Standard Library
 
-Use the `||` operator (NOT `|default`):
+BeemFlow auto-imports CUE's standard library packages when you reference them:
 
-```yaml
-{{ value || 'default' }}       # ✅ Correct
-{{ value | default:'x' }}      # ❌ Wrong - doesn't exist
+```cue
+package beemflow
+
+steps: [
+  {
+    id: uppercase
+    use: core.echo
+    with: {
+      text: "{{ strings.ToUpper('hello') }}"     // ✅ CUE strings package
+    }
+  },
+  {
+    id: lowercase
+    use: core.echo
+    with: {
+      text: "{{ strings.ToLower('HELLO') }}"     // ✅ CUE strings package
+    }
+  },
+  {
+    id: contains
+    use: core.echo
+    with: {
+      text: "{{ strings.Contains(text, 'sub') }}" // ✅ CUE strings package
+    }
+  }
+]
 ```
 
-### Conditionals
+### Conditionals (BeemFlow Feature)
 
-```yaml
-# In step conditions (must use template syntax)
-if: "{{ vars.status == 'active' }}"
-if: "{{ vars.count > 5 and env.DEBUG }}"
-if: "{{ not (vars.disabled) }}"
+The `if` field is a **BeemFlow feature** that evaluates expressions using CUE:
 
-# In template content
-{% if condition %}
-  True branch
-{% elif other_condition %}
-  Elif branch
-{% else %}
-  False branch
-{% endif %}
+```cue
+package beemflow
+
+steps: [
+  {
+    id: conditional_example1
+    if: "{{ vars.status == 'active' }}"    // BeemFlow evaluates using CUE
+    use: core.echo
+    with: {
+      text: "Status is active"
+    }
+  },
+  {
+    id: conditional_example2
+    if: "{{ vars.count > 5 && env.DEBUG }}" // CUE operators in BeemFlow condition
+    use: core.echo
+    with: {
+      text: "Complex condition met"
+    }
+  },
+  {
+    id: conditional_example3
+    if: "{{ !vars.disabled }}"              // CUE negation in BeemFlow condition
+    use: core.echo
+    with: {
+      text: "Not disabled"
+    }
+  }
+]
 ```
 
-### Loops in Templates
+### Foreach Loops (BeemFlow Feature)
 
-```yaml
-# In template content
-{% for item in array %}
-  {{ item }}{% if not loop.last %}, {% endif %}
-{% endfor %}
+The `foreach` field is a **BeemFlow orchestration feature**. BeemFlow automatically provides loop variables:
 
-# Loop variables
-{{ loop.index0 }}    # 0-based index
-{{ loop.index }}      # 1-based index
-{{ loop.first }}      # True if first iteration
-{{ loop.last }}       # True if last iteration
-```
+- `{{ item }}` - Current item (or custom name via `as`)
+- `{{ item_index }}` - 0-based index (BeemFlow extension)
+- `{{ item_row }}` - 1-based row number (BeemFlow extension)
 
-### In Foreach Steps
+```cue
+package beemflow
 
-BeemFlow automatically provides these variables:
-
-```yaml
-- id: process_items
-  foreach: "{{ vars.items }}"
-  as: item
-  do:
-    - id: process_{{ item_index }}    # 0-based index
-      use: core.echo
-      with:
-        text: |
-          Item: {{ item }}
-          Index: {{ item_index }}      # 0-based
-          Row: {{ item_row }}          # 1-based
-```
-
-### Functions That Don't Exist
-
-```yaml
-{{ now() }}              # ❌ No function calls
-{{ date() }}             # ❌ No date function
-{{ 'now' | date }}       # ❌ No date filter
-{{ uuid() }}             # ❌ No UUID generation
+steps: [
+  {
+    id: process_items
+    foreach: "{{ vars.items }}"  // BeemFlow evaluates this using CUE
+    as: item                      // BeemFlow sets loop variable name
+    steps: [
+      {
+        id: process_item
+        use: core.echo
+        with: {
+          // BeemFlow auto-provides: item, item_index, item_row
+          text: "Item: {{ item }}, Index: {{ item_index }}, Row: {{ item_row }}"
+        }
+      }
+    ]
+  }
+]
 ```
 
 ---
@@ -491,7 +702,7 @@ The generic HTTP adapter provides full control:
 
 ### Execution Flow
 
-1. **Parse**: YAML/JSON → Internal flow structure
+1. **Parse**: CUE/JSON → Internal flow structure
 2. **Validate**: Schema validation & constraint checking
 3. **Template**: Initial variable expansion
 4. **Execute**: Step-by-step execution with state tracking
@@ -544,7 +755,7 @@ The generic HTTP adapter provides full control:
 - id: process_items
   foreach: "{{ vars.items }}"
   as: item
-  do:
+  steps:
     - id: validate_{{ item_index }}
       use: validation.check
       with:
@@ -1043,7 +1254,7 @@ steps:
   - id: notify
     foreach: "{{ vars.RECIPIENTS }}"
     as: recipient
-    do:
+    steps:
       - id: send_email_{{ recipient_index }}
         use: email.send
         with:
@@ -1261,7 +1472,7 @@ steps:
   - id: test_cases
     foreach: "{{ vars.TEST_DATA }}"
     as: test
-    do:
+    steps:
       - id: run_test_{{ test.id }}
         use: function.under.test
         with:
@@ -1289,7 +1500,7 @@ steps:
     foreach: "{{ range(0, vars.ITERATIONS) }}"
     as: iteration
     parallel: true
-    do:
+    steps:
       - id: request_{{ iteration }}
         use: http
         with:

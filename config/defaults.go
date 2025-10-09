@@ -25,16 +25,11 @@ var (
 	DefaultLocalRegistryPath = filepath.Join(DefaultConfigDir, "registry.json")
 	// DefaultSQLiteDSN is the default data source name for SQLite storage.
 	DefaultSQLiteDSN = filepath.Join(DefaultConfigDir, "flow.db")
-	// DefaultFlowsDir is the default directory for flow YAMLs.
+	// DefaultFlowsDir is the default directory for flow definitions.
 	DefaultFlowsDir = "flows"
 )
 
 // DefaultLocalRegistryFullPath returns the full path to the default local registry file.
 func DefaultLocalRegistryFullPath() string {
 	return DefaultLocalRegistryPath
-}
-
-// DefaultConfigDirFullPath returns the full path to the default config directory.
-func DefaultConfigDirFullPath() string {
-	return DefaultConfigDir
 }

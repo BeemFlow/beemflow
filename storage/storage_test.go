@@ -887,9 +887,7 @@ func TestNewSqliteStorage_ErrorCases(t *testing.T) {
 	defer storage2.Close()
 }
 
-// ========================================
 // INTEGRATION TESTS - Real SQLite operations
-// ========================================
 
 // TestSQLiteStorageRealFileOperations tests SQLite with real file system operations
 func TestSQLiteStorageRealFileOperations(t *testing.T) {
@@ -1283,9 +1281,7 @@ func TestSQLiteStorageSchemaEvolution(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // OAUTH STORAGE TESTS
-// ============================================================================
 
 func TestMemoryStorage_OAuthCredential_RoundTrip(t *testing.T) {
 	storage := NewMemoryStorage()

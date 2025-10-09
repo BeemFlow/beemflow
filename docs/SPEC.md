@@ -6,8 +6,10 @@
 
 ## 🎯 Quick Reference (Read This First!)
 
-### ✅ Valid YAML Structure
-```yaml
+### ✅ Valid CUE Structure
+```cue
+package beemflow
+
 name: string                    # REQUIRED
 description: string             # optional - precise natural language representation of workflow logic
 version: string                 # optional
@@ -19,24 +21,23 @@ catch: [...]                   # optional error handler
 ```
 
 ### ✅ Valid Step Fields (ONLY THESE EXIST!)
-```yaml
+```cue
 - id: string                   # REQUIRED unique identifier
   use: tool.name               # Tool to execute
   with: {params}               # Tool input parameters
   if: "{{ expression }}"       # Conditional execution (GitHub Actions style)
   foreach: "{{ array }}"       # Loop over array
-  as: item                     # Loop variable name
-  do: [steps]                  # Steps to run in loop
-  parallel: true               # Run nested steps in parallel
-  steps: [steps]               # Steps for parallel block
-  depends_on: [step_ids]       # Step dependencies
-  retry: {attempts: 3, delay_sec: 5}  # Retry configuration
+  as: item                     # Loop variable name (default: "item")
+  parallel: true               # Run nested steps/iterations in parallel
+  steps: [steps]               # Child steps (for foreach/parallel/sequential blocks)
+  depends_on: [step_ids]       # Step dependencies (ensures execution order)
+  retry: {attempts: 3, delay_sec: 5}  # Retry configuration (future)
   await_event: {source: "x", match: {}, timeout: "24h"}  # Event wait
-  wait: {seconds: 30}          # Time delay
+  wait: {seconds: 30}          # Time delay (future)
 ```
 
 ### ❌ THESE DON'T EXIST (Common Hallucinations)
-```yaml
+```cue
 continue_on_error: true  # ❌ NO - Use catch blocks instead
 timeout: 30s            # ❌ NO - Only exists in await_event.timeout
 on_error: handler       # ❌ NO - Use catch blocks
@@ -48,42 +49,56 @@ ${ variable }           # ❌ NO - Use {{ variable }}
 break, continue, exit   # ❌ NO - No flow control keywords
 ```
 
-### 📝 Template Syntax (Pongo2 - Django-like)
-```yaml
-# Variables & References (Always use explicit scopes!)
-{{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables  
-{{ secrets.API_KEY }}          # Secrets
-{{ event.field }}              # Event data
-{{ outputs.step_id.field }}    # Step outputs (preferred)
-{{ step_id.field }}            # Step outputs (shorthand)
+### 📝 Template Syntax (Native CUE + BeemFlow Runtime)
 
-# Array Access (Pongo2 uses dot notation)
-{{ array.0 }}                  # First element
+**Architecture:** BeemFlow uses `{{ }}` to extract and evaluate expressions at runtime using CUE's native evaluation engine. This gives you the full power of CUE's type system and operators, plus BeemFlow-specific runtime context.
+
+```cue
+# Runtime Context (BeemFlow injects these namespaces)
+{{ vars.MY_VAR }}              # Flow variables (BeemFlow)
+{{ env.USER }}                 # Environment variables (BeemFlow)
+{{ secrets.API_KEY }}          # Secrets (BeemFlow)
+{{ event.field }}              # Event data (BeemFlow)
+{{ outputs.step_id.field }}    # Step outputs (BeemFlow)
+{{ step_id.field }}            # Step outputs shorthand (BeemFlow)
+
+# Array Access (Native CUE syntax)
+{{ array[0] }}                 # First element
 {{ array[idx] }}               # Variable index
-{{ data.rows.0.name }}         # Nested access (dot notation throughout)
+{{ data.rows[0].name }}        # Nested access
 
-# Filters & Operations
-{{ text | upper }}             # Uppercase
-{{ text | lower }}             # Lowercase
-{{ array | length }}           # Length
-{{ array | join:", " }}        # Join array
-{{ value || 'default' }}       # Default/fallback (NOT |default)
-{{ num + 10 }}                 # Math operations
+# Operators & Built-ins (Native CUE)
+{{ len(array) }}               # Length function
+{{ text + "!" }}               # String concatenation
+{{ a > b }}, {{ a == b }}      # Comparisons
+{{ a && b }}, {{ a || b }}     # Boolean logic
+{{ !a }}                       # Negation
+{{ value | "default" }}        # Default values (CUE disjunction)
 
-# In Loops (BeemFlow provides these automatically)
+# CUE Standard Library (Auto-imported when used)
+{{ strings.ToUpper(text) }}              # UPPERCASE
+{{ strings.ToLower(text) }}              # lowercase  
+{{ strings.TrimSpace(text) }}            # Trim whitespace
+{{ strings.Contains(text, "sub") }}      # Contains substring
+{{ strings.HasPrefix(text, "pre") }}     # Starts with
+{{ strings.HasSuffix(text, "suf") }}     # Ends with
+{{ strings.Replace(text, "old", "new", -1) }}  # Replace all
+
+# Loop Variables (BeemFlow auto-provides in foreach)
 {{ item }}                     # Current item (with 'as: item')
-{{ item_index }}               # 0-based index (BeemFlow extension)
-{{ item_row }}                 # 1-based index (BeemFlow extension)
+{{ item_index }}               # 0-based index
+{{ item_row }}                 # 1-based row number
 
-# Conditions (MUST use template syntax)
-if: "{{ vars.status == 'active' }}"           # Required format
-if: "{{ vars.count > 5 and env.DEBUG }}"      # Complex conditions
-if: "{{ not (vars.disabled) }}"               # Negation
+# Conditions (BeemFlow evaluates the if field)
+if: "{{ vars.status == 'active' }}"      # ✅ Required format
+if: "{{ vars.count > 5 && env.DEBUG }}"  # ✅ Complex conditions
+if: "{{ !vars.disabled }}"               # ✅ Negation
 ```
 
+**Key Insight:** BeemFlow doesn't reimplement CUE. It uses CUE as the evaluation engine, adding workflow-specific runtime context (`vars`, `env`, `secrets`, `outputs`) and orchestration features (loops, conditions, parallelism) on top.
+
 ### 🔧 Common Tools
-```yaml
+```cue
 # Core
 core.echo                      # Print text
 core.wait                      # Pause execution
@@ -111,7 +126,9 @@ mcp://server/tool             # MCP server tools
 ## 📚 Essential Patterns
 
 ### Basic Flow
-```yaml
+```cue
+package beemflow
+
 name: hello_world
 on: cli.manual
 steps:
@@ -122,7 +139,9 @@ steps:
 ```
 
 ### Using Variables and Outputs
-```yaml
+```cue
+package beemflow
+
 name: fetch_and_process
 on: cli.manual
 vars:
@@ -139,7 +158,7 @@ steps:
 ```
 
 ### Conditional Execution
-```yaml
+```cue
 # Simple condition
 - id: conditional_step
   if: "{{ vars.status == 'active' }}"
@@ -149,7 +168,7 @@ steps:
 
 # Complex conditions
 - id: complex_check
-  if: "{{ vars.count > 10 and env.NODE_ENV == 'production' }}"
+  if: "{{ vars.count > 10 && env.NODE_ENV == 'production' }}"
   use: core.echo
   with:
     text: "Multiple conditions"
@@ -163,37 +182,46 @@ steps:
 ```
 
 ### Loops (Foreach)
-```yaml
+```cue
+# Simple foreach loop
 - id: process_items
   foreach: "{{ vars.items }}"
   as: item
-  do:
+  steps:
     - id: process_{{ item_index }}
       use: core.echo
       with:
         text: "Row {{ item_row }}: Processing {{ item }}"
+
+# Foreach with multiple steps per iteration
+- id: complex_loop
+  foreach: "{{ vars.items }}"
+  as: item
+  steps:
+    - id: step1_{{ item_index }}
+      use: core.echo
+      with:
+        text: "Processing {{ item }}"
     
-    # Conditional processing in loops
-    - id: conditional_{{ item_index }}
+    - id: step2_{{ item_index }}
       if: "{{ item.status == 'active' }}"
       use: core.echo
       with:
         text: "Item {{ item.name }} is active"
 
-# Array element access in loops
-- id: process_rows
-  foreach: "{{ sheet_data.values }}"
-  as: row
-  do:
-    - id: check_row_{{ row_index }}
-      if: "{{ row.0 and row.1 == 'approved' }}"
+# Parallel foreach (run iterations concurrently)
+- id: parallel_loop
+  foreach: "{{ vars.items }}"
+  parallel: true
+  steps:
+    - id: process_{{ item_index }}
       use: core.echo
       with:
-        text: "Processing: {{ row.0 }}"
+        text: "Processing {{ item }} in parallel"
 ```
 
 ### Parallel Execution
-```yaml
+```cue
 - id: parallel_block
   parallel: true
   steps:
@@ -208,7 +236,9 @@ steps:
 ```
 
 ### Error Handling
-```yaml
+```cue
+package beemflow
+
 name: with_error_handling
 on: cli.manual
 steps:
@@ -224,7 +254,7 @@ catch:
 ```
 
 ### API Integration
-```yaml
+```cue
 - id: api_call
   use: http
   with:
@@ -239,7 +269,9 @@ catch:
 ```
 
 ### Google Sheets Example
-```yaml
+```cue
+package beemflow
+
 name: sheets_integration
 on: cli.manual
 vars:
@@ -250,7 +282,7 @@ steps:
     with:
       spreadsheetId: "{{ vars.SHEET_ID }}"
       range: "Sheet1!A1:D10"
-      
+
   - id: append_row
     use: google_sheets.values.append
     with:
@@ -267,14 +299,16 @@ steps:
 
 | Wrong | Right | Explanation |
 |-------|-------|-------------|
-| `${ var }` | `{{ var }}` | BeemFlow uses Pongo2 syntax |
+| `${ var }` | `{{ var }}` | BeemFlow uses CUE-based templates |
 | `if: "status == 'active'"` | `if: "{{ vars.status == 'active' }}"` | Must use template syntax & explicit scopes |
-| `{{ data.rows[0].name }}` | `{{ data.rows.0.name }}` | Pongo2 uses dot notation throughout |
+| `{{ row.0 }}` | `{{ row[0] }}` | CUE uses bracket notation for arrays |
+| `do: [steps]` in foreach | `steps: [steps]` | Field `do` was removed, use `steps` |
 | `continue_on_error: true` | Use `catch` blocks | Field doesn't exist |
-| `{{ now() }}` | Use a variable | No function calls |
-| `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator |
+| `{{ now() }}` | Use a variable | No function calls in templates |
+| `{{ item \| default:'x' }}` | `{{ item \|\| 'x' }}` | Use \|\| operator for defaults |
 | `timeout: 30` on step | Only in `await_event` | Not a general step field |
 | `on_error: cleanup` | Use `catch` blocks | No step-level error handlers |
+| `foreach` + `use` directly | `foreach` + `steps` | Must wrap in steps array |
 
 ---
 
@@ -298,16 +332,15 @@ type Step struct {
     ID         string          `yaml:"id"`         // REQUIRED
     Use        string          `yaml:"use"`        // tool name
     With       map[string]any  `yaml:"with"`       // tool inputs
-    DependsOn  []string        `yaml:"depends_on"` // dependencies
-    Parallel   bool            `yaml:"parallel"`   // parallel block
+    DependsOn  []string        `yaml:"depends_on"` // dependencies (future)
+    Parallel   bool            `yaml:"parallel"`   // parallel execution
     If         string          `yaml:"if"`         // conditional
     Foreach    string          `yaml:"foreach"`    // loop array
-    As         string          `yaml:"as"`         // loop variable
-    Do         []Step          `yaml:"do"`         // loop steps
-    Steps      []Step          `yaml:"steps"`      // parallel steps
-    Retry      *RetrySpec      `yaml:"retry"`      // retry config
+    As         string          `yaml:"as"`         // loop variable (default: "item")
+    Steps      []Step          `yaml:"steps"`      // child steps (foreach/parallel/sequential)
+    Retry      *RetrySpec      `yaml:"retry"`      // retry config (future)
     AwaitEvent *AwaitEventSpec `yaml:"await_event"` // event wait
-    Wait       *WaitSpec       `yaml:"wait"`       // time wait
+    Wait       *WaitSpec       `yaml:"wait"`       // time delay (future)
 }
 // NO OTHER FIELDS EXIST!
 ```
@@ -317,17 +350,24 @@ type Step struct {
 ## ✅ Validation Rules
 
 A step must have ONE of:
-- `use` - Execute a tool
-- `parallel: true` with `steps` - Parallel block
-- `foreach` with `as` and `do` - Loop
+- `use` + `with` - Execute a tool
+- `foreach` + `steps` - Loop over array
+- `parallel: true` + `steps` - Parallel execution
+- `steps` (without parallel) - Sequential grouping
 - `await_event` - Wait for event
-- `wait` - Time delay
+- `wait` - Time delay (future)
 
 Constraints:
+- `id` is always required and must be unique (max 50 chars, alphanumeric + `-_`)
 - `parallel: true` REQUIRES `steps` array
-- `foreach` REQUIRES both `as` and `do`
-- Cannot combine `use` with `parallel` or `foreach`
-- `id` is always required and must be unique
+- `foreach` REQUIRES `steps` array (loop body)
+- `as` provides loop variable name (default: "item")
+- Step IDs within foreach should use templates for uniqueness: `id: "step_{{ item_index }}"`
+- `depends_on` ensures steps execute in dependency order (topological sort)
+- Circular dependencies are detected and cause execution failure
+- Missing dependencies cause validation errors
+- Flow name max 100 chars, allows alphanumeric + `-_.`
+- Maximum 1000 steps per flow
 
 ---
 
@@ -360,16 +400,21 @@ The optional `description` field provides a precise natural language representat
 ### Writing Guidelines
 
 **✅ Good Description:**
-```yaml
+```cue
+package beemflow
+
 name: social_media_approval
 description: |
-  Generate social media content using AI, store it in Airtable for human review, 
+  Generate social media content using AI, store it in Airtable for human review,
   wait for approval status change, then post to Twitter and mark as completed.
   Handle timeout by notifying team via Slack.
 ```
 
 **❌ Poor Description:**
-```yaml
+```cue
+package beemflow
+
+name: social_media_approval
 description: "This workflow handles social media posting"  # Too vague
 description: "Uses OpenAI and Airtable"                    # Lists tools, not logic
 ```

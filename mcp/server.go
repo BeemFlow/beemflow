@@ -1,16 +1,26 @@
 package mcp
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
+	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/utils"
 	mcp "github.com/metoro-io/mcp-golang"
 	mcphttp "github.com/metoro-io/mcp-golang/transport/http"
 	mcpstdio "github.com/metoro-io/mcp-golang/transport/stdio"
 )
+
+// ServerConfig holds configuration for MCP server startup
+type ServerConfig struct {
+	Transport string // "stdio" or "http"
+	Address   string // HTTP server address when transport is "http"
+	Debug     bool   // Enable debug mode
+}
 
 // ToolRegistration holds a tool's registration info for the MCP server.
 type ToolRegistration struct {
@@ -19,21 +29,66 @@ type ToolRegistration struct {
 	Handler     any // must be a func(ctx, args) (*mcp.ToolResponse, error)
 }
 
-// Serve starts an MCP server with the given configuration.
-func Serve(debug, stdio bool, addr string, tools []ToolRegistration) error {
-	if stdio && !debug {
+// GetServerConfig creates a server configuration from environment variables and defaults
+func GetServerConfig() *ServerConfig {
+	config := &ServerConfig{
+		Transport: getEnvWithDefault(constants.EnvMCPTransport, constants.DefaultMCPTransport),
+		Address:   getMCPAddress(),
+		Debug:     os.Getenv("BEEMFLOW_DEBUG") != "",
+	}
+
+	return config
+}
+
+// getMCPAddress determines the MCP server address from environment or defaults
+func getMCPAddress() string {
+	// Check for explicit MCP port
+	if portStr := os.Getenv(constants.EnvMCPServerPort); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			return fmt.Sprintf("%s:%d", constants.DefaultServerHost, port)
+		}
+	}
+
+	// Default MCP port
+	return fmt.Sprintf("%s:%d", constants.DefaultServerHost, constants.DefaultMCPServerPort)
+}
+
+// getEnvWithDefault gets an environment variable with a fallback default
+func getEnvWithDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// ServeWithConfig starts an MCP server with the provided configuration
+func ServeWithConfig(config *ServerConfig, tools []ToolRegistration) error {
+	// Validate and normalize transport mode
+	if config.Transport != "stdio" && config.Transport != "http" {
+		if config.Transport != "" {
+			utils.Warn("Invalid MCP transport mode '%s', defaulting to 'stdio'. Valid modes: stdio, http", config.Transport)
+		}
+		config.Transport = "stdio" // Default to stdio for safety
+	}
+
+	// If HTTP mode but no address provided, use default
+	if config.Transport == "http" && config.Address == "" {
+		config.Address = getMCPAddress()
+	}
+
+	if config.Transport == "stdio" && config.Debug {
 		utils.SetUserOutput(io.Discard)
 	}
 
 	// Create MCP server transport
 	var server *mcp.Server
-	if stdio {
-		utils.Info("Starting MCP server on stdio...")
-		transport := mcpstdio.NewStdioServerTransport()
+	if config.Transport == "http" {
+		utils.Info("Starting MCP server on HTTP at %s...", config.Address)
+		transport := mcphttp.NewHTTPTransport("/mcp").WithAddr(config.Address)
 		server = mcp.NewServer(transport)
 	} else {
-		utils.Info("Starting MCP server on HTTP at %s...", addr)
-		transport := mcphttp.NewHTTPTransport("/mcp").WithAddr(addr)
+		utils.Info("Starting MCP server on stdio...")
+		transport := mcpstdio.NewStdioServerTransport()
 		server = mcp.NewServer(transport)
 	}
 
@@ -46,7 +101,7 @@ func Serve(debug, stdio bool, addr string, tools []ToolRegistration) error {
 	}
 
 	// For stdio transport, wait for termination signals and exit gracefully
-	if stdio {
+	if config.Transport == "stdio" {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 		sig := <-sigCh

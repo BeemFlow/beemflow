@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestLoadConfig(t *testing.T) {
-	cfgJSON := `{"storage":{"driver":"d","dsn":"u"},"blob":{"driver":"b","bucket":"c"},"event":{"driver":"memory","url":"u"},"secrets":{"driver":"s","region":"r","prefix":"p"},"registries":[{"type":"local","path":"foo.json"},{"type":"smithery","url":"bar"}],"http":{"host":"h","port":8080},"log":{"level":"l"}}`
+	cfgJSON := `{"storage":{"driver":"d","dsn":"u"},"blob":{"driver":"b","bucket":"c"},"event":{"driver":"memory","url":"u"},"secrets":{"driver":"s","region":"r","prefix":"p"},"registries":[{"type":"local","path":"foo.json"},{"type":"smithery","url":"bar"}],"http":{"host":"h","port":3330},"log":{"level":"l"}}`
 	tmp, err := os.CreateTemp("", "config.json")
 	if err != nil {
 		t.Fatalf("create temp: %v", err)
@@ -43,7 +43,7 @@ func TestLoadConfig(t *testing.T) {
 	if c.Blob.Driver != "b" || c.Blob.Bucket != "c" {
 		t.Errorf("unexpected Blob: %+v", c.Blob)
 	}
-	if c.HTTP.Host != "h" || c.HTTP.Port != 8080 {
+	if c.HTTP.Host != "h" || c.HTTP.Port != 3330 {
 		t.Errorf("unexpected HTTP: %+v", c.HTTP)
 	}
 	if len(c.Registries) != 2 {
@@ -376,7 +376,7 @@ func TestValidate(t *testing.T) {
 		},
 		HTTP: &HTTPConfig{
 			Host: "localhost",
-			Port: 8080,
+			Port: 3330,
 		},
 		Registries: []RegistryConfig{
 			{Type: "local", Path: "/path/to/registry.json"},

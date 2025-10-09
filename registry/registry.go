@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/utils"
 )
 
@@ -194,6 +196,91 @@ func (m *RegistryManager) ListAllServers(ctx context.Context, opts ListOptions) 
 
 	// No registries configured
 	return []RegistryEntry{}, nil
+}
+
+// NewStandardManager creates a registry manager with all standard registries
+// Resolution order: local → remote → hub → default (highest to lowest priority)
+func NewStandardManager(ctx context.Context, cfg *config.Config) *RegistryManager {
+	var registries []MCPRegistry
+
+	// Local registry (highest precedence)
+	localPath := getLocalRegistryPath(cfg)
+	if localReg := NewLocalRegistry(localPath); localReg != nil {
+		registries = append(registries, localReg)
+	}
+
+	// Remote registries from config
+	registries = append(registries, loadRemoteRegistries(cfg)...)
+
+	// Hub registry (if not configured)
+	if !hasHubRegistry(cfg) {
+		registries = append(registries, NewRemoteRegistry("https://hub.beemflow.com/index.json", "hub"))
+	}
+
+	// Default registry (lowest precedence)
+	registries = append(registries, NewDefaultRegistry())
+
+	return NewRegistryManager(registries...)
+}
+
+// NewAPIManager creates a lightweight manager for API endpoints (local + default only)
+func NewAPIManager() *RegistryManager {
+	return NewRegistryManager(
+		NewLocalRegistry(""), // Higher precedence
+		NewDefaultRegistry(), // Lower precedence (fallback)
+	)
+}
+
+// getLocalRegistryPath determines the local registry path from config
+func getLocalRegistryPath(cfg *config.Config) string {
+	if cfg == nil {
+		return config.DefaultLocalRegistryPath
+	}
+
+	for _, regCfg := range cfg.Registries {
+		if regCfg.Type == constants.LocalRegistryType && regCfg.Path != "" {
+			cleanPath := filepath.Clean(regCfg.Path)
+			if strings.Contains(cleanPath, "..") {
+				return config.DefaultLocalRegistryPath
+			}
+			return cleanPath
+		}
+	}
+
+	return config.DefaultLocalRegistryPath
+}
+
+// hasHubRegistry checks if hub registry is already configured
+func hasHubRegistry(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+
+	for _, regCfg := range cfg.Registries {
+		if regCfg.URL == "https://hub.beemflow.com/index.json" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// loadRemoteRegistries loads all remote registries from config
+func loadRemoteRegistries(cfg *config.Config) []MCPRegistry {
+	var registries []MCPRegistry
+
+	if cfg == nil {
+		return registries
+	}
+
+	for _, regCfg := range cfg.Registries {
+		if regCfg.Type == "remote" && regCfg.URL != "" {
+			remoteReg := NewRemoteRegistry(regCfg.URL, "remote")
+			registries = append(registries, remoteReg)
+		}
+	}
+
+	return registries
 }
 
 // GetServer finds a server/tool by name, trying all registries until found

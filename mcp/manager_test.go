@@ -21,7 +21,7 @@ func TestFindMCPServersInFlow(t *testing.T) {
 			{Use: "mcp://foo/tool1"},
 			{Use: "other://bar"},
 			{
-				Do: []model.Step{
+				Steps: []model.Step{
 					{Use: "mcp://bar/tool2"},
 				},
 			},
@@ -439,11 +439,11 @@ func TestFindMCPInStep_EdgeCases(t *testing.T) {
 	servers = make(map[string]bool) // Reset
 	step4 := model.Step{
 		Use: "core.echo",
-		Do: []model.Step{
+		Steps: []model.Step{
 			{Use: "mcp://nested1/tool"},
 			{
 				Use: "core.echo",
-				Do: []model.Step{
+				Steps: []model.Step{
 					{Use: "mcp://nested2/tool"},
 				},
 			},
@@ -458,7 +458,7 @@ func TestFindMCPInStep_EdgeCases(t *testing.T) {
 	servers = make(map[string]bool) // Reset
 	step5 := model.Step{
 		Use: "mcp://main/tool",
-		Do:  []model.Step{},
+		Steps:  []model.Step{},
 	}
 	findMCPInStep(step5, servers)
 	if !servers["main"] {

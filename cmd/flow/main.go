@@ -17,10 +17,8 @@ import (
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
 	api "github.com/beemflow/beemflow/core"
-	"github.com/beemflow/beemflow/dsl"
 	beemhttp "github.com/beemflow/beemflow/http"
 	"github.com/beemflow/beemflow/model"
-	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
@@ -53,6 +51,11 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		// Load environment variables from .env file, if present
 		_ = godotenv.Load()
+
+		// Set logger mode based on debug flag
+		if debug {
+			utils.SetMode("debug")
+		}
 
 		// Initialize config and set global state
 		_, err := api.InitializeConfig(configPath, flowsDir)
@@ -168,9 +171,9 @@ func runFlowExecution(cmd *cobra.Command, args []string, eventPath, eventJSON st
 	}
 
 	// Parse the flow file
-	flow, err := dsl.Parse(args[0])
+	flow, err := api.ParseFlowFile(args[0])
 	if err != nil {
-		utils.Error("YAML parse error: %v", err)
+		utils.Error("Flow parse error: %v", err)
 		exit(1)
 	}
 
@@ -475,7 +478,11 @@ func newOAuthProvidersListCmd() *cobra.Command {
 		Short: "List configured OAuth providers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -509,7 +516,11 @@ func newOAuthProvidersAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -557,7 +568,11 @@ func newOAuthProvidersRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -580,7 +595,11 @@ func newOAuthCredentialsListCmd() *cobra.Command {
 		Short: "List OAuth credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -619,7 +638,11 @@ func newOAuthCredentialsAddCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -678,7 +701,11 @@ func newOAuthCredentialsRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			store, err := getStoreFromConfig()
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+			store, err := api.GetStoreFromConfig(cfg)
 			if err != nil {
 				return err
 			}
@@ -712,14 +739,4 @@ func newOAuthCredentialsRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// getStoreFromConfig creates a storage instance from the current config
-func getStoreFromConfig() (storage.Storage, error) {
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return api.GetStoreFromConfig(cfg)
 }

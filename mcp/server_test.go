@@ -63,8 +63,12 @@ func TestServe_BasicStdio(t *testing.T) {
 	done := make(chan bool, 1)
 
 	go func() {
-		// Test should work without config
-		err := Serve(false, true, "", tools)
+		// Test should work with explicit config
+		config := &ServerConfig{
+			Transport: "stdio",
+			Debug:     false,
+		}
+		err := ServeWithConfig(config, tools)
 		if err != nil {
 			t.Logf("Server exited with error: %v", err)
 		}
@@ -95,7 +99,12 @@ func TestServe_HTTPMode(t *testing.T) {
 	// Test HTTP mode with a random port
 	done := make(chan error, 1)
 	go func() {
-		err := Serve(false, false, "localhost:0", tools)
+		config := &ServerConfig{
+			Transport: "http",
+			Address:   "localhost:0",
+			Debug:     false,
+		}
+		err := ServeWithConfig(config, tools)
 		done <- err
 	}()
 
@@ -126,7 +135,11 @@ func TestServe_DebugMode(t *testing.T) {
 	// Test stdio mode with debug enabled
 	done := make(chan error, 1)
 	go func() {
-		err := Serve(true, true, "", tools)
+		config := &ServerConfig{
+			Transport: "stdio",
+			Debug:     true,
+		}
+		err := ServeWithConfig(config, tools)
 		done <- err
 	}()
 

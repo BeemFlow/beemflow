@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/beemflow/beemflow/config"
+	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
@@ -27,6 +28,25 @@ func TestListFlows(t *testing.T) {
 }
 
 func TestGetFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	_, err := GetFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("GetFlow returned error: %v", err)
@@ -34,6 +54,25 @@ func TestGetFlow(t *testing.T) {
 }
 
 func TestValidateFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	err := ValidateFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("ValidateFlow returned error: %v", err)
@@ -41,6 +80,25 @@ func TestValidateFlow(t *testing.T) {
 }
 
 func TestGraphFlow(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	_, err := GraphFlow(context.Background(), "dummy")
 	if err != nil {
 		t.Errorf("GraphFlow returned error: %v", err)
@@ -48,6 +106,25 @@ func TestGraphFlow(t *testing.T) {
 }
 
 func TestStartRun(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	// Use test context with memory storage
 	ctx := WithStore(context.Background(), storage.NewMemoryStorage())
 	_, err := StartRun(ctx, "dummy", map[string]any{})
@@ -107,22 +184,22 @@ func TestListFlows_DirError(t *testing.T) {
 
 func TestGetFlow_FileNotFound(t *testing.T) {
 	_, err := GetFlow(context.Background(), "definitely_not_a_real_flow")
-	if err != nil {
-		t.Errorf("expected nil error for missing file, got: %v", err)
+	if err == nil {
+		t.Errorf("expected error for missing file, got nil")
 	}
 }
 
 func TestGetFlow_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.yaml")
-	if err := os.WriteFile(badPath, []byte("not: [valid: yaml"), 0644); err != nil {
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
+	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	// Set the global flowsDir in the api package
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	_, err := GetFlow(context.Background(), "bad")
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -131,22 +208,25 @@ func TestGetFlow_ParseError(t *testing.T) {
 
 func TestValidateFlow_FileNotFound(t *testing.T) {
 	err := ValidateFlow(context.Background(), "definitely_not_a_real_flow")
-	if err != nil {
-		t.Errorf("expected nil error for missing file, got: %v", err)
+	if err == nil {
+		t.Errorf("expected error for missing file, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("expected 'not found' or 'no such file' error, got %v", err)
 	}
 }
 
 func TestValidateFlow_SchemaError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.yaml")
-	if err := os.WriteFile(badPath, []byte("name: bad\nsteps: []"), 0644); err != nil {
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
+	if err := os.WriteFile(badPath, []byte("name: \"bad\"\nsteps: []\ninvalid_field: \"should not be here\""), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	// Use a non-existent schema file
 	orig := "beemflow.schema.json"
 	if err := os.Rename(orig, orig+".bak"); err != nil && !os.IsNotExist(err) {
@@ -160,6 +240,25 @@ func TestValidateFlow_SchemaError(t *testing.T) {
 }
 
 func TestStartRun_ConfigError(t *testing.T) {
+	// Set up a temporary flows directory with dummy flow
+	tempDir := t.TempDir()
+	dummyFlowPath := filepath.Join(tempDir, "dummy.flow.cue")
+	dummyFlowContent := `name: "dummy"
+description: "Dummy test flow"
+on: "cli.manual"
+steps: [{
+	id: "test_step"
+	use: "core.echo"
+	with: { text: "test" }
+}]`
+	if err := os.WriteFile(dummyFlowPath, []byte(dummyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create dummy flow: %v", err)
+	}
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	// Simulate config error by renaming config file
 	orig := "flow.config.json"
 	if err := os.Rename(orig, orig+".bak"); err != nil && !os.IsNotExist(err) {
@@ -167,22 +266,24 @@ func TestStartRun_ConfigError(t *testing.T) {
 	}
 	defer func() { _ = os.Rename(orig+".bak", orig) }()
 	_, err := StartRun(context.Background(), "dummy", map[string]any{})
-	if err != nil && !os.IsNotExist(err) {
-		t.Errorf("expected nil or not exist error, got: %v", err)
+	// Config errors happen during engine creation, but flow validation happens first
+	// Since we set up a valid flow, this should succeed despite missing config
+	if err != nil {
+		t.Errorf("expected no error since flow is valid, got: %v", err)
 	}
 }
 
 func TestStartRun_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "bad.flow.yaml")
-	if err := os.WriteFile(badPath, []byte("not: [valid: yaml"), 0644); err != nil {
+	badPath := filepath.Join(tempDir, "bad.flow.cue")
+	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	_, err := StartRun(context.Background(), "bad", map[string]any{})
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -251,7 +352,7 @@ func TestGetFlow_UnexpectedError(t *testing.T) {
 	if err := os.MkdirAll("flows", 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := "flows/unreadable.flow.yaml"
+	badPath := "flows/unreadable.flow.cue"
 	if err := os.WriteFile(badPath, []byte("foo: bar"), 0000); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
@@ -264,16 +365,16 @@ func TestGetFlow_UnexpectedError(t *testing.T) {
 }
 
 func TestValidateFlow_ParseError(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	badPath := filepath.Join(flowsDir, "badparse.flow.yaml")
-	if err := os.WriteFile(badPath, []byte("not: [valid: yaml"), 0644); err != nil {
+	badPath := filepath.Join(tempDir, "badparse.flow.cue")
+	if err := os.WriteFile(badPath, []byte("this is not valid cue syntax {{{{"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(badPath)
-	SetFlowsDir(flowsDir)
+	SetFlowsDir(tempDir)
 	err := ValidateFlow(context.Background(), "badparse")
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
@@ -337,21 +438,26 @@ func TestResumeRun_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestStartRun_ListRunsError(t *testing.T) {
-	// Patch storage to return error from ListRuns
-	// Not possible without interface injection or reflection, so just test empty runs case
-	if err := os.MkdirAll("flows", 0755); err != nil {
-		t.Fatalf("os.MkdirAll failed: %v", err)
+	// Set up a temporary flows directory with empty flow
+	tempDir := t.TempDir()
+	emptyFlowPath := filepath.Join(tempDir, "empty.flow.cue")
+	emptyFlowContent := `name: "empty"
+on: "cli.manual"
+steps: [{id: "dummy", use: "core.echo", with: {text: "dummy"}}]`
+	if err := os.WriteFile(emptyFlowPath, []byte(emptyFlowContent), 0644); err != nil {
+		t.Fatalf("Failed to create empty flow: %v", err)
 	}
-	if err := os.WriteFile(config.DefaultFlowsDir+"/empty.flow.yaml", []byte("name: empty\nsteps: []"), 0644); err != nil {
-		t.Fatalf("os.WriteFile failed: %v", err)
-	}
-	defer os.Remove(config.DefaultFlowsDir + "/empty.flow.yaml")
+
+	originalDir := flowsDir
+	SetFlowsDir(tempDir)
+	defer SetFlowsDir(originalDir)
+
 	id, err := StartRun(context.Background(), "empty", map[string]any{})
 	if err != nil {
 		t.Errorf("expected no error for empty runs, got: %v", err)
 	}
-	if id != uuid.Nil {
-		t.Errorf("expected uuid.Nil for no runs, got: %v", id)
+	if id == uuid.Nil {
+		t.Errorf("expected non-nil UUID for run, got uuid.Nil")
 	}
 }
 
@@ -369,15 +475,16 @@ func TestIntegration_FlowLifecycle(t *testing.T) {
 	defer SetFlowsDir(originalFlowsDir)
 
 	// Create a simple test flow
-	flowContent := `name: test_flow
-on: cli.manual
-steps:
-  - id: echo_step
-    use: core.echo
-    with:
-      text: "Hello World"
-`
-	flowPath := filepath.Join(tempDir, "test_flow.flow.yaml")
+	flowContent := `name: "test_flow"
+on: "cli.manual"
+steps: [{
+	id: "echo_step"
+	use: "core.echo"
+	with: {
+		text: "Hello World"
+	}
+}]`
+	flowPath := filepath.Join(tempDir, "test_flow.flow.cue")
 	if err := os.WriteFile(flowPath, []byte(flowContent), 0644); err != nil {
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
@@ -428,43 +535,43 @@ steps:
 }
 
 func TestIntegration_ResumeRun(t *testing.T) {
-	flowsDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
-	if err := os.MkdirAll(flowsDir, 0755); err != nil {
+	tempDir := filepath.Join(t.TempDir(), config.DefaultFlowsDir)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	SetFlowsDir(flowsDir)
-	flowYAML := `name: resumeflow
-on: cli.manual
-steps:
-  - id: s1
-    use: core.echo
-    with:
-      text: "start"
-  - id: wait
-    await_event:
-      source: test
-      match:
-        token: "{{ event.token }}"
-  - id: s2
-    use: core.echo
-    with:
-      text: "resumed"
-`
-	if err := os.WriteFile(filepath.Join(flowsDir, "resumeflow.flow.yaml"), []byte(flowYAML), 0644); err != nil {
+	SetFlowsDir(tempDir)
+	flowCUE := `name: "resumeflow"
+on: "cli.manual"
+steps: [{
+	id: "s1"
+	use: "core.echo"
+	with: {
+		text: "start"
+	}
+}, {
+	id: "wait"
+	await_event: {
+		source: "test"
+		match: {
+			token: "{{ event.token }}"
+		}
+	}
+}, {
+	id: "s2"
+	use: "core.echo"
+	with: {
+		text: "resumed"
+	}
+}]`
+	if err := os.WriteFile(filepath.Join(tempDir, "resumeflow.flow.cue"), []byte(flowCUE), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
-	defer os.Remove(filepath.Join(flowsDir, "resumeflow.flow.yaml"))
-	// Write minimal schema for validation
-	schema := `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`
-	if err := os.WriteFile("beemflow.schema.json", []byte(schema), 0644); err != nil {
-		t.Fatalf("os.WriteFile failed: %v", err)
-	}
-	defer os.Remove("beemflow.schema.json")
+	defer os.Remove(filepath.Join(tempDir, "resumeflow.flow.cue"))
 	// StartRun with token triggers pause
 	event := map[string]any{"token": "tok123"}
 	runID, err := StartRun(context.Background(), "resumeflow", event)
 	if err != nil {
-		if !strings.Contains(err.Error(), "is waiting for event") {
+		if !constants.IsAwaitEventPause(err) {
 			t.Fatalf("StartRun error: %v", err)
 		}
 		// If we get the pause error, that's expected - the test should pass
@@ -487,8 +594,8 @@ func TestListFlows_CustomDir(t *testing.T) {
 		t.Fatalf("failed to create custom flows dir: %v", err)
 	}
 	// write a single flow file
-	yaml := []byte("name: testflow\non: cli.manual\nsteps: []\n")
-	if err := os.WriteFile(filepath.Join(custom, "testflow.flow.yaml"), yaml, 0644); err != nil {
+	cue := []byte("name: \"testflow\"\non: \"cli.manual\"\nsteps: []\n")
+	if err := os.WriteFile(filepath.Join(custom, "testflow.flow.cue"), cue, 0644); err != nil {
 		t.Fatalf("failed to write flow file: %v", err)
 	}
 	SetFlowsDir(custom)
@@ -512,8 +619,8 @@ func TestGetFlow_CustomDir(t *testing.T) {
 		t.Fatalf("failed to create custom flows2 dir: %v", err)
 	}
 	// minimal valid flow
-	yaml := []byte("name: myflow\non: cli.manual\nsteps: []\n")
-	if err := os.WriteFile(filepath.Join(cust, "myflow.flow.yaml"), yaml, 0644); err != nil {
+	cue := []byte("name: \"myflow\"\non: \"cli.manual\"\nsteps: [{id: \"test\", use: \"core.echo\", with: {text: \"test\"}}]\n")
+	if err := os.WriteFile(filepath.Join(cust, "myflow.flow.cue"), cue, 0644); err != nil {
 		t.Fatalf("failed to write myflow file: %v", err)
 	}
 	SetFlowsDir(cust)
@@ -529,16 +636,17 @@ func TestGetFlow_CustomDir(t *testing.T) {
 // Test comprehensive API function coverage
 
 func TestParseFlowFromString(t *testing.T) {
-	yamlStr := `name: test_flow
-on: cli.manual
-steps:
-  - id: echo_step
-    use: core.echo
-    with:
-      text: "Hello World"
-`
+	cueStr := `name: "test_flow"
+on: "cli.manual"
+steps: [{
+	id: "echo_step"
+	use: "core.echo"
+	with: {
+		text: "Hello World"
+	}
+}]`
 
-	flow, err := ParseFlowFromString(yamlStr)
+	flow, err := ParseFlowFromString(cueStr)
 	if err != nil {
 		t.Errorf("ParseFlowFromString failed: %v", err)
 	}
@@ -550,12 +658,12 @@ steps:
 	}
 }
 
-func TestParseFlowFromString_InvalidYAML(t *testing.T) {
-	yamlStr := `invalid: yaml: content: [unclosed`
+func TestParseFlowFromString_InvalidCUE(t *testing.T) {
+	cueStr := `invalid: cue: content: [unclosed`
 
-	_, err := ParseFlowFromString(yamlStr)
+	_, err := ParseFlowFromString(cueStr)
 	if err == nil {
-		t.Error("Expected error for invalid YAML")
+		t.Error("Expected error for invalid CUE")
 	}
 }
 
@@ -730,7 +838,7 @@ func TestListFlows_WithSubdirectories(t *testing.T) {
 	}
 
 	// Create flow files
-	flowFiles := []string{"test1.flow.yaml", "test2.flow.yaml", "not_a_flow.txt"}
+	flowFiles := []string{"test1.flow.cue", "test2.flow.cue", "not_a_flow.txt"}
 	for _, file := range flowFiles {
 		path := filepath.Join(tempDir, file)
 		if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
@@ -751,7 +859,7 @@ func TestListFlows_WithSubdirectories(t *testing.T) {
 		t.Errorf("Expected 2 flows, got %d: %v", len(flows), flows)
 	}
 
-	// Check that only .flow.yaml files are included
+	// Check that only .flow.cue files are included
 	expectedFlows := []string{"test1", "test2"}
 	for _, expected := range expectedFlows {
 		found := false
@@ -780,8 +888,8 @@ func TestGetFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	flow, err := GetFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("GetFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("GetFlow should error for non-existent flow, got nil")
 	}
 	if flow.Name != "" {
 		t.Errorf("Expected empty flow for non-existent, got %v", flow)
@@ -801,8 +909,8 @@ func TestValidateFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	err = ValidateFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("ValidateFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("ValidateFlow should error for non-existent flow, got nil")
 	}
 }
 
@@ -819,8 +927,8 @@ func TestGraphFlow_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	graph, err := GraphFlow(ctx, "nonexistent")
-	if err != nil {
-		t.Errorf("GraphFlow should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("GraphFlow should error for non-existent flow, got nil")
 	}
 	if graph != "" {
 		t.Errorf("Expected empty graph for non-existent flow, got %s", graph)
@@ -840,8 +948,8 @@ func TestStartRun_NonExistentFlow(t *testing.T) {
 
 	ctx := context.Background()
 	runID, err := StartRun(ctx, "nonexistent", map[string]any{})
-	if err != nil {
-		t.Errorf("StartRun should not error for non-existent flow, got %v", err)
+	if err == nil {
+		t.Errorf("StartRun should error for non-existent flow, got nil")
 	}
 	if runID != uuid.Nil {
 		t.Errorf("Expected nil UUID for non-existent flow, got %v", runID)
@@ -861,15 +969,17 @@ func TestStartRun_WithPausedRun(t *testing.T) {
 	defer SetFlowsDir(originalDir)
 
 	// Create a flow with await_event step
-	flowContent := `name: pause_flow
-on: cli.manual
-steps:
-  - id: wait_step
-    await_event:
-      match:
-        token: "test_token"
-`
-	flowPath := filepath.Join(tempDir, "pause_flow.flow.yaml")
+	flowContent := `name: "pause_flow"
+on: "cli.manual"
+steps: [{
+	id: "wait_step"
+	await_event: {
+		match: {
+			token: "test_token"
+		}
+	}
+}]`
+	flowPath := filepath.Join(tempDir, "pause_flow.flow.cue")
 	if err := os.WriteFile(flowPath, []byte(flowContent), 0644); err != nil {
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
@@ -877,7 +987,7 @@ steps:
 	ctx := context.Background()
 	runID, err := StartRun(ctx, "pause_flow", map[string]any{})
 	if err != nil {
-		if !strings.Contains(err.Error(), "is waiting for event") {
+		if !constants.IsAwaitEventPause(err) {
 			t.Errorf("StartRun failed with unexpected error: %v", err)
 		}
 		// If we get the pause error, that's expected
@@ -887,19 +997,6 @@ steps:
 	if runID == uuid.Nil {
 		t.Error("Expected non-nil run ID for paused flow")
 	}
-}
-
-// TestFlowService tests the FlowService implementation
-func TestFlowService(t *testing.T) {
-	// This test is no longer needed since we eliminated the FlowService interface
-	// All functionality is now tested through direct API function calls
-	t.Skip("FlowService interface has been eliminated - functionality tested through direct API calls")
-}
-
-// TestFlowService_ErrorCases tests error cases for FlowService
-func TestFlowService_ErrorCases(t *testing.T) {
-	// This test is no longer needed since we eliminated the FlowService interface
-	t.Skip("FlowService interface has been eliminated - functionality tested through direct API calls")
 }
 
 // TestPublishEvent_EdgeCases tests PublishEvent with various edge cases
@@ -949,37 +1046,38 @@ func TestStartRun_EdgeCases(t *testing.T) {
 	defer SetFlowsDir(originalDir)
 
 	// Create a simple flow
-	flowContent := `name: edge_test_flow
-on: cli.manual
-steps:
-  - id: echo_step
-    use: core.echo
-    with:
-      text: "{{ event.message }}"
-`
-	flowPath := filepath.Join(tempDir, "edge_test_flow.flow.yaml")
+	flowContent := `name: "edge_test_flow"
+on: "cli.manual"
+steps: [{
+	id: "echo_step"
+	use: "core.echo"
+	with: {
+		text: "{{ event.message }}"
+	}
+}]`
+	flowPath := filepath.Join(tempDir, "edge_test_flow.flow.cue")
 	if err := os.WriteFile(flowPath, []byte(flowContent), 0644); err != nil {
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
 
 	ctx := context.Background()
 
-	// Test with nil event
+	// Test with nil event - should fail due to undefined template variables
 	runID, err := StartRun(ctx, "edge_test_flow", nil)
-	if err != nil {
-		t.Errorf("StartRun with nil event failed: %v", err)
+	if err == nil {
+		t.Error("StartRun with nil event should fail due to undefined template variables")
 	}
-	if runID == uuid.Nil {
-		t.Error("Expected non-nil run ID")
+	if runID != uuid.Nil {
+		t.Error("Expected nil run ID for failed execution")
 	}
 
-	// Test with empty event
+	// Test with empty event - should fail due to undefined template variables
 	runID, err = StartRun(ctx, "edge_test_flow", map[string]any{})
-	if err != nil {
-		t.Errorf("StartRun with empty event failed: %v", err)
+	if err == nil {
+		t.Error("StartRun with empty event should fail due to undefined template variables")
 	}
-	if runID == uuid.Nil {
-		t.Error("Expected non-nil run ID")
+	if runID != uuid.Nil {
+		t.Error("Expected nil run ID for failed execution")
 	}
 
 	// Test with complex event

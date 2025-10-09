@@ -5,52 +5,64 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/model"
 )
 
 func TestFlowModel_UnmarshalAllFields(t *testing.T) {
-	yamlData := `
-name: all_fields
-on: cli.manual
-vars:
-  num: 1
-steps:
-  - id: s1
-    use: core.echo
-    with:
-      key: val
-    if: "x > 0"
-    foreach: "{{list}}"
-    as: item
-    do:
-      - id: d1
-        use: core.echo
-        with:
-          text: "{{item}}"
-    parallel: true
-    retry:
-      attempts: 3
-      delay_sec: 2
-    await_event:
-      source: bus
-      match:
-        key: "value"
-      timeout: "30s"
-    wait:
-      seconds: 5
-      until: "2025-01-01"
-catch:
-  - id: e1
-    use: core.echo
-    with:
-      text: "err"
+	cueData := `package beemflow
+
+name: "all_fields"
+on: "cli.manual"
+vars: {
+	num: 1
+}
+steps: [{
+	id: "s1"
+	use: "core.echo"
+	with: {
+		key: "val"
+	}
+	if: "x > 0"
+	foreach: "{{list}}"
+	as: "item"
+	steps: [{
+		id: "d1"
+	use: "core.echo"
+	with: {
+		text: "{{item}}"
+	}
+	}]
+	parallel: true
+	retry: {
+		attempts: 3
+		delay_sec: 2
+	}
+	await_event: {
+		source: "bus"
+		match: {
+			key: "value"
+		}
+		timeout: "30s"
+	}
+	wait: {
+		seconds: 5
+		until: "2025-01-01"
+	}
+}]
+catch: [{
+	id: "e1"
+	use: "core.echo"
+	with: {
+		text: "err"
+	}
+}]
 `
 
-	var f model.Flow
-	if err := yaml.Unmarshal([]byte(yamlData), &f); err != nil {
-		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	parser := cue.NewParser()
+	f, err := parser.ParseString(cueData)
+	if err != nil {
+		t.Fatalf("CUE parse failed: %v", err)
 	}
 
 	if f.Name != "all_fields" {
@@ -88,10 +100,10 @@ catch:
 	if step.As != "item" {
 		t.Errorf("expected step.As 'item', got '%s'", step.As)
 	}
-	if len(step.Do) != 1 {
-		t.Errorf("expected step.Do len 1, got %d", len(step.Do))
-	} else if step.Do[0].Use != "core.echo" {
-		t.Errorf("expected Do[0].Use 'core.echo', got '%s'", step.Do[0].Use)
+	if len(step.Steps) != 1 {
+		t.Errorf("expected step.Steps len 1, got %d", len(step.Steps))
+	} else if step.Steps[0].Use != "core.echo" {
+		t.Errorf("expected Steps[0].Use 'core.echo', got '%s'", step.Steps[0].Use)
 	}
 	if !step.Parallel {
 		t.Errorf("expected step.Parallel true, got false")
@@ -125,7 +137,7 @@ func TestStep_AllFieldsSet(t *testing.T) {
 		If:         "x > 0",
 		Foreach:    "{{list}}",
 		As:         "item",
-		Do:         []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
+		Steps:      []model.Step{{ID: "d1", Use: "core.echo", With: map[string]interface{}{"text": "{{item}}"}}},
 		Parallel:   true,
 		Retry:      &model.RetrySpec{Attempts: 2, DelaySec: 1},
 		AwaitEvent: &model.AwaitEventSpec{Source: "bus", Match: map[string]interface{}{"key": "value"}, Timeout: "10s"},
@@ -134,10 +146,8 @@ func TestStep_AllFieldsSet(t *testing.T) {
 	if s.Use != "core.echo" || s.With["text"] != "hi" || s.If != "x > 0" || s.Foreach != "{{list}}" || s.As != "item" {
 		t.Errorf("step fields not set correctly: %+v", s)
 	}
-	if len(s.Do) != 1 {
-		if s.Do[0].Use != "core.echo" {
-			t.Errorf("step.Do not set correctly: %+v", s.Do)
-		}
+	if len(s.Steps) != 1 || s.Steps[0].Use != "core.echo" {
+		t.Errorf("step.Steps not set correctly: %+v", s.Steps)
 	}
 	if !s.Parallel {
 		t.Errorf("step.Parallel not set correctly: %+v", s.Parallel)
@@ -162,7 +172,7 @@ func TestStep_OnlyRequiredFields(t *testing.T) {
 
 func TestStep_UnknownFieldsIgnored(t *testing.T) {
 	// This is a compile-time struct, so unknown fields are not possible in Go,
-	// but YAML/JSON unmarshal should ignore them (see parser tests).
+	// but CUE/JSON unmarshal should ignore them (see parser tests).
 }
 
 func TestFlow_EmptyStepsCatch(t *testing.T) {
@@ -180,8 +190,8 @@ func TestStep_NilAndEmptySubfields(t *testing.T) {
 	if s.With != nil {
 		t.Errorf("expected With nil, got %+v", s.With)
 	}
-	if len(s.Do) != 0 {
-		t.Errorf("expected Do nil or empty, got %+v", s.Do)
+	if len(s.Steps) != 0 {
+		t.Errorf("expected Steps nil or empty, got %+v", s.Steps)
 	}
 	// Parallel is a bool, so no nil/len check needed
 }

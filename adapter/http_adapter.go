@@ -93,6 +93,14 @@ func (a *HTTPAdapter) ID() string {
 
 // Execute performs HTTP requests based on manifest or generic parameters.
 func (a *HTTPAdapter) Execute(ctx context.Context, inputs map[string]any) (map[string]any, error) {
+	if inputs == nil {
+		return nil, fmt.Errorf("inputs cannot be nil")
+	}
+
+	if ctx == nil {
+		return nil, fmt.Errorf("context cannot be nil")
+	}
+
 	// Handle manifest-based requests
 	if a.ToolManifest != nil && a.ToolManifest.Endpoint != "" {
 		return a.executeManifestRequest(ctx, inputs)
@@ -108,7 +116,10 @@ func (a *HTTPAdapter) executeManifestRequest(ctx context.Context, inputs map[str
 	enrichedInputs := a.enrichInputsWithDefaults(inputs)
 
 	// Prepare headers
-	headers := a.prepareManifestHeaders(ctx, enrichedInputs)
+	headers, err := a.prepareManifestHeaders(ctx, enrichedInputs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Replace path parameters in URL with validation
 	url := a.ToolManifest.Endpoint
@@ -239,7 +250,11 @@ func (a *HTTPAdapter) executeHTTPRequest(ctx context.Context, req HTTPRequest) (
 	if err != nil {
 		return nil, utils.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			utils.Warn("Failed to close HTTP response body: %v", closeErr)
+		}
+	}()
 
 	// Process response
 	return a.processHTTPResponse(resp, req.Method, req.URL)
@@ -247,6 +262,14 @@ func (a *HTTPAdapter) executeHTTPRequest(ctx context.Context, req HTTPRequest) (
 
 // processHTTPResponse processes an HTTP response and returns structured data
 func (a *HTTPAdapter) processHTTPResponse(resp *http.Response, method, url string) (map[string]any, error) {
+	if resp == nil {
+		return nil, utils.Errorf("HTTP response is nil")
+	}
+
+	if resp.Body == nil {
+		return nil, utils.Errorf("HTTP response body is nil")
+	}
+
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, utils.Errorf("failed to read response body: %w", err)
@@ -281,13 +304,13 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 		return enriched
 	}
 
-	props, ok := safeMapAssert(a.ToolManifest.Parameters["properties"])
+	props, ok := utils.SafeMapAssert(a.ToolManifest.Parameters["properties"])
 	if !ok {
 		return enriched
 	}
 
 	for k, v := range props {
-		prop, ok := safeMapAssert(v)
+		prop, ok := utils.SafeMapAssert(v)
 		if !ok {
 			continue
 		}
@@ -296,7 +319,7 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 		if _, present := enriched[k]; !present {
 			if def, hasDefault := prop["default"]; hasDefault {
 				// Expand environment variables in default values if they're strings
-				if defStr, ok := safeStringAssert(def); ok {
+				if defStr, ok := utils.SafeStringAssert(def); ok {
 					enriched[k] = utils.ExpandEnvValue(defStr)
 				} else {
 					enriched[k] = def
@@ -309,13 +332,17 @@ func (a *HTTPAdapter) enrichInputsWithDefaults(inputs map[string]any) map[string
 }
 
 // prepareManifestHeaders prepares headers for manifest-based requests
-func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) map[string]string {
+func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[string]any) (map[string]string, error) {
 	headers := make(map[string]string)
 
 	// Add manifest headers with OAuth and environment variable expansion
 	if a.ToolManifest.Headers != nil {
 		for k, v := range a.ToolManifest.Headers {
-			headers[k] = a.expandValue(ctx, v)
+			expanded, err := a.expandValue(ctx, v)
+			if err != nil {
+				return nil, err
+			}
+			headers[k] = expanded
 		}
 	}
 
@@ -328,7 +355,7 @@ func (a *HTTPAdapter) prepareManifestHeaders(ctx context.Context, inputs map[str
 		}
 	}
 
-	return headers
+	return headers, nil
 }
 
 // extractMethod extracts HTTP method from inputs with safe default
@@ -353,47 +380,54 @@ func (a *HTTPAdapter) extractHeaders(inputs map[string]any) map[string]string {
 }
 
 // expandValue expands both OAuth tokens and environment variables in a value string
-func (a *HTTPAdapter) expandValue(ctx context.Context, value string) string {
+func (a *HTTPAdapter) expandValue(ctx context.Context, value string) (string, error) {
+	if ctx == nil {
+		return "", fmt.Errorf("context cannot be nil")
+	}
+
 	// Get storage from context for OAuth client
 	store, ok := ctx.Value(storageContextKey).(storage.Storage)
 	if !ok {
-		utils.Debug("Storage not available in context for OAuth expansion")
+		utils.Debug("Storage not available in context for OAuth expansion, falling back to environment variables only")
 		// Fall back to environment variable expansion only
-		return utils.ExpandEnvValue(value)
+		return utils.ExpandEnvValue(value), nil
+	}
+
+	if store == nil {
+		utils.Warn("Storage in context is nil, falling back to environment variables only")
+		return utils.ExpandEnvValue(value), nil
 	}
 
 	oauthClient := auth.NewOAuthClient(store)
 
 	// First handle OAuth patterns
+	var oauthError error
 	expanded := utils.OAuthPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Split(match[7:], ":") // Remove "$oauth:" prefix
 		if len(parts) != 2 {
+			oauthError = fmt.Errorf("invalid OAuth pattern: %s (expected format: $oauth:provider:integration)", match)
 			return match
 		}
 		provider, integration := parts[0], parts[1]
 
-		if token, err := oauthClient.GetToken(ctx, provider, integration); err == nil {
-			return "Bearer " + token
+		token, err := oauthClient.GetToken(ctx, provider, integration)
+		if err != nil {
+			oauthError = fmt.Errorf("failed to retrieve OAuth token for %s:%s: %w", provider, integration, err)
+			return match
 		}
-		utils.Debug("OAuth token not found for %s:%s, keeping original", provider, integration)
-		return match // Keep original if OAuth token not found
+		return "Bearer " + token
 	})
 
+	// Return error immediately if OAuth expansion failed
+	if oauthError != nil {
+		return "", oauthError
+	}
+
 	// Then handle environment variables using shared utility
-	return utils.ExpandEnvValue(expanded)
+	return utils.ExpandEnvValue(expanded), nil
 }
 
 func (a *HTTPAdapter) Manifest() *registry.ToolManifest {
 	return a.ToolManifest
 }
 
-// Safe type assertion helpers to prevent panics
-func safeStringAssert(v any) (string, bool) {
-	s, ok := v.(string)
-	return s, ok
-}
-
-func safeMapAssert(v any) (map[string]any, bool) {
-	m, ok := v.(map[string]any)
-	return m, ok
-}

@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/dsl"
+	"github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/engine"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/graph"
@@ -20,11 +22,6 @@ import (
 	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
 )
-
-// GetDefaultRegistry returns the default registry with OAuth providers
-func GetDefaultRegistry() registry.OAuthRegistry {
-	return registry.NewDefaultRegistry()
-}
 
 // GetStoreFromConfig returns a storage instance based on config, or an error if the driver is unknown.
 // This is a utility function that can be used by other packages.
@@ -99,6 +96,7 @@ func InitializeConfig(configPath string, flowsDirOverride string) (*config.Confi
 }
 
 // GetConfig returns the cached config or loads it if not cached.
+// This is the centralized config accessor - all code should use this instead of LoadConfig directly.
 func GetConfig() (*config.Config, error) {
 	if cachedConfig != nil {
 		return cachedConfig, nil
@@ -111,11 +109,15 @@ func ResetConfigCache() {
 	cachedConfig = nil
 }
 
+// ParseFlowFile parses a CUE flow file
+func ParseFlowFile(path string) (*model.Flow, error) {
+	return cue.NewParser().ParseFile(path)
+}
+
 // ListFlows returns the names of all available flows.
 func ListFlows(ctx context.Context) ([]string, error) {
 	utils.Debug("ListFlows: Reading from flowsDir: %s", flowsDir)
 
-	// Check if directory exists
 	if _, err := os.Stat(flowsDir); os.IsNotExist(err) {
 		utils.Debug("ListFlows: Directory does not exist: %s", flowsDir)
 		return []string{}, nil
@@ -129,12 +131,10 @@ func ListFlows(ctx context.Context) ([]string, error) {
 			return err
 		}
 
-		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
 
-		// Check if it's a flow file
 		if strings.HasSuffix(info.Name(), constants.FlowFileExtension) {
 			// Get relative path from flowsDir
 			relPath, err := filepath.Rel(flowsDir, path)
@@ -163,10 +163,10 @@ func ListFlows(ctx context.Context) ([]string, error) {
 // GetFlow returns the parsed flow definition for the given name.
 func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return model.Flow{}, nil
+			return model.Flow{}, utils.Errorf("flow '%s' not found", name)
 		}
 		return model.Flow{}, err
 	}
@@ -176,20 +176,20 @@ func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 // ValidateFlow validates the given flow by name.
 func ValidateFlow(ctx context.Context, name string) error {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	_, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // treat missing as valid for test robustness
+			return utils.Errorf("flow '%s' not found", name)
 		}
 		return err
 	}
-	return dsl.Validate(flow)
+	return nil
 }
 
 // GraphFlow returns the Mermaid diagram for the given flow.
 func GraphFlow(ctx context.Context, name string) (string, error) {
 	path := buildFlowPath(name)
-	flow, err := dsl.Parse(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -199,15 +199,97 @@ func GraphFlow(ctx context.Context, name string) (string, error) {
 	return graph.ExportMermaid(flow)
 }
 
-// createEngineFromConfig creates a new engine instance with storage from config
+// EngineDependencies holds all initialized application dependencies
+// Use this for dependency injection into HTTP server, CLI, MCP server, etc.
+type EngineDependencies struct {
+	Engine   *engine.Engine
+	Storage  storage.Storage
+	EventBus event.EventBus
+	Registry *registry.RegistryManager
+	Cleanup  func()
+}
+
+// InitializeEngine creates an engine with all dependencies
+// Returns EngineDependencies for consumption by transport layers (HTTP, CLI, MCP)
+func InitializeEngine(cfg *config.Config) (*EngineDependencies, error) {
+	// Initialize storage
+	store, err := GetStoreFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize event bus
+	var bus event.EventBus
+	if cfg.Event != nil {
+		bus, err = event.NewEventBusFromConfig(cfg.Event)
+		if err != nil {
+			utils.WarnCtx(context.Background(), "Failed to create event bus: %v, using in-memory fallback", "error", err)
+			bus = event.NewInProcEventBus()
+		}
+	} else {
+		bus = event.NewInProcEventBus()
+	}
+
+	// Initialize blob store
+	var blobStore blob.BlobStore
+	if cfg.Blob != nil {
+		blobConfig := &blob.BlobConfig{
+			Driver: cfg.Blob.Driver,
+			Bucket: cfg.Blob.Bucket,
+		}
+		blobStore, err = blob.NewDefaultBlobStore(context.Background(), blobConfig)
+		if err != nil {
+			utils.WarnCtx(context.Background(), "Failed to create blob store: %v, using nil fallback", "error", err)
+			blobStore = nil
+		}
+	}
+
+	// Initialize registry
+	registryMgr := registry.NewStandardManager(context.Background(), cfg)
+
+	// Create engine
+	adapters := engine.NewDefaultAdapterRegistry(context.Background())
+	eng := engine.NewEngine(adapters, bus, blobStore, store)
+
+	// Create cleanup function
+	cleanup := func() {
+		if eng != nil {
+			if err := eng.Close(); err != nil {
+				utils.Error("Failed to close engine: %v", err)
+			}
+		}
+		if store != nil {
+			if closer, ok := store.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					utils.Error("Failed to close storage: %v", err)
+				}
+			}
+		}
+		if blobStore != nil {
+			if closer, ok := blobStore.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					utils.Error("Failed to close blob store: %v", err)
+				}
+			}
+		}
+	}
+
+	return &EngineDependencies{
+		Engine:   eng,
+		Storage:  store,
+		EventBus: bus,
+		Registry: registryMgr,
+		Cleanup:  cleanup,
+	}, nil
+}
+
+// createEngineFromConfig creates a lightweight engine for API operations
 func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
-	// Check if store is already in context (e.g., from tests)
 	if store := GetStoreFromContext(ctx); store != nil {
 		return engine.NewEngine(
 			engine.NewDefaultAdapterRegistry(ctx),
-			dsl.NewTemplater(),
 			event.NewInProcEventBus(),
-			nil, // blob store not needed here
+			nil,
 			store,
 		), nil
 	}
@@ -224,9 +306,8 @@ func createEngineFromConfig(ctx context.Context) (*engine.Engine, error) {
 
 	return engine.NewEngine(
 		engine.NewDefaultAdapterRegistry(ctx),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
-		nil, // blob store not needed here
+		nil,
 		store,
 	), nil
 }
@@ -239,7 +320,7 @@ func buildFlowPath(flowName string) string {
 // parseFlowByName loads and parses a flow file by name
 func parseFlowByName(flowName string) (*model.Flow, error) {
 	path := buildFlowPath(flowName)
-	flow, err := dsl.Parse(path)
+	flow, err := ParseFlowFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -253,16 +334,47 @@ func parseFlowByName(flowName string) (*model.Flow, error) {
 func findLatestRunForFlow(runs []*model.Run, flowName string) *model.Run {
 	var latest *model.Run
 	for _, r := range runs {
-		if r.FlowName == flowName && (latest == nil || r.StartedAt.After(latest.StartedAt)) {
-			latest = r
+		if r.FlowName == flowName {
+			if latest == nil ||
+				r.StartedAt.After(latest.StartedAt) ||
+				(r.StartedAt.Equal(latest.StartedAt) && isBetterRunStatus(r.Status, latest.Status)) {
+				latest = r
+			}
 		}
 	}
 	return latest
 }
 
+// isBetterRunStatus determines if status1 is better than status2
+func isBetterRunStatus(status1, status2 model.RunStatus) bool {
+	// Define priority order: RUNNING > WAITING > PENDING > SUCCEEDED > FAILED > SKIPPED
+	// When timestamps are equal, prefer more "active" or "important" statuses
+	statusPriority := map[model.RunStatus]int{
+		model.RunRunning:   6,
+		model.RunWaiting:   5,
+		model.RunPending:   4,
+		model.RunSucceeded: 3,
+		model.RunFailed:    2,
+		model.RunSkipped:   1,
+	}
+
+	priority1, ok1 := statusPriority[status1]
+	priority2, ok2 := statusPriority[status2]
+
+	// Handle unknown statuses (shouldn't happen, but be defensive)
+	if !ok1 {
+		priority1 = 0
+	}
+	if !ok2 {
+		priority2 = 0
+	}
+
+	return priority1 > priority2
+}
+
 // tryFindPausedRun attempts to find a paused run when await_event is involved
 func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
-	if execErr == nil || !strings.Contains(execErr.Error(), constants.ErrorAwaitEventPause) {
+	if execErr == nil || !constants.IsAwaitEventPause(execErr) {
 		return uuid.Nil, execErr
 	}
 
@@ -286,6 +398,11 @@ func tryFindPausedRun(store storage.Storage, execErr error) (uuid.UUID, error) {
 
 // handleExecutionResult processes the result of flow execution, handling paused runs
 func handleExecutionResult(store storage.Storage, flowName string, execErr error) (uuid.UUID, error) {
+	// If there's an execution error (except await_event pause), return nil ID with error
+	if execErr != nil && !constants.IsAwaitEventPause(execErr) {
+		return uuid.Nil, execErr
+	}
+
 	runs, err := store.ListRuns(context.Background())
 	if err != nil || len(runs) == 0 {
 		return tryFindPausedRun(store, execErr)
@@ -293,15 +410,39 @@ func handleExecutionResult(store storage.Storage, flowName string, execErr error
 
 	latest := findLatestRunForFlow(runs, flowName)
 	if latest == nil {
+		utils.Debug("No runs found for flow %s", flowName)
 		return tryFindPausedRun(store, execErr)
 	}
+	utils.Debug("Found latest run for flow %s: ID=%s, Status=%v, StartedAt=%v", flowName, latest.ID, latest.Status, latest.StartedAt)
 
-	// If the only error is await_event pause, treat as success
-	if execErr != nil && strings.Contains(execErr.Error(), constants.ErrorAwaitEventPause) {
+	// For paused flows, look for the current run that should be saved
+	if execErr != nil && constants.IsAwaitEventPause(execErr) {
+		if latest.Status != model.RunWaiting {
+			return uuid.Nil, execErr
+		}
 		return latest.ID, nil
 	}
 
-	return latest.ID, execErr
+	// For successful flows, look for the run
+	if latest.Status != model.RunSucceeded {
+		// Handle paused flows (RunWaiting status)
+		if latest.Status == model.RunWaiting {
+			utils.Debug("Found paused run with ID: %s", latest.ID)
+			return latest.ID, nil
+		}
+
+		// If there's no execution error but the run status is not succeeded,
+		// it might be a timing issue or the run wasn't saved properly
+		if execErr == nil {
+			utils.Debug("No execution error but run status is %v, expected RunSucceeded", latest.Status)
+			return uuid.Nil, fmt.Errorf("run completed but status is %v", latest.Status)
+		}
+		utils.Debug("Latest run status is %v, expected RunSucceeded", latest.Status)
+		return uuid.Nil, execErr
+	}
+
+	utils.Debug("Found successful run with ID: %s", latest.ID)
+	return latest.ID, nil
 }
 
 // StartRun starts a new run for the given flow and event.
@@ -320,6 +461,8 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 	}
 
 	_, execErr := eng.Execute(ctx, flow, eventData)
+
+	// Handle execution result (works for both success, failure, and await_event pause)
 	return handleExecutionResult(eng.Storage, flowName, execErr)
 }
 
@@ -372,9 +515,10 @@ func ResumeRun(ctx context.Context, token string, eventData map[string]any) (map
 	return outputs, nil
 }
 
-// ParseFlowFromString parses a flow YAML string into a Flow struct.
-func ParseFlowFromString(yamlStr string) (*model.Flow, error) {
-	return dsl.ParseFromString(yamlStr)
+// ParseFlowFromString parses a flow CUE string into a Flow struct.
+func ParseFlowFromString(cueStr string) (*model.Flow, error) {
+	parser := cue.NewParser()
+	return parser.ParseString(cueStr)
 }
 
 // RunSpec validates and runs a flow spec inline, returning run ID and outputs.
@@ -403,7 +547,7 @@ func RunSpec(ctx context.Context, flow *model.Flow, eventData map[string]any) (u
 	return latest.ID, outputs, nil
 }
 
-// ListTools returns all registered tool manifests (name, description, kind, etc).
+// ListTools returns all registered tool manifests (name, description, kind, etc) - for tests.
 func ListTools(ctx context.Context) ([]map[string]any, error) {
 	eng := engine.NewDefaultEngine(ctx)
 	adapters := eng.Adapters.All()
@@ -411,7 +555,6 @@ func ListTools(ctx context.Context) ([]map[string]any, error) {
 	for _, a := range adapters {
 		m := a.Manifest()
 		if m != nil {
-			// Only include if not an MCP server
 			if m.Kind != constants.MCPServerKind {
 				tools = append(tools, map[string]any{
 					"name":        m.Name,
@@ -421,19 +564,6 @@ func ListTools(ctx context.Context) ([]map[string]any, error) {
 					"type":        constants.ToolType,
 				})
 			}
-		}
-	}
-	// Also include MCP servers from the registry
-	mcps, err := eng.ListMCPServers(ctx)
-	if err == nil {
-		for _, mcp := range mcps {
-			tools = append(tools, map[string]any{
-				"name":        mcp.Name,
-				"description": "MCP server",
-				"kind":        constants.MCPServerKind,
-				"endpoint":    mcp.Config.Endpoint,
-				"type":        constants.MCPServerKind,
-			})
 		}
 	}
 	return tools, nil
@@ -463,9 +593,7 @@ func ListMCPServers(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
-// ============================================================================
 // REGISTRY FEDERATION API (for Runtime-to-Runtime Communication)
-// ============================================================================
 
 // RegistryIndexResponse represents the registry index response
 type RegistryIndexResponse struct {
@@ -478,23 +606,9 @@ type RegistryIndexResponse struct {
 
 // GetRegistryIndex returns the complete registry index for this runtime
 func GetRegistryIndex(ctx context.Context) (*RegistryIndexResponse, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
+
+	mgr := registry.NewAPIManager()
 	return createRegistryResponse(ctx, mgr)
-}
-
-// GetRegistryTool returns a specific tool by name
-func GetRegistryTool(ctx context.Context, name string) (*registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
-	return mgr.GetServer(ctx, name)
-}
-
-// GetRegistryStats returns statistics about all registries
-func GetRegistryStats(ctx context.Context) (map[string]registry.RegistryStats, error) {
-	factory := registry.NewFactory()
-	mgr := factory.CreateAPIManager()
-	return mgr.GetRegistryStats(ctx), nil
 }
 
 // createRegistryResponse creates the registry response from a manager
@@ -551,9 +665,9 @@ func GetToolManifest(ctx context.Context, name string) (*registry.ToolManifest, 
 // ListToolManifests returns all tool manifests from the local registry
 func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 	// Use the standard registry manager to get tools from all registries
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 	if err != nil {
@@ -562,7 +676,6 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 
 	manifests := []registry.ToolManifest{} // Initialize as empty slice instead of nil
 	for _, entry := range entries {
-		// Only include tools, not MCP servers
 		if entry.Type == "tool" {
 			manifests = append(manifests, registry.ToolManifest{
 				Name:        entry.Name,
@@ -579,9 +692,9 @@ func ListToolManifests(ctx context.Context) ([]registry.ToolManifest, error) {
 
 // SearchMCPServers searches for MCP servers in registries
 func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
@@ -599,9 +712,9 @@ func SearchMCPServers(ctx context.Context, query string) ([]registry.RegistryEnt
 
 // SearchTools searches for tools in registries
 func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	entries, err := mgr.ListAllServers(ctx, registry.ListOptions{Query: query})
 	if err != nil {
@@ -620,9 +733,9 @@ func SearchTools(ctx context.Context, query string) ([]registry.RegistryEntry, e
 // InstallMCPServer installs an MCP server to the config file
 func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, error) {
 	// Get the server spec from registry
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	server, err := mgr.GetServer(ctx, serverName)
 	if err != nil || server == nil {
@@ -656,9 +769,9 @@ func InstallMCPServer(ctx context.Context, serverName string) (map[string]any, e
 
 // InstallToolFromRegistry installs a tool from the registry by name
 func InstallToolFromRegistry(ctx context.Context, toolName string) (map[string]any, error) {
-	factory := registry.NewFactory()
+
 	cfg := GetConfigFromContext(ctx)
-	mgr := factory.CreateStandardManager(ctx, cfg)
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	tool, err := mgr.GetServer(ctx, toolName)
 	if err != nil || tool == nil {
@@ -677,7 +790,6 @@ func InstallToolFromManifest(ctx context.Context, manifest string) (map[string]a
 	var manifestData []byte
 	var err error
 
-	// Check if it's a file path
 	if _, statErr := os.Stat(manifest); statErr == nil {
 		// It's a file, read it
 		manifestData, err = os.ReadFile(manifest)
@@ -703,14 +815,21 @@ func InstallToolFromManifest(ctx context.Context, manifest string) (map[string]a
 	// Convert to RegistryEntry format
 	var toolsToInstall []registry.RegistryEntry
 	for _, tool := range tools {
+		// Inline helper - used only here
+		getStr := func(key string) string {
+			if v, ok := tool[key].(string); ok {
+				return v
+			}
+			return ""
+		}
 		entry := registry.RegistryEntry{
 			Registry:    "local",
 			Type:        "tool",
-			Name:        getString(tool, "name"),
-			Description: getString(tool, "description"),
-			Kind:        getString(tool, "kind"),
-			Endpoint:    getString(tool, "endpoint"),
-			Method:      getString(tool, "method"),
+			Name:        getStr("name"),
+			Description: getStr("description"),
+			Kind:        getStr("kind"),
+			Endpoint:    getStr("endpoint"),
+			Method:      getStr("method"),
 		}
 
 		if params, ok := tool["parameters"].(map[string]any); ok {
@@ -795,14 +914,6 @@ func installToolsToLocalRegistry(ctx context.Context, tools []registry.RegistryE
 		"count":   installedCount,
 		"message": fmt.Sprintf("Installed %d tools successfully", installedCount),
 	}, nil
-}
-
-// getString is a helper to safely get string values from map
-func getString(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
 }
 
 // Context keys for storing dependencies

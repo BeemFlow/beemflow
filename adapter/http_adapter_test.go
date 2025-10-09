@@ -598,7 +598,10 @@ func TestHTTPAdapter_ManifestHeaders(t *testing.T) {
 	}
 
 	adapter := &HTTPAdapter{AdapterID: "test", ToolManifest: manifest}
-	headers := adapter.prepareManifestHeaders(context.Background(), map[string]any{})
+	headers, err := adapter.prepareManifestHeaders(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if headers["Authorization"] != "Bearer secret-token" {
 		t.Errorf("expected Authorization=Bearer secret-token, got %s", headers["Authorization"])
@@ -669,25 +672,25 @@ func TestHTTPAdapter_ResponseProcessing(t *testing.T) {
 // TestHTTPAdapter_SafeAssertions tests safe type assertion functions
 func TestHTTPAdapter_SafeAssertions(t *testing.T) {
 	// Test safeStringAssert
-	if result, ok := safeStringAssert("test"); !ok || result != "test" {
+	if result, ok := utils.SafeStringAssert("test"); !ok || result != "test" {
 		t.Errorf("expected (test, true), got (%s, %v)", result, ok)
 	}
-	if result, ok := safeStringAssert(123); ok || result != "" {
+	if result, ok := utils.SafeStringAssert(123); ok || result != "" {
 		t.Errorf("expected (\"\", false) for non-string, got (%s, %v)", result, ok)
 	}
-	if result, ok := safeStringAssert(nil); ok || result != "" {
+	if result, ok := utils.SafeStringAssert(nil); ok || result != "" {
 		t.Errorf("expected (\"\", false) for nil, got (%s, %v)", result, ok)
 	}
 
 	// Test safeMapAssert
 	testMap := map[string]any{"key": "value"}
-	if result, ok := safeMapAssert(testMap); !ok || result["key"] != "value" {
+	if result, ok := utils.SafeMapAssert(testMap); !ok || result["key"] != "value" {
 		t.Errorf("expected map with key=value, got %v, %v", result, ok)
 	}
-	if result, ok := safeMapAssert("not a map"); ok || len(result) != 0 {
+	if result, ok := utils.SafeMapAssert("not a map"); ok || len(result) != 0 {
 		t.Errorf("expected (empty map, false) for non-map, got (%v, %v)", result, ok)
 	}
-	if result, ok := safeMapAssert(nil); ok || len(result) != 0 {
+	if result, ok := utils.SafeMapAssert(nil); ok || len(result) != 0 {
 		t.Errorf("expected (empty map, false) for nil, got (%v, %v)", result, ok)
 	}
 }
@@ -787,7 +790,10 @@ func TestHTTPAdapter_PrepareManifestHeaders_ErrorPaths(t *testing.T) {
 		},
 	}
 
-	headers := adapter.prepareManifestHeaders(context.Background(), inputs)
+	headers, err := adapter.prepareManifestHeaders(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if headers["Authorization"] != "Bearer token" {
 		t.Errorf("expected Authorization header from manifest, got %v", headers["Authorization"])
@@ -798,7 +804,10 @@ func TestHTTPAdapter_PrepareManifestHeaders_ErrorPaths(t *testing.T) {
 
 	// Test with nil manifest headers
 	adapter.ToolManifest.Headers = nil
-	headers = adapter.prepareManifestHeaders(context.Background(), inputs)
+	headers, err = adapter.prepareManifestHeaders(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if headers["X-Custom"] != "custom-value" {
 		t.Errorf("expected X-Custom header from inputs, got %v", headers["X-Custom"])
 	}
@@ -1021,9 +1030,7 @@ func TestHTTPAdapter_ExecuteGenericRequest_EdgeCases(t *testing.T) {
 	}
 }
 
-// ============================================================================
 // OAUTH TESTS
-// ============================================================================
 
 // TestHTTPAdapter_ExpandValue_EnvironmentVariables tests environment variable expansion
 func TestHTTPAdapter_ExpandValue_EnvironmentVariables(t *testing.T) {
@@ -1083,7 +1090,11 @@ func TestHTTPAdapter_ExpandValue_EnvironmentVariables(t *testing.T) {
 			ctx := context.WithValue(context.Background(), storageContextKey, storage)
 
 			adapter := &HTTPAdapter{AdapterID: "test"}
-			result := adapter.expandValue(ctx, tt.value)
+			result, err := adapter.expandValue(ctx, tt.value)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
 
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)
@@ -1098,6 +1109,7 @@ func TestHTTPAdapter_ExpandValue_OAuth(t *testing.T) {
 		name         string
 		value        string
 		expected     string
+		expectError  bool
 		setupStorage func() storage.Storage
 	}{
 		{
@@ -1120,9 +1132,10 @@ func TestHTTPAdapter_ExpandValue_OAuth(t *testing.T) {
 			},
 		},
 		{
-			name:     "oauth token not found keeps original",
-			value:    "$oauth:nonexistent:integration",
-			expected: "$oauth:nonexistent:integration",
+			name:        "oauth token not found returns error",
+			value:       "$oauth:nonexistent:integration",
+			expected:    "",
+			expectError: true,
 			setupStorage: func() storage.Storage {
 				return storage.NewMemoryStorage()
 			},
@@ -1162,7 +1175,19 @@ func TestHTTPAdapter_ExpandValue_OAuth(t *testing.T) {
 			ctx := context.WithValue(context.Background(), storageContextKey, storage)
 
 			adapter := &HTTPAdapter{AdapterID: "test"}
-			result := adapter.expandValue(ctx, tt.value)
+			result, err := adapter.expandValue(ctx, tt.value)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
 
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)

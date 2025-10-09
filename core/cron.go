@@ -27,11 +27,6 @@ func ShellQuote(s string) string {
 	return "'" + escaped + "'"
 }
 
-// shellQuote is the internal version
-func shellQuote(s string) string {
-	return ShellQuote(s)
-}
-
 // CronManager handles system cron integration
 type CronManager struct {
 	serverURL  string
@@ -71,14 +66,14 @@ func (c *CronManager) SyncCronEntries(ctx context.Context) error {
 			if c.cronSecret != "" {
 				// Properly escape the secret in the header
 				curlCmd.WriteString(" -H ")
-				curlCmd.WriteString(shellQuote("Authorization: Bearer " + c.cronSecret))
+				curlCmd.WriteString(ShellQuote("Authorization: Bearer " + c.cronSecret))
 			}
 
 			// Build URL with proper escaping and URL encoding
 			encodedFlowName := url.PathEscape(flowName)
 			fullURL := fmt.Sprintf("%s/cron/%s", c.serverURL, encodedFlowName)
 			curlCmd.WriteString(" ")
-			curlCmd.WriteString(shellQuote(fullURL))
+			curlCmd.WriteString(ShellQuote(fullURL))
 			curlCmd.WriteString(" >/dev/null 2>&1")
 
 			// Create cron entry with proper spacing
@@ -187,7 +182,6 @@ func CheckAndExecuteCronFlows(ctx context.Context) (map[string]interface{}, erro
 			continue
 		}
 
-		// Check if flow has schedule.cron trigger
 		if !hasScheduleCronTrigger(&flow) {
 			continue
 		}
@@ -206,7 +200,6 @@ func CheckAndExecuteCronFlows(ctx context.Context) (map[string]interface{}, erro
 			continue
 		}
 
-		// Check if we should run now
 		// We check if the schedule matches within our check window
 		// System cron typically runs every 5 minutes, so we check a 5-minute window
 		scheduledTime := shouldRunNowWithTime(schedule, now, 5*time.Minute)
@@ -250,7 +243,6 @@ func shouldRunNowWithTime(schedule cron.Schedule, now time.Time, window time.Dur
 	// Get when it should next run after our check start time
 	nextRun := schedule.Next(checkFrom)
 
-	// Check if this scheduled time falls within our window
 	// The scheduled time must be:
 	// 1. After our check start time (checkFrom)
 	// 2. Before or at the current time (with 1 minute buffer for early triggers)

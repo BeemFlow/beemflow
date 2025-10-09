@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -17,33 +16,68 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// MCP argument types for operations framework
+// Note: Use string fields for JSON data to avoid MCP schema generation issues
+
+type MCPStartRunArgs struct {
+	FlowName string `json:"flowName" jsonschema:"required,description=Name of the flow to start"`
+	Event    string `json:"event" jsonschema:"description=JSON string containing event data"`
+}
+
+type MCPGetRunArgs struct {
+	RunID string `json:"runId" jsonschema:"required,description=ID of the run"`
+}
+
+type MCPGetFlowArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Name of the flow"`
+}
+
+type MCPValidateFlowArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Name of the flow to validate"`
+}
+
+type MCPGraphFlowArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Name of the flow to graph"`
+}
+
+type MCPFlowFileArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Name of the flow file"`
+}
+
+type MCPPublishEventArgs struct {
+	Topic   string `json:"topic" jsonschema:"required,description=Event topic"`
+	Payload string `json:"payload" jsonschema:"description=JSON string containing payload data"`
+}
+
+type MCPResumeRunArgs struct {
+	Token string `json:"token" jsonschema:"required,description=Resume token"`
+	Event string `json:"event" jsonschema:"description=JSON string containing event data"`
+}
+
+type MCPConvertOpenAPIExtendedArgs struct {
+	Spec string `json:"spec" jsonschema:"required,description=OpenAPI specification as JSON string"`
+}
+
+type MCPServeArgs struct {
+	Transport string `json:"transport" flag:"transport" description:"Transport mode: stdio or http" default:"stdio"`
+	Addr      string `json:"addr" flag:"addr" description:"HTTP server address (used with http transport)"`
+	Debug     bool   `json:"debug" flag:"debug" description:"Enable debug mode"`
+}
+
 // Global variable to control exit behavior (disabled during tests)
 var enableCLIExitCodes = true
 
-// DisableCLIExitCodes disables os.Exit calls for testing
-func DisableCLIExitCodes() {
-	enableCLIExitCodes = false
-}
-
-// EnableCLIExitCodes enables os.Exit calls for production
-func EnableCLIExitCodes() {
-	enableCLIExitCodes = true
-}
-
 // GenerateHTTPHandlers creates HTTP handlers for all operations
 func GenerateHTTPHandlers(mux *http.ServeMux) {
-	GenerateHTTPHandlersForOperations(mux, GetAllOperations())
-}
+	// Inline the call - no need for separate function that just calls another
+	operations := GetAllOperations()
 
-// GenerateHTTPHandlersForOperations creates HTTP handlers for specified operations
-func GenerateHTTPHandlersForOperations(mux *http.ServeMux, operations map[string]*OperationDefinition) {
 	// Group operations by HTTP path to handle multiple methods on same path
 	pathOperations := make(map[string][]*OperationDefinition)
 	for _, op := range operations {
 		if op.SkipHTTP {
 			continue
 		}
-		// Skip operations with empty HTTPPath to prevent invalid patterns
 		if op.HTTPPath == "" {
 			continue
 		}
@@ -180,7 +214,6 @@ func GenerateMCPTools() []mcp.ToolRegistration {
 		// Create tool registration with proper handler
 		handler := generateMCPHandler(op)
 
-		// Skip operations that don't have supported handlers
 		if handler == nil {
 			continue
 		}
@@ -328,7 +361,6 @@ func generateMCPHandler(op *OperationDefinition) any {
 		}
 
 	default:
-		// Skip unsupported types
 		return nil
 	}
 }
@@ -422,7 +454,7 @@ func generateCLICommand(op *OperationDefinition) *cobra.Command {
 				// Handle specific error types for exit codes (only when not testing)
 				errStr := err.Error()
 				switch {
-				case strings.Contains(errStr, "YAML parse error"):
+				case strings.Contains(errStr, "CUE parse error"):
 					os.Exit(1)
 				case strings.Contains(errStr, "schema validation error"):
 					os.Exit(2)
@@ -471,7 +503,7 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 				// Handle specific error types for exit codes (only when not testing)
 				errStr := err.Error()
 				switch {
-				case strings.Contains(errStr, "YAML parse error"):
+				case strings.Contains(errStr, "CUE parse error"):
 					os.Exit(1)
 				case strings.Contains(errStr, "schema validation error"):
 					os.Exit(2)
@@ -499,17 +531,14 @@ func generateCLISubcommand(op *OperationDefinition) *cobra.Command {
 
 // addCLIFlags adds flags to a CLI command based on the args type
 func addCLIFlags(cmd *cobra.Command, argsType reflect.Type) {
-	// Skip if no args type provided
 	if argsType == nil {
 		return
 	}
 
-	// Skip if not a struct type
 	if argsType.Kind() != reflect.Struct {
 		return
 	}
 
-	// Skip empty structs
 	if argsType.NumField() == 0 {
 		return
 	}
@@ -703,27 +732,6 @@ func outputCLIResult(result any) error {
 	return nil
 }
 
-// HandleCLIFileArgs handles CLI commands that can take file input or stdin
-func HandleCLIFileArgs(cmd *cobra.Command, args []string, flagName string) ([]byte, error) {
-	// Check if there's a positional argument (file path)
-	if len(args) > 0 {
-		return os.ReadFile(args[0])
-	}
-
-	// Check if there's a flag value
-	if flagValue, err := cmd.Flags().GetString(flagName); err == nil && flagValue != "" {
-		// If it looks like a file path, read it
-		if _, err := os.Stat(flagValue); err == nil {
-			return os.ReadFile(flagValue)
-		}
-		// Otherwise, treat as direct content
-		return []byte(flagValue), nil
-	}
-
-	// Fall back to stdin
-	return io.ReadAll(os.Stdin)
-}
-
 // generateCombinedHTTPHandler creates a combined HTTP handler for multiple operations on the same path
 func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -757,13 +765,10 @@ func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 		// Inject dependencies into context
 		ctx := r.Context()
 
-		// Get config and inject into context
+		// Get config and inject into context (single call, reuse)
 		if cfg, err := GetConfig(); err == nil && cfg != nil {
 			ctx = WithConfig(ctx, cfg)
-		}
-
-		// Get storage and inject into context
-		if cfg, err := GetConfig(); err == nil && cfg != nil {
+			// While we have config, also inject storage
 			if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
 				ctx = WithStore(ctx, store)
 			}
@@ -783,7 +788,3 @@ func generateCombinedHTTPHandler(ops []*OperationDefinition) http.HandlerFunc {
 		}
 	}
 }
-
-// ============================================================================
-// END OF FILE - Simplified by removing unnecessary "Unified" wrappers
-// ============================================================================

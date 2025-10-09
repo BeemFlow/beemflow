@@ -15,7 +15,6 @@ import (
 	"github.com/beemflow/beemflow/adapter"
 	"github.com/beemflow/beemflow/constants"
 	"github.com/beemflow/beemflow/docs"
-	"github.com/beemflow/beemflow/dsl"
 	"github.com/beemflow/beemflow/graph"
 	"github.com/beemflow/beemflow/mcp"
 	"github.com/beemflow/beemflow/registry"
@@ -125,7 +124,7 @@ func GetAllOperations() map[string]*OperationDefinition {
 	return operationRegistry
 }
 
-// GetOperationsByGroups returns operations filtered by the specified groups
+// GetOperationsByGroups returns operations filtered by the specified groups (for tests)
 func GetOperationsByGroups(groups []string) []*OperationDefinition {
 	if len(groups) == 0 {
 		// Return all operations as slice
@@ -150,7 +149,7 @@ func GetOperationsByGroups(groups []string) []*OperationDefinition {
 	return filtered
 }
 
-// GetOperationsMapByGroups returns operations filtered by the specified groups as a map
+// GetOperationsMapByGroups returns operations filtered by the specified groups as a map (for tests)
 func GetOperationsMapByGroups(groups []string) map[string]*OperationDefinition {
 	if len(groups) == 0 {
 		return operationRegistry
@@ -170,49 +169,10 @@ func GetOperationsMapByGroups(groups []string) map[string]*OperationDefinition {
 	return filtered
 }
 
-// Handler functions to reduce cyclomatic complexity of init()
-func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
-	name, _ := cmd.Flags().GetString("name")
-	file, _ := cmd.Flags().GetString("file")
-
-	// Check that exactly one input method is specified
-	if name == "" && file == "" {
-		return fmt.Errorf("either --name or --file must be specified")
-	}
-	if name != "" && file != "" {
-		return fmt.Errorf("only one of --name or --file can be specified")
-	}
-
-	var err error
-	if file != "" {
-		// Parse and validate file directly
-		flow, parseErr := dsl.Parse(file)
-		if parseErr != nil {
-			utils.Error("YAML parse error: %v\n", parseErr)
-			return fmt.Errorf("YAML parse error: %w", parseErr)
-		}
-		err = dsl.Validate(flow)
-		if err != nil {
-			utils.Error("Schema validation error: %v\n", err)
-			return fmt.Errorf("schema validation error: %w", err)
-		}
-	} else {
-		// Use flow name service
-		err = ValidateFlow(cmd.Context(), name)
-		if err != nil {
-			utils.Error("Validation error: %v\n", err)
-			return fmt.Errorf("validation error: %w", err)
-		}
-	}
-
-	utils.User("Validation OK: flow is valid!")
-	return nil
-}
-
+// validateFlowHandler - unified handler for both CLI and API
 func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*ValidateFlowArgs)
 
-	// Check that exactly one input method is specified
 	if a.Name == "" && a.File == "" {
 		return nil, fmt.Errorf("either name or file must be specified")
 	}
@@ -220,20 +180,13 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("only one of name or file can be specified")
 	}
 
-	var err error
 	if a.File != "" {
-		// Parse and validate file directly
-		flow, parseErr := dsl.Parse(a.File)
-		if parseErr != nil {
-			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
-		}
-		err = dsl.Validate(flow)
+		_, err := ParseFlowFile(a.File)
 		if err != nil {
-			return nil, fmt.Errorf("schema validation error: %w", err)
+			return nil, fmt.Errorf("CUE parse error: %w", err)
 		}
 	} else {
-		err = ValidateFlow(ctx, a.Name)
-		if err != nil {
+		if err := ValidateFlow(ctx, a.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -241,56 +194,27 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	return map[string]any{"status": "valid", "message": "Validation OK: flow is valid!"}, nil
 }
 
-func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
+func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	file, _ := cmd.Flags().GetString("file")
-	outPath, _ := cmd.Flags().GetString("output")
 
-	// Check that exactly one input method is specified
-	if name == "" && file == "" {
-		return fmt.Errorf("either --name or --file must be specified")
-	}
-	if name != "" && file != "" {
-		return fmt.Errorf("only one of --name or --file can be specified")
-	}
-
-	var diagram string
-	var err error
-
-	if file != "" {
-		// Parse file directly and generate diagram
-		flow, parseErr := dsl.Parse(file)
-		if parseErr != nil {
-			utils.Error("YAML parse error: %v\n", parseErr)
-			return fmt.Errorf("YAML parse error: %w", parseErr)
-		}
-		diagram, err = graph.ExportMermaid(flow)
-	} else {
-		// Use flow name service
-		diagram, err = GraphFlow(cmd.Context(), name)
-	}
-
+	result, err := validateFlowHandler(cmd.Context(), &ValidateFlowArgs{Name: name, File: file})
 	if err != nil {
-		utils.Error("Graph export error: %v\n", err)
-		return fmt.Errorf("graph export error: %w", err)
+		return err
 	}
 
-	if outPath != "" {
-		if err := os.WriteFile(outPath, []byte(diagram), 0644); err != nil {
-			utils.Error("Failed to write graph to %s: %v\n", outPath, err)
-			return fmt.Errorf("failed to write graph to %s: %w", outPath, err)
+	if msg, ok := result.(map[string]any); ok {
+		if message, ok := msg["message"].(string); ok {
+			utils.User("%s", message)
 		}
-		utils.User("Graph written to %s", outPath)
-	} else {
-		utils.Info("%s", diagram)
 	}
 	return nil
 }
 
+// graphFlowHandler - unified handler for both CLI and API
 func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*GraphFlowArgs)
 
-	// Check that exactly one input method is specified
 	if a.Name == "" && a.File == "" {
 		return nil, fmt.Errorf("either name or file must be specified")
 	}
@@ -302,10 +226,9 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	var err error
 
 	if a.File != "" {
-		// Parse file directly and generate diagram
-		flow, parseErr := dsl.Parse(a.File)
+		flow, parseErr := ParseFlowFile(a.File)
 		if parseErr != nil {
-			return nil, fmt.Errorf("YAML parse error: %w", parseErr)
+			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
 		}
 		diagram, err = graph.ExportMermaid(flow)
 		if err != nil {
@@ -321,36 +244,52 @@ func graphFlowHandler(ctx context.Context, args any) (any, error) {
 	return map[string]any{"diagram": diagram}, nil
 }
 
+func graphFlowCLIHandler(cmd *cobra.Command, args []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("file")
+	outPath, _ := cmd.Flags().GetString("output")
+
+	result, err := graphFlowHandler(cmd.Context(), &GraphFlowArgs{Name: name, File: file})
+	if err != nil {
+		return err
+	}
+
+	diagram := result.(map[string]any)["diagram"].(string)
+	if outPath != "" {
+		if err := os.WriteFile(outPath, []byte(diagram), 0644); err != nil {
+			return fmt.Errorf("failed to write graph to %s: %w", outPath, err)
+		}
+		utils.User("Graph written to %s", outPath)
+	} else {
+		utils.Info("%s", diagram)
+	}
+	return nil
+}
+
+// lintFlowHandler - unified handler for both CLI and API
+func lintFlowHandler(ctx context.Context, args any) (any, error) {
+	a := args.(*FlowFileArgs)
+	_, err := ParseFlowFile(a.File)
+	if err != nil {
+		return nil, fmt.Errorf("CUE parse error: %w", err)
+	}
+	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
+}
+
 func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("exactly one file argument required")
 	}
-	file := args[0]
-	flow, err := dsl.Parse(file)
+	result, err := lintFlowHandler(cmd.Context(), &FlowFileArgs{File: args[0]})
 	if err != nil {
-		utils.Error("YAML parse error: %v\n", err)
-		return fmt.Errorf("YAML parse error: %w", err)
+		return err
 	}
-	err = dsl.Validate(flow)
-	if err != nil {
-		utils.Error("Schema validation error: %v\n", err)
-		return fmt.Errorf("schema validation error: %w", err)
+	if msg, ok := result.(map[string]any); ok {
+		if message, ok := msg["message"].(string); ok {
+			utils.User("%s", message)
+		}
 	}
-	utils.User("Lint OK: flow is valid!")
 	return nil
-}
-
-func lintFlowHandler(ctx context.Context, args any) (any, error) {
-	a := args.(*FlowFileArgs)
-	flow, err := dsl.Parse(a.File)
-	if err != nil {
-		return nil, fmt.Errorf("YAML parse error: %w", err)
-	}
-	err = dsl.Validate(flow)
-	if err != nil {
-		return nil, fmt.Errorf("schema validation error: %w", err)
-	}
-	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
 }
 
 // handleInstallToolCLI handles the CLI command for tool installation
@@ -697,12 +636,12 @@ func init() {
 	RegisterOperation(&OperationDefinition{
 		ID:          "lintFlow",
 		Name:        "Lint Flow",
-		Description: "Lint a flow file (YAML parse + schema validate)",
+		Description: "Lint a flow file (CUE parse + schema validate)",
 		Group:       "flows",
 		HTTPMethod:  http.MethodPost,
 		HTTPPath:    "/flows/lint",
 		CLIUse:      "lint [file]",
-		CLIShort:    "Lint a flow file (YAML parse + schema validate)",
+		CLIShort:    "Lint a flow file (CUE parse + schema validate)",
 		MCPName:     "beemflow_lint_flow",
 		ArgsType:    reflect.TypeOf(FlowFileArgs{}),
 		CLIHandler:  lintFlowCLIHandler,
@@ -752,7 +691,6 @@ func init() {
 				return nil, fmt.Errorf("OpenAPI spec is required")
 			}
 
-			// Check if it's a file path by trying to stat it
 			if _, err := os.Stat(openapiContent); err == nil {
 				// It's a valid file path, read the contents
 				data, err := os.ReadFile(openapiContent)
@@ -804,9 +742,9 @@ func init() {
 			ctx := context.Background()
 
 			// Use registry manager to get full registry entry info
-			factory := registry.NewFactory()
+
 			cfg := GetConfigFromContext(ctx)
-			mgr := factory.CreateStandardManager(ctx, cfg)
+			mgr := registry.NewStandardManager(ctx, cfg)
 
 			entries, err := mgr.ListAllServers(ctx, registry.ListOptions{})
 			if err != nil {
@@ -818,7 +756,6 @@ func init() {
 
 			// Print each tool in table format
 			for _, entry := range entries {
-				// Only show tools, not MCP servers
 				if entry.Type != "tool" {
 					continue
 				}
@@ -893,8 +830,8 @@ func init() {
 			}
 
 			// List servers from all registries
-			factory := registry.NewFactory()
-			manager := factory.CreateStandardManager(ctx, cfg)
+
+			manager := registry.NewStandardManager(ctx, cfg)
 			allEntries, err := manager.ListAllServers(ctx, registry.ListOptions{})
 			if err == nil {
 				for _, entry := range allEntries {
@@ -985,13 +922,27 @@ func init() {
 		SkipMCP:     true, // Can't expose serve via MCP
 		ArgsType:    reflect.TypeOf(MCPServeArgs{}),
 		CLIHandler: func(cmd *cobra.Command, args []string) error {
-			stdio, _ := cmd.Flags().GetBool("stdio")
-			addr, _ := cmd.Flags().GetString("addr")
-			debugFlag, _ := cmd.Flags().GetBool("debug")
+			// Get base configuration from environment
+			config := mcp.GetServerConfig()
+
+			// Override with explicit CLI flags if provided
+			if cmd.Flags().Changed("transport") {
+				transport, _ := cmd.Flags().GetString("transport")
+				config.Transport = transport
+			}
+
+			if cmd.Flags().Changed("addr") {
+				addr, _ := cmd.Flags().GetString("addr")
+				config.Address = addr
+			}
+
+			if cmd.Flags().Changed("debug") {
+				config.Debug = true
+			}
 
 			tools := GenerateMCPTools()
-			utils.Info("Starting MCP server with %d tools (stdio=%v, addr=%s)", len(tools), stdio, addr)
-			return mcp.Serve(debugFlag, stdio, addr, tools)
+			utils.Info("Starting MCP server with %d tools (%s mode on %s)", len(tools), config.Transport, config.Address)
+			return mcp.ServeWithConfig(config, tools)
 		},
 	})
 
@@ -1172,7 +1123,6 @@ func init() {
 				return
 			}
 
-			// Check if it has schedule.cron trigger
 			hasCron := false
 			switch on := flow.On.(type) {
 			case string:
@@ -1256,7 +1206,3 @@ type ConvertOpenAPIExtendedArgs struct {
 	BaseURL string `json:"base_url" flag:"base-url" description:"Base URL override"`
 	Output  string `json:"-" flag:"output" description:"Output file path (default: stdout)"`
 }
-
-// ============================================================================
-// END OF FILE
-// ============================================================================

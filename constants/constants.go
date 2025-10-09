@@ -1,5 +1,10 @@
 package constants
 
+import (
+	"errors"
+	"fmt"
+)
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -86,7 +91,7 @@ const (
 
 // Command descriptions
 const (
-	DescRunFlow       = "Run a flow from a YAML file"
+	DescRunFlow       = "Run a flow from a CUE file"
 	DescMCPCommands   = "MCP server management commands"
 	DescToolsCommands = "Tool manifest management commands"
 	DescSearchServers = "Search for MCP servers in the registry"
@@ -167,7 +172,6 @@ const (
 const (
 	ContentTypeJSON = "application/json"
 	ContentTypeText = "text/plain"
-	ContentTypeYAML = "application/x-yaml"
 	ContentTypeForm = "application/x-www-form-urlencoded"
 )
 
@@ -203,10 +207,19 @@ const (
 	MCPMissingParam = "missing required parameter: %s"
 )
 
-// MCP Defaults
+// Environment Variables
 const (
-	DefaultMCPAddr     = "localhost:3001"
-	DefaultMCPPageSize = 50
+	EnvHTTPServerPort = "BEEMFLOW_HTTP_PORT"
+	EnvMCPServerPort  = "BEEMFLOW_MCP_PORT"
+	EnvMCPTransport   = "BEEMFLOW_MCP_TRANSPORT" // "stdio" or "http"
+)
+
+// Server Configuration Defaults
+const (
+	DefaultHTTPServerPort = 3330
+	DefaultMCPServerPort  = 3331
+	DefaultMCPTransport   = "stdio"
+	DefaultServerHost     = "localhost"
 )
 
 // ============================================================================
@@ -220,24 +233,12 @@ const (
 	DefaultTimeoutSec   = 30
 )
 
-// Template Field Names
-const (
-	TemplateFieldEvent   = "event"
-	TemplateFieldVars    = "vars"
-	TemplateFieldOutputs = "outputs"
-	TemplateFieldSecrets = "secrets"
-	TemplateFieldSteps   = "steps"
-	TemplateFieldEnv     = "env"
-)
-
 // Engine error messages
 const (
-	ErrAwaitEventPause         = "step is waiting for event"
 	ErrSaveRunFailed           = "failed to save run"
 	ErrFailedToPersistStep     = "failed to persist step"
 	ErrAwaitEventMissingToken  = "await_event step missing token in match"
 	ErrFailedToRenderToken     = "failed to render token: %v"
-	ErrStepWaitingForEvent     = "step '%s' is waiting for event"
 	ErrFailedToDeletePausedRun = "failed to delete paused run"
 	// New engine error messages
 	ErrMCPAdapterNotRegistered  = "MCPAdapter not registered"
@@ -248,7 +249,35 @@ const (
 	ErrTemplateErrorStepID      = "template error in step ID %s: %w"
 	ErrForeachNotList           = "foreach expression did not evaluate to a list, got: %T"
 	ErrTemplateErrorForeach     = "template error in foreach expression: %w"
+	ErrTemplateResolutionFailed = "template resolution failed for: %s"
 )
+
+// AwaitEventPauseError is a sentinel error type for await_event pauses
+type AwaitEventPauseError struct {
+	StepID string
+	Token  string
+}
+
+func (e *AwaitEventPauseError) Error() string {
+	return fmt.Sprintf("step '%s' is waiting for event (token: %s)", e.StepID, e.Token)
+}
+
+// NewAwaitEventPauseError creates a new AwaitEventPauseError
+func NewAwaitEventPauseError(stepID, token string) error {
+	return &AwaitEventPauseError{
+		StepID: stepID,
+		Token:  token,
+	}
+}
+
+// IsAwaitEventPause checks if an error is an await_event pause
+func IsAwaitEventPause(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pauseErr *AwaitEventPauseError
+	return errors.As(err, &pauseErr)
+}
 
 // Engine constants
 const (
@@ -386,28 +415,19 @@ const (
 
 // Error patterns and identifiers
 const (
-	ErrorAwaitEventPause = "await_event pause"
-	RunIDKey             = "run_id"
-	MCPServerKind        = "mcp_server"
-	ToolType             = "tool"
+	RunIDKey      = "run_id"
+	MCPServerKind = "mcp_server"
+	ToolType      = "tool"
 )
 
 // Flow file extensions
 const (
-	FlowFileExtension = ".flow.yaml"
+	FlowFileExtension = ".flow.cue"
 )
 
 // ============================================================================
 // ENGINE TEMPLATE CONSTANTS
 // ============================================================================
-
-// Template syntax markers
-const (
-	TemplateOpenDelim    = "{{"
-	TemplateCloseDelim   = "}}"
-	TemplateControlOpen  = "{%"
-	TemplateControlClose = "%}"
-)
 
 // Paused run map keys
 const (

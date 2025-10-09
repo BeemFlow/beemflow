@@ -16,7 +16,7 @@ import (
 	"github.com/beemflow/beemflow/blob"
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
-	"github.com/beemflow/beemflow/dsl"
+	cuepkg "github.com/beemflow/beemflow/cue"
 	"github.com/beemflow/beemflow/event"
 	"github.com/beemflow/beemflow/model"
 	"github.com/beemflow/beemflow/registry"
@@ -85,7 +85,7 @@ type StepResult struct {
 	Error   error
 }
 
-// Template data structure for type safety
+// Template data structure for type safety (simplified)
 type TemplateData struct {
 	Event   EventData
 	Vars    map[string]any
@@ -105,6 +105,11 @@ type RunsAccess struct {
 
 // Previous returns outputs from the most recent previous run of the same workflow
 func (r *RunsAccess) Previous() map[string]any {
+	if r.storage == nil {
+		utils.Warn("RunsAccess storage is nil, returning empty outputs")
+		return map[string]any{}
+	}
+
 	runs, err := r.storage.ListRuns(r.ctx)
 	if err != nil || len(runs) == 0 {
 		return map[string]any{}
@@ -112,17 +117,14 @@ func (r *RunsAccess) Previous() map[string]any {
 
 	// Find the most recent successful run from the same workflow
 	for _, run := range runs {
-		// Only consider runs from the same workflow
 		if run.FlowName != r.flowName {
 			continue
 		}
 
-		// Skip the current run
 		if r.currentRunID != uuid.Nil && run.ID == r.currentRunID {
 			continue
 		}
 
-		// Only return successful runs
 		if run.Status != model.RunSucceeded {
 			continue
 		}
@@ -155,10 +157,22 @@ func (r *RunsAccess) Previous() map[string]any {
 // validIdentifierRegex matches valid Go-style identifiers
 var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// Engine is the core runtime for executing BeemFlow flows. It manages adapters, templating, event bus, and in-memory state.
+// ExecutionMetrics tracks performance and usage metrics
+type ExecutionMetrics struct {
+	TotalExecutions      int64
+	SuccessfulExecutions int64
+	FailedExecutions     int64
+	PausedExecutions     int64
+	TotalExecutionTime   time.Duration
+	AverageExecutionTime time.Duration
+	CacheHits            int64
+	CacheMisses          int64
+	LastExecutionTime    time.Time
+}
+
+// Engine is the core runtime for executing BeemFlow flows. It manages adapters, event bus, and execution state.
 type Engine struct {
 	Adapters  *adapter.Registry
-	Templater *dsl.Templater
 	EventBus  event.EventBus
 	BlobStore blob.BlobStore
 	Storage   storage.Storage
@@ -170,6 +184,9 @@ type Engine struct {
 	// Current execution context (set during Execute)
 	currentFlow  *model.Flow
 	currentRunID uuid.UUID
+	// Execution metrics for monitoring and performance analysis
+	metrics      ExecutionMetrics
+	metricsMutex sync.RWMutex
 	// NOTE: Storage, blob, eventbus, and cron are pluggable; in-memory is the default for now.
 	// Call Close() to clean up resources (e.g., MCPAdapter subprocesses) when done.
 }
@@ -206,12 +223,12 @@ func NewDefaultAdapterRegistry(ctx context.Context) *adapter.Registry {
 
 // loadRegistryTools loads tools from all standard registries using the factory
 func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
-	// Load config to get custom registry configuration
+	// Load config to get custom registry configuration (ignore errors, will use defaults)
 	cfg, _ := config.LoadConfig(constants.ConfigFileName)
 
 	// Create standard registry manager using the factory
-	factory := registry.NewFactory()
-	mgr := factory.CreateStandardManager(ctx, cfg)
+
+	mgr := registry.NewStandardManager(ctx, cfg)
 
 	// Load all tools and register HTTP adapters
 	if tools, err := mgr.ListAllServers(ctx, registry.ListOptions{}); err == nil {
@@ -236,30 +253,15 @@ func loadRegistryTools(ctx context.Context, reg *adapter.Registry) {
 	}
 }
 
-// NewEngineWithBlobStore creates a new Engine with a custom BlobStore.
-func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engine {
-	return &Engine{
-		Adapters:         NewDefaultAdapterRegistry(ctx),
-		Templater:        dsl.NewTemplater(),
-		EventBus:         event.NewInProcEventBus(),
-		BlobStore:        blobStore,
-		waiting:          make(map[string]*PausedRun),
-		completedOutputs: make(map[string]map[string]any),
-		Storage:          storage.NewMemoryStorage(),
-	}
-}
-
 // NewEngine creates a new Engine with all dependencies injected.
 func NewEngine(
 	adapters *adapter.Registry,
-	templater *dsl.Templater,
 	eventBus event.EventBus,
 	blobStore blob.BlobStore,
 	storage storage.Storage,
 ) *Engine {
 	return &Engine{
 		Adapters:         adapters,
-		Templater:        templater,
 		EventBus:         eventBus,
 		BlobStore:        blobStore,
 		Storage:          storage,
@@ -274,18 +276,32 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 		return nil, nil
 	}
 
+	startTime := time.Now()
+	e.updateMetrics(func(m *ExecutionMetrics) {
+		m.TotalExecutions++
+		m.LastExecutionTime = startTime
+	})
+
 	// Initialize outputs and handle empty flow as no-op
 	outputs := make(map[string]any)
 	if len(flow.Steps) == 0 {
+		utils.Info("Flow %s completed: no steps to execute", flow.Name)
+		e.updateMetrics(func(m *ExecutionMetrics) {
+			m.SuccessfulExecutions++
+			m.TotalExecutionTime += time.Since(startTime)
+			m.AverageExecutionTime = m.TotalExecutionTime / time.Duration(m.TotalExecutions)
+		})
 		return outputs, nil
 	}
 
 	// Setup execution context
 	stepCtx, runID := e.setupExecutionContext(ctx, flow, event)
 
-	// Check if this is a duplicate run
+	utils.Info("Starting flow execution: %s (run_id: %s)", flow.Name, runID)
+
 	if runID == uuid.Nil {
-		// Duplicate detected - return empty outputs and no error to signal successful deduplication
+		utils.Info("Duplicate run detected for flow %s, skipping execution", flow.Name)
+		e.updateMetrics(func(m *ExecutionMetrics) { m.SuccessfulExecutions++ })
 		return map[string]any{}, nil
 	}
 
@@ -294,6 +310,8 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 	e.currentFlow = flow
 	e.currentRunID = runID
 	e.mu.Unlock()
+
+	utils.Info("Executing flow %s with %d steps", flow.Name, len(flow.Steps))
 
 	// Execute the flow steps
 	outputs, err := e.executeStepsWithPersistence(ctx, flow, stepCtx, 0, runID)
@@ -304,6 +322,10 @@ func (e *Engine) Execute(ctx context.Context, flow *model.Flow, event map[string
 
 // setupExecutionContext prepares the execution environment
 func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, event map[string]any) (*StepContext, uuid.UUID) {
+	if e.Storage == nil {
+		utils.Warn("Storage is nil in setupExecutionContext, continuing without persistence")
+	}
+
 	// Collect env secrets and merge with event-supplied secrets
 	secretsMap := e.collectSecrets(event)
 
@@ -313,30 +335,32 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 	// Create deterministic run ID based on flow name, event data, and time window
 	runID := generateDeterministicRunID(flow.Name, event)
 
-	// Check if this run already exists (deduplication)
-	existingRun, err := e.Storage.GetRun(ctx, runID)
-	if err == nil && existingRun != nil {
-		// Run already exists, check if it's recent (within 1 minute)
-		if time.Since(existingRun.StartedAt) < 1*time.Minute {
-			// This is a duplicate run within the deduplication window
-			utils.Info("Duplicate run detected for %s, skipping (existing run: %s)", flow.Name, existingRun.ID)
-			return stepCtx, uuid.Nil // Return nil ID to signal duplicate
+	// Guard against nil storage
+	if e.Storage != nil {
+		existingRun, err := e.Storage.GetRun(ctx, runID)
+		if err == nil && existingRun != nil {
+			// Run already exists, check if it's recent (within 1 minute)
+			if time.Since(existingRun.StartedAt) < 1*time.Minute {
+				// This is a duplicate run within the deduplication window
+				utils.Info("Duplicate run detected for %s, skipping (existing run: %s)", flow.Name, existingRun.ID)
+				return stepCtx, uuid.Nil // Return nil ID to signal duplicate
+			}
+			// Older run with same ID, generate a new unique ID
+			runID = uuid.New()
 		}
-		// Older run with same ID, generate a new unique ID
-		runID = uuid.New()
-	}
 
-	run := &model.Run{
-		ID:        runID,
-		FlowName:  flow.Name,
-		Event:     event,
-		Vars:      flow.Vars,
-		Status:    model.RunRunning,
-		StartedAt: time.Now(),
-	}
+		run := &model.Run{
+			ID:        runID,
+			FlowName:  flow.Name,
+			Event:     event,
+			Vars:      flow.Vars,
+			Status:    model.RunRunning,
+			StartedAt: time.Now(),
+		}
 
-	if err := e.Storage.SaveRun(ctx, run); err != nil {
-		utils.ErrorCtx(ctx, "SaveRun failed: %v", "error", err)
+		if err := e.Storage.SaveRun(ctx, run); err != nil {
+			utils.ErrorCtx(ctx, "SaveRun failed: %v", "error", err)
+		}
 	}
 
 	return stepCtx, runID
@@ -344,14 +368,34 @@ func (e *Engine) setupExecutionContext(ctx context.Context, flow *model.Flow, ev
 
 // finalizeExecution handles completion, error cases, and catch blocks
 func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event map[string]any, outputs map[string]any, err error, runID uuid.UUID) (map[string]any, error) {
+	// Determine final status and update metrics
+	executionTime := time.Since(e.metrics.LastExecutionTime)
+	e.updateMetrics(func(m *ExecutionMetrics) {
+		if err != nil {
+			if constants.IsAwaitEventPause(err) {
+				m.PausedExecutions++
+			} else {
+				m.FailedExecutions++
+			}
+		} else {
+			m.SuccessfulExecutions++
+		}
+		m.TotalExecutionTime += executionTime
+		m.AverageExecutionTime = m.TotalExecutionTime / time.Duration(m.TotalExecutions)
+	})
+
 	// Determine final status
 	status := model.RunSucceeded
 	if err != nil {
-		if strings.Contains(err.Error(), constants.ErrAwaitEventPause) {
+		if constants.IsAwaitEventPause(err) {
 			status = model.RunWaiting
+			utils.Info("Flow %s paused waiting for event", flow.Name)
 		} else {
 			status = model.RunFailed
+			utils.Error("Flow %s failed: %v", flow.Name, err)
 		}
+	} else {
+		utils.Info("Flow %s completed successfully in %v", flow.Name, executionTime)
 	}
 
 	// Update final run status
@@ -371,6 +415,11 @@ func (e *Engine) finalizeExecution(ctx context.Context, flow *model.Flow, event 
 	// Handle catch blocks if there was an error
 	if err != nil && len(flow.Catch) > 0 {
 		return e.executeCatchBlocks(ctx, flow, event, err)
+	}
+
+	// For paused flows, return outputs without error
+	if status == model.RunWaiting {
+		return outputs, nil
 	}
 
 	return outputs, err
@@ -421,21 +470,109 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
+// topologicalSort performs topological sorting using Kahn's algorithm
+// Returns execution order or error if circular dependency detected
+func topologicalSort(steps []model.Step) ([]string, error) {
+	if len(steps) == 0 {
+		return []string{}, nil
+	}
+
+	// Build adjacency list and in-degree map
+	graph := make(map[string][]string)      // step -> dependents
+	inDegree := make(map[string]int)        // step -> number of dependencies
+	stepMap := make(map[string]*model.Step) // step ID -> step
+
+	// Initialize
+	for i := range steps {
+		step := &steps[i]
+		if step.ID == "" {
+			return nil, fmt.Errorf("step at index %d has empty ID", i)
+		}
+		stepMap[step.ID] = step
+		inDegree[step.ID] = 0
+		graph[step.ID] = []string{}
+	}
+
+	// Build graph and count in-degrees
+	for i := range steps {
+		step := &steps[i]
+		for _, dep := range step.DependsOn {
+			// Validate dependency exists
+			if _, exists := stepMap[dep]; !exists {
+				return nil, fmt.Errorf("step '%s' depends on non-existent step '%s'", step.ID, dep)
+			}
+			graph[dep] = append(graph[dep], step.ID)
+			inDegree[step.ID]++
+		}
+	}
+
+	// Kahn's algorithm: start with nodes that have no dependencies
+	queue := []string{}
+	for id, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, id)
+		}
+	}
+
+	// Process queue
+	result := []string{}
+	for len(queue) > 0 {
+		// Pop from queue
+		current := queue[0]
+		queue = queue[1:]
+		result = append(result, current)
+
+		// Reduce in-degree for dependents
+		for _, dependent := range graph[current] {
+			inDegree[dependent]--
+			if inDegree[dependent] == 0 {
+				queue = append(queue, dependent)
+			}
+		}
+	}
+
+	// Check for cycles
+	if len(result) != len(steps) {
+		return nil, fmt.Errorf("circular dependency detected: processed %d steps, expected %d", len(result), len(steps))
+	}
+
+	return result, nil
+}
+
 // executeStepsWithPersistence executes steps, persisting each step after execution.
+// Steps are executed in dependency order if depends_on is used, otherwise in declaration order.
 func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Flow, stepCtx *StepContext, startIdx int, runID uuid.UUID) (map[string]any, error) {
 	if runID == uuid.Nil {
 		runID = runIDFromContext(ctx)
 	}
 
-	// Execute steps sequentially from startIdx
-	// Note: Future enhancement could add dependency mapping for more sophisticated
-	// parallel execution patterns
-	for i := startIdx; i < len(flow.Steps); i++ {
+	// Build step map for quick lookup
+	stepMap := make(map[string]*model.Step)
+	stepIndices := make(map[string]int)
+	for i := range flow.Steps {
 		step := &flow.Steps[i]
+		stepMap[step.ID] = step
+		stepIndices[step.ID] = i
+	}
+
+	// Determine execution order (respecting dependencies)
+	executionOrder, err := e.determineExecutionOrder(flow.Steps, startIdx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine execution order: %w", err)
+	}
+
+	// Execute steps in dependency order
+	for _, stepID := range executionOrder {
+		step, exists := stepMap[stepID]
+		if !exists {
+			continue // Skip if step not found (shouldn't happen)
+		}
+
+		stepIdx := stepIndices[stepID]
 
 		// Handle await_event steps
 		if step.AwaitEvent != nil {
-			return e.handleAwaitEventStep(ctx, step, flow, stepCtx, i, runID)
+			return e.handleAwaitEventStep(ctx, step, flow, stepCtx, stepIdx, runID)
 		}
 
 		// Execute regular step
@@ -454,6 +591,51 @@ func (e *Engine) executeStepsWithPersistence(ctx context.Context, flow *model.Fl
 	return stepCtx.Snapshot().Outputs, nil
 }
 
+// determineExecutionOrder calculates the order to execute steps based on dependencies
+func (e *Engine) determineExecutionOrder(steps []model.Step, startIdx int) ([]string, error) {
+	hasDependencies := false
+	for i := startIdx; i < len(steps); i++ {
+		if len(steps[i].DependsOn) > 0 {
+			hasDependencies = true
+			utils.Debug("Step '%s' has dependencies: %v", steps[i].ID, steps[i].DependsOn)
+			break
+		}
+	}
+
+	// If no dependencies, use declaration order (fast path)
+	if !hasDependencies {
+		order := make([]string, 0, len(steps)-startIdx)
+		for i := startIdx; i < len(steps); i++ {
+			order = append(order, steps[i].ID)
+		}
+		utils.Debug("No dependencies found, using declaration order: %v", order)
+		return order, nil
+	}
+
+	// Get topological sort of all steps
+	utils.Debug("Dependencies detected, performing topological sort")
+	allStepsOrder, err := topologicalSort(steps)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter to only include steps from startIdx onwards
+	startStepIDs := make(map[string]bool)
+	for i := startIdx; i < len(steps); i++ {
+		startStepIDs[steps[i].ID] = true
+	}
+
+	filteredOrder := []string{}
+	for _, stepID := range allStepsOrder {
+		if startStepIDs[stepID] {
+			filteredOrder = append(filteredOrder, stepID)
+		}
+	}
+
+	utils.Debug("Dependency-based execution order: %v", filteredOrder)
+	return filteredOrder, nil
+}
+
 // handleAwaitEventStep processes await_event steps and sets up pause/resume logic
 func (e *Engine) handleAwaitEventStep(ctx context.Context, step *model.Step, flow *model.Flow, stepCtx *StepContext, stepIdx int, runID uuid.UUID) (map[string]any, error) {
 	// Extract and render token
@@ -469,9 +651,15 @@ func (e *Engine) handleAwaitEventStep(ctx context.Context, step *model.Step, flo
 	e.registerPausedRun(ctx, token, flow, stepCtx, stepIdx, runID)
 
 	// Setup event subscription for resume
-	e.setupResumeEventSubscription(ctx, token)
+	e.EventBus.Subscribe(ctx, constants.EventTopicResumePrefix+token, func(payload any) {
+		resumeEvent, ok := payload.(map[string]any)
+		if !ok {
+			return
+		}
+		e.Resume(ctx, token, resumeEvent)
+	})
 
-	return nil, utils.Errorf(constants.ErrStepWaitingForEvent, step.ID)
+	return nil, constants.NewAwaitEventPauseError(step.ID, token)
 }
 
 // extractAndRenderAwaitToken validates and renders the await event token
@@ -483,27 +671,14 @@ func (e *Engine) extractAndRenderAwaitToken(step *model.Step, stepCtx *StepConte
 		return constants.EmptyString, utils.Errorf(constants.ErrAwaitEventMissingToken)
 	}
 
-	// Prepare template data and render token
-	data := e.prepareTemplateDataAsMap(stepCtx)
-	utils.Debug("About to render template for step %s: data = %#v", step.ID, data)
-
-	renderedToken, err := e.Templater.Render(tokenRaw, data)
+	// Use simple template resolution for runtime-dependent tokens
+	context := e.prepareTemplateContext(stepCtx)
+	renderedToken, err := cuepkg.ResolveRuntimeTemplates(tokenRaw, context)
 	if err != nil {
-		return constants.EmptyString, utils.Errorf(constants.ErrFailedToRenderToken, err)
+		return constants.EmptyString, utils.Errorf("await token template resolution failed: %w", err)
 	}
 
 	return renderedToken, nil
-}
-
-// setupResumeEventSubscription configures event bus subscription for resume events
-func (e *Engine) setupResumeEventSubscription(ctx context.Context, token string) {
-	e.EventBus.Subscribe(ctx, constants.EventTopicResumePrefix+token, func(payload any) {
-		resumeEvent, ok := payload.(map[string]any)
-		if !ok {
-			return
-		}
-		e.Resume(ctx, token, resumeEvent)
-	})
 }
 
 // handleExistingPausedRun manages cleanup of existing paused runs with the same token
@@ -641,7 +816,9 @@ func (e *Engine) continueExecutionAndStoreResults(ctx context.Context, token str
 
 	// Merge and store results
 	allOutputs := e.mergeResumeOutputs(paused, outputs)
-	e.storeCompletedOutputs(token, allOutputs)
+	e.mu.Lock()
+	e.completedOutputs[token] = allOutputs
+	e.mu.Unlock()
 
 	// Update storage with final run status
 	e.updateRunStatusAfterResume(ctx, paused, err)
@@ -663,13 +840,6 @@ func (e *Engine) mergeResumeOutputs(paused *PausedRun, newOutputs map[string]any
 
 	utils.Debug("Outputs map after resume for token %s: %+v", paused.Token, allOutputs)
 	return allOutputs
-}
-
-// storeCompletedOutputs safely stores the completed outputs for retrieval
-func (e *Engine) storeCompletedOutputs(token string, allOutputs map[string]any) {
-	e.mu.Lock()
-	e.completedOutputs[token] = allOutputs
-	e.mu.Unlock()
 }
 
 // updateRunStatusAfterResume updates the run status in storage after resumption
@@ -712,7 +882,6 @@ func (e *Engine) GetCompletedOutputs(token string) map[string]any {
 
 // executeStep runs a single step (use/with) and stores output.
 func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
-	// Check if condition first - skip step if condition is false
 	if step.If != "" {
 		utils.Debug("Evaluating condition for step %s: %s", stepID, step.If)
 		shouldExecute, err := e.evaluateCondition(step.If, stepCtx)
@@ -721,10 +890,15 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 		}
 		utils.Debug("Condition result for step %s: %v", stepID, shouldExecute)
 		if !shouldExecute {
-			// Skip this step - condition not met
 			utils.Debug("Skipping step %s - condition not met: %s", stepID, step.If)
+			stepCtx.SetOutput(stepID, map[string]any{"status": "skipped"})
 			return nil
 		}
+	}
+
+	// Foreach logic: handle steps with Foreach first (before parallel/sequential)
+	if step.Foreach != "" {
+		return e.executeForeachBlock(ctx, step, stepCtx, stepID)
 	}
 
 	// Nested parallel block logic
@@ -735,11 +909,6 @@ func (e *Engine) executeStep(ctx context.Context, step *model.Step, stepCtx *Ste
 	// Sequential block (non-parallel) for steps
 	if !step.Parallel && len(step.Steps) > 0 {
 		return e.executeSequentialBlock(ctx, step, stepCtx, stepID)
-	}
-
-	// Foreach logic: handle steps with Foreach and Do
-	if step.Foreach != "" {
-		return e.executeForeachBlock(ctx, step, stepCtx, stepID)
 	}
 
 	// Tool execution
@@ -800,36 +969,41 @@ func (e *Engine) executeSequentialBlock(ctx context.Context, step *model.Step, s
 	return nil
 }
 
+// evaluateForeachExpression evaluates a foreach expression and returns the array directly
+func (e *Engine) evaluateForeachExpression(expr string, context map[string]any) ([]any, error) {
+	// Use CUE to evaluate the expression and extract the array directly
+	return cuepkg.EvaluateCUEArray(expr, context)
+}
+
 // executeForeachBlock handles foreach loop execution
 func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string) error {
-	// Prepare template data for expression evaluation
-	data := e.prepareTemplateDataAsMap(stepCtx)
-
-	// Evaluate the foreach expression to get the actual value (not rendered as string)
-	rendered, err := e.Templater.EvaluateExpression(step.Foreach, data)
-	if err != nil {
-		return utils.Errorf(constants.ErrTemplateErrorForeach, err)
+	if step == nil {
+		return fmt.Errorf("step cannot be nil")
+	}
+	if stepCtx == nil {
+		return fmt.Errorf("step context cannot be nil")
 	}
 
-	// The rendered result should be a list - handle different slice types
+	context := e.prepareTemplateContext(stepCtx)
+
+	// Handle both {{ }} wrapped expressions and direct expressions
+	trimmed := strings.TrimSpace(step.Foreach)
+
+	if trimmed == "" {
+		return fmt.Errorf("foreach expression cannot be empty")
+	}
+
 	var list []any
-	switch v := rendered.(type) {
-	case []any:
-		list = v
-	case []map[string]any:
-		// Convert []map[string]any to []any
-		list = make([]any, len(v))
-		for i, item := range v {
-			list[i] = item
-		}
-	case []string:
-		// Convert []string to []any
-		list = make([]any, len(v))
-		for i, item := range v {
-			list[i] = item
-		}
-	default:
-		return utils.Errorf(constants.ErrForeachNotList, rendered)
+	var err error
+
+	if len(trimmed) >= 4 && strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+		innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		list, err = e.evaluateForeachExpression(innerExpr, context)
+	} else {
+		list, err = e.evaluateForeachExpression(trimmed, context)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to evaluate foreach expression %q: %w", trimmed, err)
 	}
 
 	if len(list) == 0 {
@@ -837,21 +1011,28 @@ func (e *Engine) executeForeachBlock(ctx context.Context, step *model.Step, step
 		return nil
 	}
 
-	if step.Parallel {
-		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list)
+	// Resolve dependencies for nested steps before execution
+	stepsToExecute, err := e.resolveForeachStepOrder(step.Steps)
+	if err != nil {
+		return fmt.Errorf("failed to resolve dependencies in foreach block: %w", err)
 	}
-	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list)
+
+	// Execute iterations with dependency-resolved steps
+	if step.Parallel {
+		return e.executeForeachParallel(ctx, step, stepCtx, stepID, list, stepsToExecute)
+	}
+	return e.executeForeachSequential(ctx, step, stepCtx, stepID, list, stepsToExecute)
 }
 
 // executeForeachParallel handles parallel foreach execution
-func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
+func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any, stepsToExecute []model.Step) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(list))
 
 	// Process each item in parallel
 	for index, item := range list {
 		wg.Add(1)
-		go e.processParallelForeachItem(ctx, step, stepCtx, item, index, &wg, errChan)
+		go e.processParallelForeachItem(ctx, step, stepCtx, item, index, stepsToExecute, &wg, errChan)
 	}
 
 	// Wait for all goroutines and collect errors
@@ -859,14 +1040,18 @@ func (e *Engine) executeForeachParallel(ctx context.Context, step *model.Step, s
 }
 
 // processParallelForeachItem processes a single item in a parallel foreach loop
-func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, index int, wg *sync.WaitGroup, errChan chan<- error) {
+func (e *Engine) processParallelForeachItem(ctx context.Context, step *model.Step, stepCtx *StepContext, item any, index int, stepsToExecute []model.Step, wg *sync.WaitGroup, errChan chan<- error) {
 	defer wg.Done()
 
 	// Create iteration context for this item
-	iterStepCtx := e.createIterationContext(stepCtx, step.As, item, index)
+	asVar := step.As
+	if asVar == "" {
+		asVar = "item" // Default loop variable name
+	}
+	iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 	// Execute all steps for this iteration
-	if err := e.executeIterationSteps(ctx, step.Do, iterStepCtx, stepCtx); err != nil {
+	if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 		errChan <- err
 	}
 }
@@ -888,32 +1073,33 @@ func (e *Engine) executeIterationSteps(ctx context.Context, steps []model.Step, 
 			return err
 		}
 
-		// Copy outputs back to main context
-		e.copyIterationOutput(iterStepCtx, mainStepCtx, renderedStepID)
+		// Copy output back to main context
+		if output, ok := iterStepCtx.GetOutput(renderedStepID); ok {
+			mainStepCtx.SetOutput(renderedStepID, output)
+		}
 	}
 	return nil
 }
 
-// renderStepID renders a step ID with templating support
+// renderStepID renders a step ID with simple template support
 func (e *Engine) renderStepID(stepID string, stepCtx *StepContext) (string, error) {
-	data := e.prepareTemplateDataAsMap(stepCtx)
-	rendered, err := e.renderValue(stepID, data)
+	// If no template syntax, return original stepID
+	if !strings.Contains(stepID, "{{") {
+		return stepID, nil
+	}
+
+	context := e.prepareTemplateContext(stepCtx)
+	rendered, err := cuepkg.ResolveRuntimeTemplates(stepID, context)
 	if err != nil {
-		return constants.EmptyString, utils.Errorf(constants.ErrTemplateErrorStepID, stepID, err)
+		return "", fmt.Errorf("step ID template resolution failed: %w", err)
 	}
 
-	renderedStr, ok := utils.SafeStringAssert(rendered)
-	if !ok {
-		return stepID, nil // fallback to original stepID if not a string
+	// Empty step IDs are invalid as they're used as map keys
+	if rendered == "" {
+		return "", fmt.Errorf("step ID template resolved to empty string: %s", stepID)
 	}
-	return renderedStr, nil
-}
 
-// copyIterationOutput safely copies output from iteration context to main context
-func (e *Engine) copyIterationOutput(iterStepCtx, mainStepCtx *StepContext, renderedStepID string) {
-	if output, ok := iterStepCtx.GetOutput(renderedStepID); ok {
-		mainStepCtx.SetOutput(renderedStepID, output)
-	}
+	return rendered, nil
 }
 
 // collectParallelErrors waits for parallel operations and collects any errors
@@ -936,19 +1122,17 @@ func (e *Engine) collectParallelErrors(wg *sync.WaitGroup, errChan chan error, s
 }
 
 // executeForeachSequential handles sequential foreach execution
-func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any) error {
+func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step, stepCtx *StepContext, stepID string, list []any, stepsToExecute []model.Step) error {
 	for index, item := range list {
-		// Set the loop variable for this iteration
-		if step.As != "" {
-			stepCtx.SetVar(step.As, item)
-			// Also expose the index (0-based)
-			stepCtx.SetVar(step.As+"_index", index)
-			// And 1-based index for row numbers
-			stepCtx.SetVar(step.As+"_row", index+1)
+		// Create iteration context for this item (same as parallel foreach)
+		asVar := step.As
+		if asVar == "" {
+			asVar = "item" // Default loop variable name
 		}
+		iterStepCtx := e.createIterationContext(stepCtx, asVar, item, index)
 
 		// Execute all steps for this iteration
-		if err := e.executeSequentialIterationSteps(ctx, step.Do, stepCtx); err != nil {
+		if err := e.executeIterationSteps(ctx, stepsToExecute, iterStepCtx, stepCtx); err != nil {
 			return err
 		}
 	}
@@ -960,21 +1144,43 @@ func (e *Engine) executeForeachSequential(ctx context.Context, step *model.Step,
 	return nil
 }
 
-// executeSequentialIterationSteps executes all steps for a single sequential foreach iteration
-func (e *Engine) executeSequentialIterationSteps(ctx context.Context, steps []model.Step, stepCtx *StepContext) error {
-	for _, inner := range steps {
-		// Render the step ID as a template
-		renderedStepID, err := e.renderStepID(inner.ID, stepCtx)
-		if err != nil {
-			return err
-		}
-
-		// Execute the step
-		if err := e.executeStep(ctx, &inner, stepCtx, renderedStepID); err != nil {
-			return err
+// resolveForeachStepOrder resolves dependencies for steps within a foreach block
+// Returns steps in dependency-resolved execution order, or original order if no dependencies
+func (e *Engine) resolveForeachStepOrder(steps []model.Step) ([]model.Step, error) {
+	hasDependencies := false
+	for i := range steps {
+		if len(steps[i].DependsOn) > 0 {
+			hasDependencies = true
+			break
 		}
 	}
-	return nil
+
+	// If no dependencies, return steps in original order (fast path)
+	if !hasDependencies {
+		return steps, nil
+	}
+
+	// Resolve dependencies using topological sort
+	stepIDs, err := topologicalSort(steps)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build step map for quick lookup
+	stepMap := make(map[string]*model.Step)
+	for i := range steps {
+		stepMap[steps[i].ID] = &steps[i]
+	}
+
+	// Reorder steps according to resolved dependencies
+	orderedSteps := make([]model.Step, 0, len(steps))
+	for _, stepID := range stepIDs {
+		if step, exists := stepMap[stepID]; exists {
+			orderedSteps = append(orderedSteps, *step)
+		}
+	}
+
+	return orderedSteps, nil
 }
 
 // executeToolCall handles individual tool execution
@@ -1026,18 +1232,13 @@ func (e *Engine) executeToolWithInputs(ctx context.Context, step *model.Step, st
 	// Auto-fill missing required parameters from manifest defaults
 	e.autoFillRequiredParams(adapterInst, inputs, stepCtx)
 
-	// Add special use parameter for specific tool types
-	e.addSpecialUseParameter(step.Use, inputs)
+	// Add __use parameter for MCP and core tools
+	if strings.HasPrefix(step.Use, constants.AdapterPrefixMCP) || strings.HasPrefix(step.Use, constants.AdapterPrefixCore) {
+		inputs[constants.ParamSpecialUse] = step.Use
+	}
 
 	// Execute the tool and handle results
 	return e.handleToolExecution(ctx, step.Use, stepID, stepCtx, adapterInst, inputs)
-}
-
-// addSpecialUseParameter adds the __use parameter for MCP and core tools
-func (e *Engine) addSpecialUseParameter(toolName string, inputs map[string]any) {
-	if strings.HasPrefix(toolName, constants.AdapterPrefixMCP) || strings.HasPrefix(toolName, constants.AdapterPrefixCore) {
-		inputs[constants.ParamSpecialUse] = toolName
-	}
 }
 
 // handleToolExecution executes the tool and processes outputs
@@ -1066,40 +1267,6 @@ func (e *Engine) handleToolExecution(ctx context.Context, toolName, stepID strin
 	return nil
 }
 
-// prepareTemplateData creates template data from step context
-func (e *Engine) prepareTemplateData(stepCtx *StepContext) TemplateData {
-	snapshot := stepCtx.Snapshot()
-
-	// Get environment variables but with lazy loading for security
-	// We create a proxy map that loads values on demand
-	env := e.createEnvProxy()
-
-	// Get current execution context
-	e.mu.Lock()
-	currentFlow := e.currentFlow
-	currentRunID := e.currentRunID
-	e.mu.Unlock()
-
-	flowName := ""
-	if currentFlow != nil {
-		flowName = currentFlow.Name
-	}
-
-	return TemplateData{
-		Event:   snapshot.Event,
-		Vars:    snapshot.Vars,
-		Outputs: snapshot.Outputs,
-		Secrets: snapshot.Secrets,
-		Env:     env,
-		Runs: &RunsAccess{
-			storage:      e.Storage,
-			ctx:          context.Background(),
-			currentRunID: currentRunID,
-			flowName:     flowName,
-		},
-	}
-}
-
 // createEnvProxy creates a map that loads environment variables on demand
 // We load all environment variables since users control their own environment.
 // The selective loading approach was removed for simplicity - env vars are inherently
@@ -1109,19 +1276,99 @@ func (e *Engine) createEnvProxy() map[string]string {
 	for _, envPair := range os.Environ() {
 		pair := strings.SplitN(envPair, "=", 2)
 		if len(pair) == 2 {
-			env[pair[0]] = pair[1]
+			key := pair[0]
+			// Include all environment variables - buildCUEContextScript will handle quoting invalid keys
+			if key != "" && key != "_" { // Skip empty keys and underscore (special in CUE)
+				env[key] = pair[1]
+			}
 		}
 	}
 	return env
 }
 
-// prepareTemplateDataAsMap creates template data as map for templating system
-func (e *Engine) prepareTemplateDataAsMap(stepCtx *StepContext) map[string]any {
-	templateData := e.prepareTemplateData(stepCtx)
-	return flattenTemplateDataToMap(templateData)
+// createRunsContext creates a simple runs context for template access
+func (e *Engine) createRunsContext() map[string]any {
+	// Atomically read current execution context
+	e.mu.Lock()
+	flowName := ""
+	if e.currentFlow != nil {
+		flowName = e.currentFlow.Name
+	}
+	runID := e.currentRunID
+	e.mu.Unlock()
+
+	runs := &RunsAccess{
+		storage:      e.Storage,
+		ctx:          context.Background(),
+		flowName:     flowName,
+		currentRunID: runID,
+	}
+	return map[string]any{
+		"Previous": runs.Previous(),
+	}
 }
 
-// isValidIdentifier checks if a string is a valid template identifier
+// prepareTemplateContext creates a simple context map for runtime template resolution
+func (e *Engine) prepareTemplateContext(stepCtx *StepContext) map[string]any {
+	// Get step context snapshot
+	snapshot := stepCtx.Snapshot()
+
+	// Build context
+	envStrings := e.createEnvProxy()
+
+	// Convert env map[string]string to map[string]any for CUE
+	env := make(map[string]any, len(envStrings))
+	for k, v := range envStrings {
+		env[k] = v
+	}
+
+	context := map[string]any{
+		"outputs": snapshot.Outputs,
+		"vars":    snapshot.Vars,
+		"secrets": snapshot.Secrets,
+		"event":   snapshot.Event,
+		"env":     env,
+		"runs":    e.createRunsContext(),
+	}
+
+	// Merge event variables into top level for backward compatibility
+	// Check for collisions and warn about them
+	for k, v := range snapshot.Event {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and event context. Event value will override. Existing: %T, Event: %T", k, existing, v)
+		}
+		context[k] = v
+	}
+
+	// Merge flow vars into top level for backward compatibility
+	// Check for collisions and warn about them
+	for k, v := range snapshot.Vars {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and vars context. Vars value will override. Existing: %T, Vars: %T", k, existing, v)
+		}
+		context[k] = v
+	}
+
+	// Merge step outputs into top level for backward compatibility
+	// Check for collisions and warn about them
+	for k, v := range snapshot.Outputs {
+		if existing, exists := context[k]; exists {
+			utils.Warn("Template context collision: key %q exists in both top-level and outputs context. Outputs value will override. Existing: %T, Outputs: %T", k, existing, v)
+		}
+		context[k] = v
+	}
+
+	return context
+}
+
+// updateMetrics safely updates execution metrics
+func (e *Engine) updateMetrics(fn func(*ExecutionMetrics)) {
+	e.metricsMutex.Lock()
+	defer e.metricsMutex.Unlock()
+	fn(&e.metrics)
+}
+
+// isValidIdentifier checks if a string is a valid template identifier (for tests)
 // Valid identifiers are Go-style identifiers without template syntax
 func isValidIdentifier(s string) bool {
 	if s == "" {
@@ -1139,29 +1386,27 @@ func isValidIdentifier(s string) bool {
 }
 
 // evaluateCondition evaluates a condition expression and returns whether it's true
+// Uses CUE's native boolean evaluation instead of custom isTruthy logic
 func (e *Engine) evaluateCondition(condition string, stepCtx *StepContext) (bool, error) {
-	// Condition MUST be in {{ }} format
+	if stepCtx == nil {
+		return false, fmt.Errorf("step context cannot be nil")
+	}
+
 	trimmed := strings.TrimSpace(condition)
+
+	if len(trimmed) < 4 {
+		return false, fmt.Errorf("condition is too short")
+	}
+
 	if !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
-		return false, utils.Errorf("condition must use template syntax: {{ expression }}, got: %s", condition)
+		return false, fmt.Errorf("condition must use template syntax")
 	}
 
-	// Extract the inner expression
 	innerExpr := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+	context := e.prepareTemplateContext(stepCtx)
 
-	// Prepare template data
-	data := e.prepareTemplateDataAsMap(stepCtx)
-
-	// Use {% if %} to evaluate as boolean
-	wrappedCondition := fmt.Sprintf("{%% if %s %%}true{%% else %%}false{%% endif %%}", innerExpr)
-
-	// Render and return result
-	rendered, err := e.Templater.Render(wrappedCondition, data)
-	if err != nil {
-		return false, err
-	}
-
-	return strings.TrimSpace(rendered) == "true", nil
+	// Use CUE's native boolean evaluation
+	return cuepkg.EvaluateCUEBoolean(innerExpr, context)
 }
 
 // createIterationContext creates a new context for foreach iterations
@@ -1188,30 +1433,88 @@ func (e *Engine) createIterationContext(stepCtx *StepContext, asVar string, item
 
 // prepareToolInputs prepares inputs for tool execution
 func (e *Engine) prepareToolInputs(step *model.Step, stepCtx *StepContext, stepID string) (map[string]any, error) {
-	data := e.prepareTemplateDataAsMap(stepCtx)
+	context := e.prepareTemplateContext(stepCtx)
 	inputs := make(map[string]any)
 
-	// Log debug information for template context
-	e.logTemplateDebugInfo(data, stepID)
-
-	// Render each input parameter
+	// Apply template resolution recursively to each input parameter
 	for k, v := range step.With {
-		rendered, err := e.renderValue(v, data)
+		resolved, err := e.resolveTemplatesRecursively(v, context)
 		if err != nil {
-			return nil, utils.Errorf(constants.ErrTemplateError, stepID, err)
+			return nil, fmt.Errorf("failed to resolve templates in input %q: %w", k, err)
 		}
-		inputs[k] = rendered
+		inputs[k] = resolved
 	}
 
 	return inputs, nil
 }
 
-// logTemplateDebugInfo logs debug information about template context
-func (e *Engine) logTemplateDebugInfo(data map[string]any, stepID string) {
-	varsKeys := extractVarsKeysForDebug(data)
-	utils.Debug("Template context keys: %v, vars keys: %v, vars: %+v",
-		mapKeys(data), varsKeys, data[constants.TemplateFieldVars])
-	utils.Debug("About to render template for step %s: data = %#v", stepID, data)
+// resolveTemplatesRecursively applies template resolution to all string values in a nested structure
+func (e *Engine) resolveTemplatesRecursively(value any, context map[string]any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	switch v := value.(type) {
+	case string:
+		if !strings.Contains(v, "{{") {
+			return v, nil
+		}
+		resolved, err := cuepkg.ResolveRuntimeTemplates(v, context)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve template in string %q: %w", v, err)
+		}
+		return resolved, nil
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			resolved, err := e.resolveTemplatesRecursively(item, context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve template in array item %d: %w", i, err)
+			}
+			result[i] = resolved
+		}
+		return result, nil
+	case []map[string]any:
+		// Allow dynamic type resolution - if template changes the type, accept it
+		result := make([]any, len(v))
+		for i, item := range v {
+			resolved, err := e.resolveTemplatesRecursively(item, context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve template in map array item %d: %w", i, err)
+			}
+			// Store resolved value regardless of type - templates can change types dynamically
+			result[i] = resolved
+		}
+		return result, nil
+	case map[string]any:
+		result := make(map[string]any)
+		for k, val := range v {
+			resolved, err := e.resolveTemplatesRecursively(val, context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve template in map key %q: %w", k, err)
+			}
+			result[k] = resolved
+		}
+		return result, nil
+	case []string:
+		// Handle []string slice efficiently
+		result := make([]string, len(v))
+		for i, item := range v {
+			if !strings.Contains(item, "{{") {
+				result[i] = item
+				continue
+			}
+			resolved, err := cuepkg.ResolveRuntimeTemplates(item, context)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve template in string slice item %d: %w", i, err)
+			}
+			result[i] = resolved
+		}
+		return result, nil
+	default:
+		// For other types, return as-is without processing
+		return value, nil
+	}
 }
 
 // autoFillRequiredParams fills missing required parameters from manifest defaults
@@ -1221,32 +1524,20 @@ func (e *Engine) autoFillRequiredParams(adapterInst adapter.Adapter, inputs map[
 		return
 	}
 
-	params, required := e.extractManifestParameters(manifest)
-	if params == nil || required == nil {
-		return
-	}
-
-	secrets := stepCtx.Snapshot().Secrets
-	e.fillMissingRequiredParameters(inputs, params, required, secrets)
-}
-
-// extractManifestParameters extracts parameters and required fields from adapter manifest
-func (e *Engine) extractManifestParameters(manifest *registry.ToolManifest) (map[string]any, []any) {
+	// Extract parameters and required fields
 	params, ok := utils.SafeMapAssert(manifest.Parameters[constants.DefaultKeyProperties])
 	if !ok {
-		return nil, nil
+		return
 	}
 
 	required, ok := utils.SafeSliceAssert(manifest.Parameters[constants.DefaultKeyRequired])
 	if !ok {
-		return nil, nil
+		return
 	}
 
-	return params, required
-}
+	secrets := stepCtx.Snapshot().Secrets
 
-// fillMissingRequiredParameters iterates through required parameters and fills missing ones
-func (e *Engine) fillMissingRequiredParameters(inputs, params map[string]any, required []any, secrets SecretsData) {
+	// Fill missing required parameters
 	for _, req := range required {
 		key, ok := utils.SafeStringAssert(req)
 		if !ok {
@@ -1254,35 +1545,18 @@ func (e *Engine) fillMissingRequiredParameters(inputs, params map[string]any, re
 		}
 
 		if _, present := inputs[key]; !present {
-			if defaultValue := e.resolveParameterDefault(params[key], secrets); defaultValue != nil {
-				inputs[key] = defaultValue
+			// Resolve default value from parameter definition
+			if paramDef, ok := utils.SafeMapAssert(params[key]); ok {
+				if def, ok := utils.SafeMapAssert(paramDef[constants.DefaultKeyDefault]); ok {
+					if envVar, ok := utils.SafeStringAssert(def[constants.EnvVarPrefix]); ok {
+						if val, ok := secrets[envVar]; ok {
+							inputs[key] = val
+						}
+					}
+				}
 			}
 		}
 	}
-}
-
-// resolveParameterDefault resolves default value from parameter definition and secrets
-func (e *Engine) resolveParameterDefault(paramDef any, secrets SecretsData) any {
-	prop, ok := utils.SafeMapAssert(paramDef)
-	if !ok {
-		return nil
-	}
-
-	def, ok := utils.SafeMapAssert(prop[constants.DefaultKeyDefault])
-	if !ok {
-		return nil
-	}
-
-	envVar, ok := utils.SafeStringAssert(def[constants.EnvVarPrefix])
-	if !ok {
-		return nil
-	}
-
-	if val, ok := secrets[envVar]; ok {
-		return val
-	}
-
-	return nil
 }
 
 // StepContext holds context for step execution (event, vars, outputs, secrets).
@@ -1360,15 +1634,6 @@ func (sc *StepContext) Snapshot() ContextSnapshot {
 	}
 }
 
-// CronScheduler is a stub for cron-based triggers.
-type CronScheduler struct {
-	// Extend this struct to support cron-based triggers (see SPEC.md for ideas).
-}
-
-func NewCronScheduler() *CronScheduler {
-	return &CronScheduler{}
-}
-
 // Close cleans up all adapters and resources managed by the Engine.
 func (e *Engine) Close() error {
 	if e.Adapters != nil {
@@ -1421,7 +1686,7 @@ func (e *Engine) GetRunByID(ctx context.Context, id uuid.UUID) (*model.Run, erro
 	return run, nil
 }
 
-// ListMCPServers returns all MCP servers from the registry, using the provided context.
+// ListMCPServers returns all MCP servers from the registry, using the provided context (for tests).
 type MCPServerWithName struct {
 	Name   string
 	Config *config.MCPServerConfig
@@ -1438,14 +1703,14 @@ func (e *Engine) ListMCPServers(ctx context.Context) ([]*MCPServerWithName, erro
 	return e.convertToMCPServers(tools), nil
 }
 
-// loadRegistryTools loads all tools from the registry
+// loadRegistryTools loads all tools from the registry (for tests)
 func (e *Engine) loadRegistryTools(ctx context.Context) ([]registry.RegistryEntry, error) {
 	localReg := registry.NewLocalRegistry("")
 	regMgr := registry.NewRegistryManager(localReg)
 	return regMgr.ListAllServers(ctx, registry.ListOptions{})
 }
 
-// convertToMCPServers filters and converts registry entries to MCP server configs
+// convertToMCPServers filters and converts registry entries to MCP server configs (for tests)
 func (e *Engine) convertToMCPServers(tools []registry.RegistryEntry) []*MCPServerWithName {
 	var mcps []*MCPServerWithName
 	for _, entry := range tools {
@@ -1456,7 +1721,7 @@ func (e *Engine) convertToMCPServers(tools []registry.RegistryEntry) []*MCPServe
 	return mcps
 }
 
-// createMCPServerConfig creates an MCP server configuration from a registry entry
+// createMCPServerConfig creates an MCP server configuration from a registry entry (for tests)
 func (e *Engine) createMCPServerConfig(entry registry.RegistryEntry) *MCPServerWithName {
 	return &MCPServerWithName{
 		Name: entry.Name,
@@ -1471,39 +1736,19 @@ func (e *Engine) createMCPServerConfig(entry registry.RegistryEntry) *MCPServerW
 	}
 }
 
-// renderValue recursively renders template strings in nested values.
-func (e *Engine) renderValue(val any, data map[string]any) (any, error) {
-	switch x := val.(type) {
-	case string:
-		return e.Templater.Render(x, data)
-	case []any:
-		// Create a copy to avoid race conditions
-		result := make([]any, len(x))
-		for i, elem := range x {
-			rendered, err := e.renderValue(elem, data)
-			if err != nil {
-				return nil, err
-			}
-			result[i] = rendered
-		}
-		return result, nil
-	case map[string]any:
-		// Create a copy to avoid race conditions
-		result := make(map[string]any, len(x))
-		for k, elem := range x {
-			rendered, err := e.renderValue(elem, data)
-			if err != nil {
-				return nil, err
-			}
-			result[k] = rendered
-		}
-		return result, nil
-	default:
-		return val, nil
+// NewEngineWithBlobStore creates a new Engine with a custom BlobStore (for tests).
+func NewEngineWithBlobStore(ctx context.Context, blobStore blob.BlobStore) *Engine {
+	return &Engine{
+		Adapters:         NewDefaultAdapterRegistry(ctx),
+		EventBus:         event.NewInProcEventBus(),
+		BlobStore:        blobStore,
+		waiting:          make(map[string]*PausedRun),
+		completedOutputs: make(map[string]map[string]any),
+		Storage:          storage.NewMemoryStorage(),
 	}
 }
 
-// NewDefaultEngine creates a new Engine with default dependencies (adapter registry, templater, in-process event bus, default blob store, in-memory storage).
+// NewDefaultEngine creates a new Engine with default dependencies (adapter registry, in-process event bus, default blob store, in-memory storage).
 func NewDefaultEngine(ctx context.Context) *Engine {
 	// Default BlobStore
 	bs, err := blob.NewDefaultBlobStore(ctx, nil)
@@ -1513,7 +1758,6 @@ func NewDefaultEngine(ctx context.Context) *Engine {
 	}
 	return NewEngine(
 		NewDefaultAdapterRegistry(ctx),
-		dsl.NewTemplater(),
 		event.NewInProcEventBus(),
 		bs,
 		storage.NewMemoryStorage(),
@@ -1522,16 +1766,15 @@ func NewDefaultEngine(ctx context.Context) *Engine {
 
 // copyMap creates a shallow copy of a map[string]any.
 func copyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return make(map[string]any)
+	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
 	return out
 }
-
-// =============================================================================
-// BEAUTIFICATION HELPERS
-// =============================================================================
 
 // setEmptyOutputAndError sets an empty output for a step and returns an error
 // This helper eliminates repetitive error handling patterns throughout the engine
@@ -1559,7 +1802,6 @@ func maskSensitiveFields(inputs map[string]any) map[string]any {
 	masked := make(map[string]any)
 
 	for k, v := range inputs {
-		// Check if this is a sensitive field
 		if isSensitiveField(k) {
 			// Mask the value but show it exists
 			if str, ok := v.(string); ok && len(str) > 0 {
@@ -1618,56 +1860,4 @@ func logToolOutputs(stepID string, outputs map[string]any) {
 	masked := maskSensitiveFields(outputs)
 	utils.Debug("Writing outputs for step %s: %+v", stepID, masked)
 	utils.Debug("Outputs map after step %s: %+v", stepID, masked)
-}
-
-// flattenTemplateDataToMap creates a flattened map for template rendering
-// This encapsulates complex template data preparation logic
-func flattenTemplateDataToMap(templateData TemplateData) map[string]any {
-	data := make(map[string]any)
-
-	// Set structured template fields
-	data[constants.TemplateFieldEvent] = templateData.Event
-	data[constants.TemplateFieldVars] = templateData.Vars
-	data[constants.TemplateFieldOutputs] = templateData.Outputs
-	data[constants.TemplateFieldSecrets] = templateData.Secrets
-	data[constants.TemplateFieldSteps] = templateData.Outputs // Add steps namespace for step output access
-	data[constants.TemplateFieldEnv] = templateData.Env
-	data["runs"] = templateData.Runs // Add runs access for history
-
-	// Flatten vars and event into context for template rendering
-	for k, v := range templateData.Vars {
-		data[k] = v
-	}
-	for k, v := range templateData.Event {
-		data[k] = v // For foreach expressions like {{list}}
-	}
-
-	// Only flatten outputs that have valid identifier names (no template syntax)
-	for k, v := range templateData.Outputs {
-		if isValidIdentifier(k) {
-			data[k] = v
-		}
-	}
-
-	return data
-}
-
-// extractVarsKeysForDebug extracts variable keys for debug logging
-func extractVarsKeysForDebug(data map[string]any) []string {
-	varsKeys := []string{}
-	if vars, ok := data[constants.TemplateFieldVars].(map[string]any); ok {
-		for key := range vars {
-			varsKeys = append(varsKeys, key)
-		}
-	}
-	return varsKeys
-}
-
-// mapKeys returns all keys from a map for debug logging
-func mapKeys(m map[string]any) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
