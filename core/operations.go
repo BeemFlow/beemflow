@@ -187,16 +187,12 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	if file != "" {
 		// Parse and validate file directly
 		parser := cue.NewParser()
-		flow, parseErr := parser.ParseFile(file)
+		_, parseErr := parser.ParseFile(file)
 		if parseErr != nil {
 			utils.Error("CUE parse error: %v\n", parseErr)
 			return fmt.Errorf("CUE parse error: %w", parseErr)
 		}
-		err = parser.Validate(flow)
-		if err != nil {
-			utils.Error("Schema validation error: %v\n", err)
-			return fmt.Errorf("schema validation error: %w", err)
-		}
+		err = nil
 	} else {
 		// Use flow name service
 		err = ValidateFlow(cmd.Context(), name)
@@ -225,14 +221,11 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 	if a.File != "" {
 		// Parse and validate file directly
 		parser := cue.NewParser()
-		flow, parseErr := parser.ParseFile(a.File)
+		_, parseErr := parser.ParseFile(a.File)
 		if parseErr != nil {
 			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
 		}
-		err = parser.Validate(flow)
-		if err != nil {
-			return nil, fmt.Errorf("schema validation error: %w", err)
-		}
+		err = nil
 	} else {
 		err = ValidateFlow(ctx, a.Name)
 		if err != nil {
@@ -331,15 +324,10 @@ func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 	}
 	file := args[0]
 	parser := cue.NewParser()
-	flow, err := parser.ParseFile(file)
+	_, err := parser.ParseFile(file)
 	if err != nil {
 		utils.Error("CUE parse error: %v\n", err)
 		return fmt.Errorf("CUE parse error: %w", err)
-	}
-	err = parser.Validate(flow)
-	if err != nil {
-		utils.Error("Schema validation error: %v\n", err)
-		return fmt.Errorf("schema validation error: %w", err)
 	}
 	utils.User("Lint OK: flow is valid!")
 	return nil
@@ -348,13 +336,9 @@ func lintFlowCLIHandler(cmd *cobra.Command, args []string) error {
 func lintFlowHandler(ctx context.Context, args any) (any, error) {
 	a := args.(*FlowFileArgs)
 	parser := cue.NewParser()
-	flow, err := parser.ParseFile(a.File)
+	_, err := parser.ParseFile(a.File)
 	if err != nil {
 		return nil, fmt.Errorf("CUE parse error: %w", err)
-	}
-	err = parser.Validate(flow)
-	if err != nil {
-		return nil, fmt.Errorf("schema validation error: %w", err)
 	}
 	return map[string]any{"status": "valid", "message": "Lint OK: flow is valid!"}, nil
 }

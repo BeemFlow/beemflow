@@ -39,8 +39,7 @@ func (a *CoreAdapter) Execute(ctx context.Context, inputs map[string]any) (map[s
 }
 
 // executeEcho prints the 'text' field to stdout and returns inputs unchanged.
-func (a *CoreAdapter) executeEcho(ctx context.Context, inputs map[string]any) (map[string]any, error) {
-	_ = ctx // Context not needed for this operation
+func (a *CoreAdapter) executeEcho(_ context.Context, inputs map[string]any) (map[string]any, error) {
 	if text, ok := inputs["text"].(string); ok {
 		if os.Getenv(constants.EnvDebug) != "" {
 			utils.Info("%s", text)
@@ -59,8 +58,7 @@ func (a *CoreAdapter) executeEcho(ctx context.Context, inputs map[string]any) (m
 }
 
 // executeConvertOpenAPI converts OpenAPI specs to BeemFlow tool manifests.
-func (a *CoreAdapter) executeConvertOpenAPI(ctx context.Context, inputs map[string]any) (map[string]any, error) {
-	_ = ctx // Context not needed for this operation
+func (a *CoreAdapter) executeConvertOpenAPI(_ context.Context, inputs map[string]any) (map[string]any, error) {
 	// Get required inputs - can be either a JSON string or an object
 	var spec map[string]any
 	if openapiStr, ok := inputs["openapi"].(string); ok {

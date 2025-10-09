@@ -9,45 +9,45 @@ import (
 )
 
 type Flow struct {
-	Name        string         `yaml:"name" json:"name"`
-	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
-	Version     string         `yaml:"version,omitempty" json:"version,omitempty"`
-	On          any            `yaml:"on" json:"on,omitempty"`
-	Cron        string         `yaml:"cron,omitempty" json:"cron,omitempty"` // Cron expression for schedule.cron
-	Vars        map[string]any `yaml:"vars,omitempty" json:"vars,omitempty"`
-	Steps       []Step         `yaml:"steps" json:"steps"`
-	Catch       []Step         `yaml:"catch,omitempty" json:"catch,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Version     string         `json:"version,omitempty"`
+	On          any            `json:"on,omitempty"`
+	Cron        string         `json:"cron,omitempty"` // Cron expression for schedule.cron
+	Vars        map[string]any `json:"vars,omitempty"`
+	Steps       []Step         `json:"steps"`
+	Catch       []Step         `json:"catch,omitempty"`
 }
 
 type Step struct {
-	ID         string          `yaml:"id" json:"id"`
-	Use        string          `yaml:"use,omitempty" json:"use,omitempty"`
-	With       map[string]any  `yaml:"with,omitempty" json:"with,omitempty"`
-	DependsOn  []string        `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	Parallel   bool            `yaml:"parallel,omitempty" json:"parallel,omitempty"`
-	If         string          `yaml:"if,omitempty" json:"if,omitempty"`
-	Foreach    string          `yaml:"foreach,omitempty" json:"foreach,omitempty"`
-	As         string          `yaml:"as,omitempty" json:"as,omitempty"`
-	Steps      []Step          `yaml:"steps,omitempty" json:"steps,omitempty"`
-	Retry      *RetrySpec      `yaml:"retry,omitempty" json:"retry,omitempty"`
-	AwaitEvent *AwaitEventSpec `yaml:"await_event,omitempty" json:"await_event,omitempty"`
-	Wait       *WaitSpec       `yaml:"wait,omitempty" json:"wait,omitempty"`
+	ID         string          `json:"id"`
+	Use        string          `json:"use,omitempty"`
+	With       map[string]any  `json:"with,omitempty"`
+	DependsOn  []string        `json:"depends_on,omitempty"`
+	Parallel   bool            `json:"parallel,omitempty"`
+	If         string          `json:"if,omitempty"`
+	Foreach    string          `json:"foreach,omitempty"`
+	As         string          `json:"as,omitempty"`
+	Steps      []Step          `json:"steps,omitempty"`
+	Retry      *RetrySpec      `json:"retry,omitempty"`
+	AwaitEvent *AwaitEventSpec `json:"await_event,omitempty"`
+	Wait       *WaitSpec       `json:"wait,omitempty"`
 }
 
 type RetrySpec struct {
-	Attempts int `yaml:"attempts" json:"attempts"`
-	DelaySec int `yaml:"delay_sec" json:"delay_sec"`
+	Attempts int `json:"attempts"`
+	DelaySec int `json:"delay_sec"`
 }
 
 type AwaitEventSpec struct {
-	Source  string         `yaml:"source" json:"source"`
-	Match   map[string]any `yaml:"match" json:"match"`
-	Timeout string         `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Source  string         `json:"source"`
+	Match   map[string]any `json:"match"`
+	Timeout string         `json:"timeout,omitempty"`
 }
 
 type WaitSpec struct {
-	Seconds int    `yaml:"seconds,omitempty" json:"seconds,omitempty"`
-	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
+	Seconds int    `json:"seconds,omitempty"`
+	Until   string `json:"until,omitempty"`
 }
 
 type Run struct {

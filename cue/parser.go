@@ -104,58 +104,36 @@ func (p *Parser) validateSchema(value cue.Value) error {
 
 	// Use CUE's built-in Validate to check the unified value
 	// We use Concrete(false) to allow templates ({{ }} expressions) which are incomplete values
-	// Required field checking is done through the schema structure itself
 	if err := unified.Validate(cue.Concrete(false)); err != nil {
 		return fmt.Errorf("schema validation failed: %w", err)
 	}
 
-	// Explicitly check for required fields (name, on, steps) since Concrete(false) allows them to be missing
-	if err := p.checkRequiredFields(value); err != nil {
+	// Check critical required fields that Concrete(false) allows to be missing
+	if err := p.checkCriticalFields(value); err != nil {
 		return err
 	}
 
-	// Additional custom validation for security and business rules
-	// (CUE schema handles structure, we handle custom logic)
-	return p.securityValidation(value)
+	// Check for duplicate step IDs
+	return p.checkDuplicateStepIDs(value)
 }
 
-// checkRequiredFields explicitly checks for required fields that CUE might allow to be missing
-func (p *Parser) checkRequiredFields(value cue.Value) error {
-	// Check name field exists
-	nameVal := value.LookupPath(cue.ParsePath("name"))
-	if nameVal.Err() != nil || !nameVal.Exists() {
-		return fmt.Errorf("schema validation failed: flow must have a 'name' field")
+// checkCriticalFields verifies that critical required fields exist
+// This is necessary because Concrete(false) allows incomplete values
+func (p *Parser) checkCriticalFields(value cue.Value) error {
+	if !value.LookupPath(cue.ParsePath("name")).Exists() {
+		return fmt.Errorf("flow must have a 'name' field")
 	}
-
-	// Check on field exists
-	onVal := value.LookupPath(cue.ParsePath("on"))
-	if onVal.Err() != nil || !onVal.Exists() {
-		return fmt.Errorf("schema validation failed: flow must have an 'on' field")
+	if !value.LookupPath(cue.ParsePath("on")).Exists() {
+		return fmt.Errorf("flow must have an 'on' field")
 	}
-
-	// Check steps field exists
-	stepsVal := value.LookupPath(cue.ParsePath("steps"))
-	if stepsVal.Err() != nil || !stepsVal.Exists() {
-		return fmt.Errorf("schema validation failed: flow must have a 'steps' field")
+	if !value.LookupPath(cue.ParsePath("steps")).Exists() {
+		return fmt.Errorf("flow must have a 'steps' field")
 	}
-
 	return nil
 }
 
-// securityValidation performs security checks beyond what CUE schema validation provides
-// This focuses on security-specific rules like identifier validation and dangerous patterns
-func (p *Parser) securityValidation(value cue.Value) error {
-	// Validate flow name meets security requirements
-	nameVal := value.LookupPath(cue.ParsePath("name"))
-	if nameVal.Err() == nil {
-		if nameStr, err := nameVal.String(); err == nil {
-			if !isValidFlowName(nameStr) {
-				return fmt.Errorf("flow name contains invalid characters or is too long")
-			}
-		}
-	}
-
-	// Validate steps for security issues
+// checkDuplicateStepIDs validates that step IDs are unique within a flow
+func (p *Parser) checkDuplicateStepIDs(value cue.Value) error {
 	stepsVal := value.LookupPath(cue.ParsePath("steps"))
 	if stepsVal.Err() != nil {
 		return nil // Schema validation already handled this
@@ -166,107 +144,21 @@ func (p *Parser) securityValidation(value cue.Value) error {
 		return nil // Schema validation already handled this
 	}
 
-	stepCount := 0
 	stepIDs := make(map[string]bool)
 	for stepsIter.Next() {
-		stepCount++
 		stepVal := stepsIter.Value()
-
-		// Validate step ID security
 		idVal := stepVal.LookupPath(cue.ParsePath("id"))
 		if idVal.Err() == nil {
 			if stepID, err := idVal.String(); err == nil {
-				if !isValidStepID(stepID) {
-					return fmt.Errorf("step %d: ID '%s' contains invalid characters", stepCount, stepID)
-				}
 				if stepIDs[stepID] {
 					return fmt.Errorf("duplicate step ID '%s'", stepID)
 				}
 				stepIDs[stepID] = true
-
-				// Check for dangerous patterns
-				if err := p.validateStepSecurity(stepVal, stepID); err != nil {
-					return fmt.Errorf("step '%s': %w", stepID, err)
-				}
 			}
 		}
 	}
 
 	return nil
-}
-
-// isValidFlowName validates flow names for security
-func isValidFlowName(name string) bool {
-	if len(name) == 0 || len(name) > 100 {
-		return false
-	}
-	// Allow alphanumeric, hyphens, underscores, and dots
-	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
-			return false
-		}
-	}
-	return true
-}
-
-// isValidStepID validates step IDs for security
-func isValidStepID(id string) bool {
-	if len(id) == 0 || len(id) > 50 {
-		return false
-	}
-	// Allow alphanumeric, hyphens, and underscores
-	for _, r := range id {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '-' || r == '_') {
-			return false
-		}
-	}
-	return true
-}
-
-// validateStepSecurity validates step parameters for security issues
-func (p *Parser) validateStepSecurity(stepVal cue.Value, stepID string) error {
-	// Check for potentially dangerous 'use' values
-	useVal := stepVal.LookupPath(cue.ParsePath("use"))
-	if useVal.Err() == nil {
-		if useStr, err := useVal.String(); err == nil {
-			if isDangerousUse(useStr) {
-				return fmt.Errorf("step '%s' uses potentially dangerous adapter: %s", stepID, useStr)
-			}
-		}
-	}
-
-	// Check for suspicious URLs in 'with' parameters
-	withVal := stepVal.LookupPath(cue.ParsePath("with"))
-	if withVal.Err() == nil {
-		if err := p.validateWithSecurity(withVal, stepID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validateWithSecurity checks 'with' parameters for security issues
-func (p *Parser) validateWithSecurity(withVal cue.Value, stepID string) error {
-	// For now, just check for basic URL validation in common fields
-	// This can be extended to check for other security issues
-
-	// URL validation removed - let users make their own security decisions
-
-	return nil
-}
-
-// isDangerousUse checks if a 'use' value might be dangerous
-func isDangerousUse(use string) bool {
-	dangerous := []string{"exec", "system", "shell", "eval", "script"}
-	for _, d := range dangerous {
-		if strings.Contains(strings.ToLower(use), d) {
-			return true
-		}
-	}
-	return false
 }
 
 // valueToFlow converts a CUE value to a model.Flow
@@ -283,20 +175,6 @@ func (p *Parser) valueToFlow(value cue.Value) (*model.Flow, error) {
 	}
 
 	return &flow, nil
-}
-
-// Validate runs post-parse validation on a Flow struct
-// Note: This is minimal validation on the already-parsed struct
-// The comprehensive CUE schema validation happens during ParseFile/ParseString
-func (p *Parser) Validate(flow *model.Flow) error {
-	if flow.Name == "" {
-		return fmt.Errorf("flow name cannot be empty")
-	}
-	if len(flow.Steps) == 0 {
-		return fmt.Errorf("flow must have at least one step")
-	}
-
-	return nil
 }
 
 // ResolveRuntimeTemplates resolves {{ }} template expressions in a string using CUE evaluation

@@ -999,19 +999,6 @@ steps: [{
 	}
 }
 
-// TestFlowService tests the FlowService implementation
-func TestFlowService(t *testing.T) {
-	// This test is no longer needed since we eliminated the FlowService interface
-	// All functionality is now tested through direct API function calls
-	t.Skip("FlowService interface has been eliminated - functionality tested through direct API calls")
-}
-
-// TestFlowService_ErrorCases tests error cases for FlowService
-func TestFlowService_ErrorCases(t *testing.T) {
-	// This test is no longer needed since we eliminated the FlowService interface
-	t.Skip("FlowService interface has been eliminated - functionality tested through direct API calls")
-}
-
 // TestPublishEvent_EdgeCases tests PublishEvent with various edge cases
 func TestPublishEvent_EdgeCases(t *testing.T) {
 	ctx := context.Background()

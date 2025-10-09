@@ -178,14 +178,14 @@ func GetFlow(ctx context.Context, name string) (model.Flow, error) {
 func ValidateFlow(ctx context.Context, name string) error {
 	path := buildFlowPath(name)
 	parser := cue.NewParser()
-	flow, err := parser.ParseFile(path)
+	_, err := parser.ParseFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return utils.Errorf("flow '%s' not found", name)
 		}
 		return err
 	}
-	return parser.Validate(flow)
+	return nil
 }
 
 // GraphFlow returns the Mermaid diagram for the given flow.
