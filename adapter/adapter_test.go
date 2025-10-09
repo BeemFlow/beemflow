@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -342,10 +343,13 @@ func TestAdapterStressTest(t *testing.T) {
 	const numGoroutines = 50
 	const executionsPerGoroutine = 10
 
-	errChan := make(chan error, numGoroutines*executionsPerGoroutine)
+	var wg sync.WaitGroup
+	errChan := make(chan error, numGoroutines)
 
 	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
 		go func(workerID int) {
+			defer wg.Done()
 			for j := 0; j < executionsPerGoroutine; j++ {
 				result, err := coreAdapter.Execute(ctx, map[string]any{
 					"__use": "core.echo",
@@ -366,30 +370,26 @@ func TestAdapterStressTest(t *testing.T) {
 		}(i)
 	}
 
-	// Collect errors
+	// Wait for all goroutines to complete
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// Collect errors with timeout
 	var errors []error
 	timeout := time.After(5 * time.Second)
-	completed := 0
-	expectedCompletions := numGoroutines * executionsPerGoroutine
 
-	for completed < expectedCompletions {
-		select {
-		case err := <-errChan:
+	select {
+	case <-done:
+		// All goroutines completed successfully
+		close(errChan)
+		for err := range errChan {
 			errors = append(errors, err)
-			completed++
-		case <-timeout:
-			t.Fatalf("Stress test timed out with %d/%d completions", completed, expectedCompletions)
-		default:
-			// Check if all goroutines completed successfully
-			select {
-			case err := <-errChan:
-				errors = append(errors, err)
-				completed++
-			default:
-				time.Sleep(1 * time.Millisecond)
-				completed++ // Assume successful completion if no error
-			}
 		}
+	case <-timeout:
+		t.Fatalf("Stress test timed out")
 	}
 
 	if len(errors) > 0 {

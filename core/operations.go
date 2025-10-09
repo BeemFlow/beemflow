@@ -183,19 +183,17 @@ func validateFlowCLIHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("only one of --name or --file can be specified")
 	}
 
-	var err error
 	if file != "" {
 		// Parse and validate file directly
 		parser := cue.NewParser()
-		_, parseErr := parser.ParseFile(file)
-		if parseErr != nil {
-			utils.Error("CUE parse error: %v\n", parseErr)
-			return fmt.Errorf("CUE parse error: %w", parseErr)
+		_, err := parser.ParseFile(file)
+		if err != nil {
+			utils.Error("CUE parse error: %v\n", err)
+			return fmt.Errorf("CUE parse error: %w", err)
 		}
-		err = nil
 	} else {
 		// Use flow name service
-		err = ValidateFlow(cmd.Context(), name)
+		err := ValidateFlow(cmd.Context(), name)
 		if err != nil {
 			utils.Error("Validation error: %v\n", err)
 			return fmt.Errorf("validation error: %w", err)
@@ -217,17 +215,15 @@ func validateFlowHandler(ctx context.Context, args any) (any, error) {
 		return nil, fmt.Errorf("only one of name or file can be specified")
 	}
 
-	var err error
 	if a.File != "" {
 		// Parse and validate file directly
 		parser := cue.NewParser()
-		_, parseErr := parser.ParseFile(a.File)
-		if parseErr != nil {
-			return nil, fmt.Errorf("CUE parse error: %w", parseErr)
+		_, err := parser.ParseFile(a.File)
+		if err != nil {
+			return nil, fmt.Errorf("CUE parse error: %w", err)
 		}
-		err = nil
 	} else {
-		err = ValidateFlow(ctx, a.Name)
+		err := ValidateFlow(ctx, a.Name)
 		if err != nil {
 			return nil, err
 		}
