@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/beemflow/beemflow/config"
 	"github.com/beemflow/beemflow/constants"
@@ -19,6 +20,8 @@ import (
 	"github.com/beemflow/beemflow/storage"
 	"github.com/beemflow/beemflow/utils"
 	"github.com/google/uuid"
+	version "github.com/hashicorp/go-version"
+	"gopkg.in/yaml.v3"
 )
 
 // GetDefaultRegistry returns the default registry with OAuth providers
@@ -304,13 +307,52 @@ func handleExecutionResult(store storage.Storage, flowName string, execErr error
 	return latest.ID, execErr
 }
 
-// StartRun starts a new run for the given flow and event.
+// StartRun starts a new run for the given flow and event (deployed version only)
 func StartRun(ctx context.Context, flowName string, eventData map[string]any) (uuid.UUID, error) {
 	eng, err := createEngineFromConfig(ctx)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
+	store := GetStoreFromContext(ctx)
+	if store == nil {
+		store = eng.Storage
+	}
+
+	// Get deployed version from DB
+	deployedVersion, err := store.GetDeployedVersion(ctx, flowName)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if deployedVersion == "" {
+		return uuid.Nil, fmt.Errorf("flow '%s' not deployed (use --draft to test or deploy first)", flowName)
+	}
+
+	// Load flow from DB snapshot
+	content, err := store.GetFlowVersionContent(ctx, flowName, deployedVersion)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// Parse flow from snapshot
+	flow, err := dsl.ParseFromString(content)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("corrupted flow in database: %w", err)
+	}
+
+	// Execute with DB snapshot (immutable)
+	_, execErr := eng.Execute(ctx, flow, eventData)
+	return handleExecutionResult(eng.Storage, flowName, execErr)
+}
+
+// StartRunDraft starts a new run using the current file (bypasses deployment check)
+func StartRunDraft(ctx context.Context, flowName string, eventData map[string]any) (uuid.UUID, error) {
+	eng, err := createEngineFromConfig(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// Load from file system (working copy)
 	flow, err := parseFlowByName(flowName)
 	if err != nil {
 		return uuid.Nil, err
@@ -319,6 +361,7 @@ func StartRun(ctx context.Context, flowName string, eventData map[string]any) (u
 		return uuid.Nil, nil
 	}
 
+	// Execute with file version (draft)
 	_, execErr := eng.Execute(ctx, flow, eventData)
 	return handleExecutionResult(eng.Storage, flowName, execErr)
 }
@@ -837,4 +880,244 @@ func WithStore(ctx context.Context, store storage.Storage) context.Context {
 // WithConfig adds config to context
 func WithConfig(ctx context.Context, cfg *config.Config) context.Context {
 	return context.WithValue(ctx, configContextKey, cfg)
+}
+
+// FLOW MANAGEMENT (Save, Update, Delete, Deploy, Rollback)
+// SaveFlow saves or updates a flow definition (idempotent)
+func SaveFlow(ctx context.Context, name string, content string) (map[string]any, error) {
+	// Parse and validate
+	flow, err := dsl.ParseFromString(content)
+	if err != nil {
+		return nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	// Ensure name is set
+	if flow.Name == "" {
+		flow.Name = name
+	} else if flow.Name != name {
+		return nil, fmt.Errorf("flow name mismatch: provided=%s, yaml=%s", name, flow.Name)
+	}
+
+	if err := dsl.Validate(flow); err != nil {
+		return nil, fmt.Errorf("invalid flow: %w", err)
+	}
+
+	// Safety check: prevent overwriting deployed versions
+	if err := checkVersionImmutability(ctx, name, flow.Version); err != nil {
+		return nil, err
+	}
+
+	// Write file atomically
+	path := buildFlowPath(name)
+	existed, err := writeFlowFile(path, flow)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"name":    name,
+		"path":    path,
+		"version": flow.Version,
+		"status":  map[bool]string{true: "updated", false: "created"}[existed],
+		"message": fmt.Sprintf("Flow '%s' %s successfully", name, map[bool]string{true: "updated", false: "created"}[existed]),
+	}, nil
+}
+
+// checkVersionImmutability ensures deployed versions can't be overwritten
+func checkVersionImmutability(ctx context.Context, flowName, flowVersion string) error {
+	if flowVersion == "" {
+		return nil
+	}
+
+	store := GetStoreFromContext(ctx)
+	if store == nil {
+		return nil
+	}
+
+	// Check if version already deployed
+	if content, err := store.GetFlowVersionContent(ctx, flowName, flowVersion); err == nil && content != "" {
+		return fmt.Errorf("version %s already deployed and is immutable (bump version to make changes)", flowVersion)
+	}
+
+	// Warn if older than deployed
+	if deployedVersion, _ := store.GetDeployedVersion(ctx, flowName); deployedVersion != "" {
+		if isOlderVersion(flowVersion, deployedVersion) {
+			utils.Warn("Saving version %s which is older than deployed %s", flowVersion, deployedVersion)
+		}
+	}
+
+	return nil
+}
+
+// writeFlowFile writes flow to disk atomically, returns whether file existed
+func writeFlowFile(path string, flow *model.Flow) (bool, error) {
+	existed := false
+	if _, err := os.Stat(path); err == nil {
+		existed = true
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	yamlBytes, err := yaml.Marshal(flow)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal flow: %w", err)
+	}
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, yamlBytes, 0644); err != nil {
+		return false, fmt.Errorf("failed to write flow: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return false, fmt.Errorf("failed to save flow: %w", err)
+	}
+
+	return existed, nil
+}
+
+// isOlderVersion compares semantic versions properly
+func isOlderVersion(v1, v2 string) bool {
+	ver1, err1 := version.NewVersion(v1)
+	ver2, err2 := version.NewVersion(v2)
+	if err1 != nil || err2 != nil {
+		// Fallback to string comparison if not valid semver
+		return v1 < v2
+	}
+	return ver1.LessThan(ver2)
+}
+
+// DeleteFlow removes a flow definition
+func DeleteFlow(ctx context.Context, name string) (map[string]any, error) {
+	path := buildFlowPath(name)
+
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("flow not found: %s", name)
+	}
+
+	if err := os.Remove(path); err != nil {
+		return nil, fmt.Errorf("failed to delete flow: %w", err)
+	}
+
+	return map[string]any{
+		"name":    name,
+		"status":  "deleted",
+		"message": fmt.Sprintf("Flow '%s' deleted successfully", name),
+	}, nil
+}
+
+// DeployFlow snapshots the current flow to DB and marks as deployed
+func DeployFlow(ctx context.Context, name string) (map[string]any, error) {
+	store := GetStoreFromContext(ctx)
+	if store == nil {
+		return nil, fmt.Errorf("storage not available")
+	}
+
+	// Read and validate flow
+	content, flow, err := loadAndValidateFlow(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if flow.Version == "" {
+		return nil, fmt.Errorf("flow must have a version field to deploy")
+	}
+
+	// Safety check: prevent re-deploying
+	if err := checkVersionImmutability(ctx, name, flow.Version); err != nil {
+		return nil, err
+	}
+
+	// Deploy
+	if err := store.DeployFlowVersion(ctx, name, flow.Version, content); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"flow":    name,
+		"version": flow.Version,
+		"status":  "deployed",
+		"message": fmt.Sprintf("Flow '%s' v%s deployed to production", name, flow.Version),
+	}, nil
+}
+
+// loadAndValidateFlow reads flow from disk and validates it
+func loadAndValidateFlow(name string) (string, *model.Flow, error) {
+	content, err := os.ReadFile(buildFlowPath(name))
+	if err != nil {
+		return "", nil, fmt.Errorf("flow not found: %w", err)
+	}
+
+	flow, err := dsl.ParseFromString(string(content))
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid YAML: %w", err)
+	}
+
+	if err := dsl.Validate(flow); err != nil {
+		return "", nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	return string(content), flow, nil
+}
+
+// RollbackFlow switches to a specific deployed version
+func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]any, error) {
+	store := GetStoreFromContext(ctx)
+	if store == nil {
+		return nil, fmt.Errorf("storage not available")
+	}
+
+	// Get current deployed version
+	currentVersion, _ := store.GetDeployedVersion(ctx, name)
+
+	// Verify target version exists in DB
+	content, err := store.GetFlowVersionContent(ctx, name, targetVersion)
+	if err != nil {
+		return nil, fmt.Errorf("version %s not found (must be previously deployed)", targetVersion)
+	}
+
+	// Restore file from snapshot
+	if err := os.WriteFile(buildFlowPath(name), []byte(content), 0644); err != nil {
+		return nil, fmt.Errorf("failed to restore file: %w", err)
+	}
+
+	// Switch deployed pointer
+	if err := store.SetDeployedVersion(ctx, name, targetVersion); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"flow":             name,
+		"version":          targetVersion,
+		"status":           "rolled_back",
+		"previous_version": currentVersion,
+		"message":          fmt.Sprintf("Flow '%s' switched to v%s", name, targetVersion),
+	}, nil
+}
+
+// GetFlowVersionHistory returns version history for a flow
+func GetFlowVersionHistory(ctx context.Context, name string) ([]map[string]any, error) {
+	store := GetStoreFromContext(ctx)
+	if store == nil {
+		return nil, fmt.Errorf("storage not available")
+	}
+
+	snapshots, err := store.ListFlowVersions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	result := []map[string]any{}
+	for _, s := range snapshots {
+		result = append(result, map[string]any{
+			"version":     s.Version,
+			"deployed_at": s.DeployedAt.Format(time.RFC3339),
+			"is_live":     s.IsLive,
+		})
+	}
+
+	return result, nil
 }

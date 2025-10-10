@@ -44,6 +44,11 @@ The same universal protocol powers the BeemFlow agency, SaaS, and acquisition fl
     - [When to Upgrade to an MCP Server](#when-to-upgrade-to-an-mcp-server)
   - [Registry \& Tool Resolution](#registry--tool-resolution)
   - [Extending BeemFlow](#extending-beemflow)
+  - [Production-Safe Flow Deployments](#production-safe-flow-deployments)
+    - [Quick Start](#quick-start)
+    - [How It Works](#how-it-works)
+    - [Key Benefits](#key-benefits)
+    - [Commands](#commands)
   - [CLI • HTTP • MCP — One Brain](#cli--http--mcp--one-brain)
   - [Thoughts from our AI co-creators: Why BeemFlow Changes Everything 🤖](#thoughts-from-our-ai-co-creators-why-beemflow-changes-everything-)
   - [Flows as Functions: Universal, Protocolized, and Language-Native](#flows-as-functions-universal-protocolized-and-language-native)
@@ -971,6 +976,71 @@ Tools can be qualified (`smithery:airtable`) when ambiguous.
 
 ---
 
+## Production-Safe Flow Deployments
+
+**Iterate safely:** No more cloning n8n workflows to test changes safely.
+
+BeemFlow separates **drafts** (filesystem) from **production** (database snapshots), giving you safe iteration with instant rollbacks.
+
+### Quick Start
+
+```bash
+# 1. Edit your flow
+vim flows/my_flow.flow.yaml
+# Add: version: "1.0.0"
+
+# 2. Test draft
+flow runs start my_flow --draft
+
+# 3. Deploy to production
+flow deploy my_flow
+
+# 4. Iterate on next version
+vim flows/my_flow.flow.yaml  # version: "1.0.1"
+flow runs start my_flow --draft  # Test
+flow runs start my_flow --draft  # Test again (keep iterating!)
+flow deploy my_flow  # Deploy when ready
+```
+
+### How It Works
+
+- **Filesystem** = Your working copy (edit freely, test with `--draft`)
+- **Database** = Production snapshots (immutable, safe)
+- **Version field** = Required for deployment
+
+```bash
+# Production runs use DB snapshot
+flow runs start my_flow  # Uses deployed version from DB
+
+# Draft runs use current file
+flow runs start my_flow --draft  # Uses your working copy
+```
+
+### Key Benefits
+
+✅ **Iterate on same version** before deploying  
+✅ **Production never breaks** from file edits  
+✅ **Instant rollback** to previous version  
+✅ **Version history** tracking  
+
+### Commands
+
+```bash
+flow deploy <name>              # Deploy current version to production
+flow rollback <name> <version>  # Switch to any deployed version
+flow history <name>             # View deployment history
+```
+
+**For programmatic/API flow creation:**
+```bash
+flow save <name>        # Create or update flow file
+flow delete <name>      # Delete flow file
+```
+
+See [FLOW_VERSIONING.md](./docs/FLOW_VERSIONING.md) for complete guide.
+
+---
+
 ## CLI • HTTP • MCP — One Brain
 
 **Complete Interface Parity — Every operation available everywhere:**
@@ -979,12 +1049,17 @@ Tools can be qualified (`smithery:airtable`) when ambiguous.
 |-------------------|--------------------------|-------------------------|----------------------------|
 | List flows        | `flow list`              | `GET /flows`            | `beemflow_list_flows`      |
 | Get flow          | `flow get <name>`        | `GET /flows/{name}`     | `beemflow_get_flow`        |
+| Save flow         | `flow save <name>`       | `POST /flows`           | `beemflow_save_flow`       |
+| Delete flow       | `flow delete <name>`     | `DELETE /flows/{name}`  | `beemflow_delete_flow`     |
+| Deploy flow       | `flow deploy <name>`     | `POST /flows/{name}/deploy` | `beemflow_deploy_flow` |
+| Rollback flow     | `flow rollback <name> <version>` | `POST /flows/{name}/rollback` | `beemflow_rollback_flow` |
+| Flow history      | `flow history <name>`    | `GET /flows/{name}/history` | `beemflow_flow_history` |
 | Validate flow     | `flow validate <name_or_file>` | `POST /validate`        | `beemflow_validate_flow`   |
 | Lint flow file    | `flow lint <file>`       | `POST /flows/lint`      | `beemflow_lint_flow`       |
 | Graph flow        | `flow graph <name_or_file>`  | `POST /flows/graph`     | `beemflow_graph_flow`      |
-| Start run         | `flow start <flow-name>` | `POST /runs`            | `beemflow_start_run`       |
-| Get run           | `flow get-run <id>`      | `GET /runs/{id}`        | `beemflow_get_run`         |
-| List runs         | `flow list-runs`         | `GET /runs`             | `beemflow_list_runs`       |
+| Start run         | `flow runs start <name>` | `POST /runs`            | `beemflow_start_run`       |
+| Get run           | `flow runs get <id>`     | `GET /runs/{id}`        | `beemflow_get_run`         |
+| List runs         | `flow runs list`         | `GET /runs`             | `beemflow_list_runs`       |
 | Resume run        | `flow resume <token>`    | `POST /resume/{token}`  | `beemflow_resume_run`      |
 | Publish event     | `flow publish <topic>`   | `POST /events`          | `beemflow_publish_event`   |
 | **🛠️ Tool Manifests** |                       |                         |                            |

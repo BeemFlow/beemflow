@@ -85,11 +85,26 @@ CREATE TABLE IF NOT EXISTS paused_runs (
 	outputs JSONB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS deployed_flows (
+	flow_name TEXT PRIMARY KEY,
+	deployed_version TEXT NOT NULL,
+	deployed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS flow_versions (
+	flow_name TEXT NOT NULL,
+	version TEXT NOT NULL,
+	content TEXT NOT NULL,
+	deployed_at TIMESTAMPTZ NOT NULL,
+	PRIMARY KEY (flow_name, version)
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_runs_flow_name ON runs(flow_name);
 CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_steps_started_at ON steps(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_flow_versions_name ON flow_versions(flow_name, deployed_at DESC);
 `
 	_, err := db.Exec(sqlStmt)
 	return err
@@ -426,6 +441,104 @@ func (s *PostgresStorage) DeleteOAuthTokenByAccess(ctx context.Context, access s
 
 func (s *PostgresStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error {
 	return utils.Errorf("OAuth tokens not implemented for PostgreSQL storage")
+}
+
+// Flow versioning methods
+
+func (s *PostgresStorage) DeployFlowVersion(ctx context.Context, flowName, version, content string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return utils.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Save snapshot (idempotent)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO flow_versions (flow_name, version, content, deployed_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT(flow_name, version) DO NOTHING
+	`, flowName, version, content, time.Now())
+	if err != nil {
+		return utils.Errorf("failed to save snapshot: %w", err)
+	}
+
+	// Update deployed version pointer
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT(flow_name) DO UPDATE SET 
+			deployed_version = EXCLUDED.deployed_version,
+			deployed_at = EXCLUDED.deployed_at
+	`, flowName, version, time.Now())
+	if err != nil {
+		return utils.Errorf("failed to update deployed version: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+func (s *PostgresStorage) SetDeployedVersion(ctx context.Context, flowName, version string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT(flow_name) DO UPDATE SET 
+			deployed_version = EXCLUDED.deployed_version,
+			deployed_at = EXCLUDED.deployed_at
+	`, flowName, version, time.Now())
+	if err != nil {
+		return utils.Errorf("failed to set deployed version: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) GetDeployedVersion(ctx context.Context, flowName string) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT deployed_version FROM deployed_flows WHERE flow_name = $1",
+		flowName,
+	).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return version, err
+}
+
+func (s *PostgresStorage) GetFlowVersionContent(ctx context.Context, flowName, version string) (string, error) {
+	var content string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT content FROM flow_versions WHERE flow_name = $1 AND version = $2",
+		flowName, version,
+	).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", utils.Errorf("version %s not found for flow %s", version, flowName)
+	}
+	return content, err
+}
+
+func (s *PostgresStorage) ListFlowVersions(ctx context.Context, flowName string) ([]FlowSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT v.version, v.deployed_at,
+			CASE WHEN d.deployed_version = v.version THEN true ELSE false END as is_live
+		FROM flow_versions v
+		LEFT JOIN deployed_flows d ON v.flow_name = d.flow_name
+		WHERE v.flow_name = $1
+		ORDER BY v.deployed_at DESC
+	`, flowName)
+	if err != nil {
+		return nil, utils.Errorf("failed to list versions: %w", err)
+	}
+	defer rows.Close()
+
+	var snapshots []FlowSnapshot
+	for rows.Next() {
+		var s FlowSnapshot
+		if err := rows.Scan(&s.Version, &s.DeployedAt, &s.IsLive); err != nil {
+			continue
+		}
+		s.FlowName = flowName
+		snapshots = append(snapshots, s)
+	}
+	return snapshots, nil
 }
 
 // Close closes the underlying PostgreSQL database connection.

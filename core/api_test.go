@@ -368,8 +368,9 @@ func TestIntegration_FlowLifecycle(t *testing.T) {
 	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalFlowsDir)
 
-	// Create a simple test flow
+	// Create a simple test flow with version
 	flowContent := `name: test_flow
+version: "1.0.0"
 on: cli.manual
 steps:
   - id: echo_step
@@ -382,7 +383,16 @@ steps:
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
 
+	// Setup storage for deployment
+	dbPath := filepath.Join(tempDir, "test.db")
+	store, err := storage.NewSqliteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
 	ctx := context.Background()
+	ctx = WithStore(ctx, store)
 
 	// Test ListFlows
 	flows, err := ListFlows(ctx)
@@ -415,6 +425,12 @@ steps:
 	}
 	if graph == "" {
 		t.Error("Expected non-empty graph")
+	}
+
+	// Deploy before running
+	_, err = DeployFlow(ctx, "test_flow")
+	if err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
 	}
 
 	// Test StartRun
@@ -838,10 +854,20 @@ func TestStartRun_NonExistentFlow(t *testing.T) {
 	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
-	ctx := context.Background()
-	runID, err := StartRun(ctx, "nonexistent", map[string]any{})
+	// Setup storage
+	dbPath := filepath.Join(tempDir, "test.db")
+	store, err := storage.NewSqliteStorage(dbPath)
 	if err != nil {
-		t.Errorf("StartRun should not error for non-existent flow, got %v", err)
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	ctx = WithStore(ctx, store)
+
+	runID, err := StartRun(ctx, "nonexistent", map[string]any{})
+	if err == nil {
+		t.Error("StartRun should error for non-existent flow")
 	}
 	if runID != uuid.Nil {
 		t.Errorf("Expected nil UUID for non-existent flow, got %v", runID)

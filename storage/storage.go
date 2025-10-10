@@ -49,4 +49,19 @@ type Storage interface {
 	DeleteOAuthTokenByCode(ctx context.Context, code string) error
 	DeleteOAuthTokenByAccess(ctx context.Context, access string) error
 	DeleteOAuthTokenByRefresh(ctx context.Context, refresh string) error
+
+	// Flow versioning methods
+	DeployFlowVersion(ctx context.Context, flowName, version, content string) error
+	SetDeployedVersion(ctx context.Context, flowName, version string) error
+	GetDeployedVersion(ctx context.Context, flowName string) (string, error)
+	GetFlowVersionContent(ctx context.Context, flowName, version string) (string, error)
+	ListFlowVersions(ctx context.Context, flowName string) ([]FlowSnapshot, error)
+}
+
+// FlowSnapshot represents a deployed flow version
+type FlowSnapshot struct {
+	FlowName   string    `json:"flow_name"`
+	Version    string    `json:"version"`
+	DeployedAt time.Time `json:"deployed_at"`
+	IsLive     bool      `json:"is_live"`
 }

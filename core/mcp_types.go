@@ -12,6 +12,7 @@ package api
 type MCPStartRunArgs struct {
 	FlowName string `json:"flowName" jsonschema:"required,description=Name of the flow to start"`
 	Event    string `json:"event" jsonschema:"description=JSON string containing event data"`
+	Draft    bool   `json:"draft" jsonschema:"description=Run draft version (bypass deployment check)"`
 }
 
 // MCPPublishEventArgs is a simplified version of PublishEventArgs for MCP
@@ -61,4 +62,21 @@ type MCPServeArgs struct {
 	Stdio bool   `json:"stdio" flag:"stdio" description:"Run in stdio mode instead of HTTP"`
 	Addr  string `json:"addr" flag:"addr" description:"HTTP server address"`
 	Debug bool   `json:"debug" flag:"debug" description:"Enable debug mode"`
+}
+
+// MCPSaveFlowArgs is MCP-compatible version of SaveFlowArgs
+type MCPSaveFlowArgs struct {
+	Name    string `json:"name" jsonschema:"description=Flow name (optional if specified in YAML)"`
+	Content string `json:"content" jsonschema:"required,description=YAML content of the flow"`
+}
+
+// MCPDeleteFlowArgs is MCP-compatible version of DeleteFlowArgs
+type MCPDeleteFlowArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Flow name to delete"`
+}
+
+// MCPRollbackFlowArgs is MCP-compatible version of RollbackFlowArgs
+type MCPRollbackFlowArgs struct {
+	Name    string `json:"name" jsonschema:"required,description=Flow name"`
+	Version string `json:"version" jsonschema:"required,description=Version to rollback to"`
 }

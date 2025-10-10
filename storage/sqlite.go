@@ -154,6 +154,19 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS deployed_flows (
+	flow_name TEXT PRIMARY KEY,
+	deployed_version TEXT NOT NULL,
+	deployed_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS flow_versions (
+	flow_name TEXT NOT NULL,
+	version TEXT NOT NULL,
+	content TEXT NOT NULL,
+	deployed_at INTEGER NOT NULL,
+	PRIMARY KEY (flow_name, version)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_versions_name ON flow_versions(flow_name, deployed_at DESC);
 `
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
@@ -894,6 +907,108 @@ func (s *SqliteStorage) deleteOAuthTokenByField(ctx context.Context, field, valu
 	}
 
 	return nil
+}
+
+// Flow versioning methods
+
+func (s *SqliteStorage) DeployFlowVersion(ctx context.Context, flowName, version, content string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return utils.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Save snapshot (idempotent - ON CONFLICT DO NOTHING)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO flow_versions (flow_name, version, content, deployed_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(flow_name, version) DO NOTHING
+	`, flowName, version, content, time.Now().Unix())
+	if err != nil {
+		return utils.Errorf("failed to save snapshot: %w", err)
+	}
+
+	// Update deployed version pointer
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(flow_name) DO UPDATE SET 
+			deployed_version=excluded.deployed_version,
+			deployed_at=excluded.deployed_at
+	`, flowName, version, time.Now().Unix())
+	if err != nil {
+		return utils.Errorf("failed to update deployed version: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+func (s *SqliteStorage) SetDeployedVersion(ctx context.Context, flowName, version string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(flow_name) DO UPDATE SET 
+			deployed_version=excluded.deployed_version,
+			deployed_at=excluded.deployed_at
+	`, flowName, version, time.Now().Unix())
+	if err != nil {
+		return utils.Errorf("failed to set deployed version: %w", err)
+	}
+	return nil
+}
+
+func (s *SqliteStorage) GetDeployedVersion(ctx context.Context, flowName string) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT deployed_version FROM deployed_flows WHERE flow_name = ?",
+		flowName,
+	).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return version, err
+}
+
+func (s *SqliteStorage) GetFlowVersionContent(ctx context.Context, flowName, version string) (string, error) {
+	var content string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT content FROM flow_versions WHERE flow_name = ? AND version = ?",
+		flowName, version,
+	).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", utils.Errorf("version %s not found for flow %s", version, flowName)
+	}
+	return content, err
+}
+
+func (s *SqliteStorage) ListFlowVersions(ctx context.Context, flowName string) ([]FlowSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT v.version, v.deployed_at,
+			CASE WHEN d.deployed_version = v.version THEN 1 ELSE 0 END as is_live
+		FROM flow_versions v
+		LEFT JOIN deployed_flows d ON v.flow_name = d.flow_name
+		WHERE v.flow_name = ?
+		ORDER BY v.deployed_at DESC
+	`, flowName)
+	if err != nil {
+		return nil, utils.Errorf("failed to list versions: %w", err)
+	}
+	defer rows.Close()
+
+	var snapshots []FlowSnapshot
+	for rows.Next() {
+		var s FlowSnapshot
+		var deployedAt int64
+		var isLive int
+		if err := rows.Scan(&s.Version, &deployedAt, &isLive); err != nil {
+			continue
+		}
+		s.FlowName = flowName
+		s.DeployedAt = time.Unix(deployedAt, 0)
+		s.IsLive = (isLive == 1)
+		snapshots = append(snapshots, s)
+	}
+	return snapshots, nil
 }
 
 // Close closes the underlying SQL database connection.
