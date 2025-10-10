@@ -147,21 +147,51 @@ func validateFlowName(name string) error {
 		return fmt.Errorf("invalid flow name: contains null byte")
 	}
 
-	// Ensure resolved path stays within flowsDir
+	// Build the full path
 	path := filepath.Join(flowsDir, name+constants.FlowFileExtension)
-	absPath, err := filepath.Abs(path)
+
+	// Try to resolve the actual path through symlinks if it exists
+	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return fmt.Errorf("invalid flow name: %w", err)
+		// If path doesn't exist yet, we can't resolve symlinks
+		// So check parent directory and use clean absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("invalid flow name: %w", err)
+		}
+
+		// For non-existent paths, check parent directory if it exists
+		parentDir := filepath.Dir(absPath)
+		if resolvedParent, err := filepath.EvalSymlinks(parentDir); err == nil {
+			// Parent exists, use its resolved path to build the full path
+			resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
+		} else {
+			// Parent doesn't exist either, use clean absolute path
+			resolvedPath = filepath.Clean(absPath)
+		}
 	}
 
-	absFlowsDir, err := filepath.Abs(flowsDir)
+	// Resolve flowsDir through symlinks
+	resolvedFlowsDir, err := filepath.EvalSymlinks(flowsDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve flows directory: %w", err)
+		// If flowsDir doesn't exist yet, use Abs
+		resolvedFlowsDir, err = filepath.Abs(flowsDir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve flows directory: %w", err)
+		}
 	}
 
-	// Must be within flows directory (with separator to prevent prefix attacks)
-	if !strings.HasPrefix(absPath, absFlowsDir+string(filepath.Separator)) &&
-		absPath != absFlowsDir {
+	// Clean both paths to ensure consistent comparison
+	resolvedPath = filepath.Clean(resolvedPath)
+	resolvedFlowsDir = filepath.Clean(resolvedFlowsDir)
+
+	// Ensure directory paths end with separator for proper prefix matching
+	if !strings.HasSuffix(resolvedFlowsDir, string(filepath.Separator)) {
+		resolvedFlowsDir += string(filepath.Separator)
+	}
+
+	// Must be strictly within flows directory (not the directory itself)
+	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedFlowsDir) {
 		return fmt.Errorf("invalid flow name: path escapes flows directory")
 	}
 
@@ -939,6 +969,11 @@ func WithConfig(ctx context.Context, cfg *config.Config) context.Context {
 // FLOW MANAGEMENT (Save, Update, Delete, Deploy, Rollback)
 // SaveFlow saves or updates a flow definition (idempotent)
 func SaveFlow(ctx context.Context, name string, content string) (map[string]any, error) {
+	// Validate flow name to prevent path traversal attacks
+	if err := validateFlowName(name); err != nil {
+		return nil, err
+	}
+
 	// Parse and validate
 	flow, err := dsl.ParseFromString(content)
 	if err != nil {
@@ -1040,6 +1075,11 @@ func isOlderVersion(v1, v2 string) bool {
 
 // DeleteFlow removes a flow definition
 func DeleteFlow(ctx context.Context, name string) (map[string]any, error) {
+	// Validate flow name to prevent path traversal attacks
+	if err := validateFlowName(name); err != nil {
+		return nil, err
+	}
+
 	path := buildFlowPath(name)
 
 	// Check if file exists
@@ -1060,6 +1100,11 @@ func DeleteFlow(ctx context.Context, name string) (map[string]any, error) {
 
 // DeployFlow snapshots the current flow to DB and marks as deployed
 func DeployFlow(ctx context.Context, name string) (map[string]any, error) {
+	// Validate flow name to prevent path traversal attacks
+	if err := validateFlowName(name); err != nil {
+		return nil, err
+	}
+
 	store := GetStoreFromContext(ctx)
 	if store == nil {
 		return nil, fmt.Errorf("storage not available")
