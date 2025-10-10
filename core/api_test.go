@@ -490,8 +490,12 @@ steps:
 	defer store.Close()
 
 	ctx := WithStore(context.Background(), store)
-	SaveFlow(ctx, "resumeflow", flowYAML)
-	DeployFlow(ctx, "resumeflow")
+	if _, err := SaveFlow(ctx, "resumeflow", flowYAML); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+	if _, err := DeployFlow(ctx, "resumeflow"); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
 
 	// StartRun with token triggers pause
 	event := map[string]any{"token": "tok123"}
@@ -924,8 +928,12 @@ steps:
 	defer store.Close()
 
 	ctx := WithStore(context.Background(), store)
-	SaveFlow(ctx, "pause_flow", flowContent)
-	DeployFlow(ctx, "pause_flow")
+	if _, err := SaveFlow(ctx, "pause_flow", flowContent); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+	if _, err := DeployFlow(ctx, "pause_flow"); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
 
 	runID, err := StartRun(ctx, "pause_flow", map[string]any{})
 	if err != nil {
@@ -1021,8 +1029,12 @@ steps:
 	defer store.Close()
 
 	ctx := WithStore(context.Background(), store)
-	SaveFlow(ctx, "edge_test_flow", flowContent)
-	DeployFlow(ctx, "edge_test_flow")
+	if _, err := SaveFlow(ctx, "edge_test_flow", flowContent); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+	if _, err := DeployFlow(ctx, "edge_test_flow"); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
 
 	// Test with nil event
 	runID, err := StartRun(ctx, "edge_test_flow", nil)

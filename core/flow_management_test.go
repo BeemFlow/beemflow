@@ -49,6 +49,22 @@ func setupFlowTest(t *testing.T) (context.Context, func()) {
 	return ctx, cleanup
 }
 
+// mustSaveFlow is a test helper that calls SaveFlow and fails the test on error
+func mustSaveFlow(t *testing.T, ctx context.Context, name, content string) {
+	t.Helper()
+	if _, err := SaveFlow(ctx, name, content); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+}
+
+// mustDeployFlow is a test helper that calls DeployFlow and fails the test on error
+func mustDeployFlow(t *testing.T, ctx context.Context, name string) {
+	t.Helper()
+	if _, err := DeployFlow(ctx, name); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
+}
+
 // ============================================================================
 // SAVE FLOW TESTS
 // ============================================================================
@@ -144,8 +160,8 @@ on: cli.manual
 steps: []
 `
 
-	SaveFlow(ctx, "test_flow", content)
-	DeployFlow(ctx, "test_flow")
+	mustSaveFlow(t, ctx, "test_flow", content)
+	mustDeployFlow(t, ctx, "test_flow")
 
 	// Try to save deployed version again
 	_, err := SaveFlow(ctx, "test_flow", content)
@@ -197,7 +213,7 @@ on: cli.manual
 steps: []
 `
 
-	SaveFlow(ctx, "test_flow", content)
+	mustSaveFlow(t, ctx, "test_flow", content)
 
 	result, err := DeployFlow(ctx, "test_flow")
 	if err != nil {
@@ -226,8 +242,8 @@ on: cli.manual
 steps: []
 `
 
-	SaveFlow(ctx, "test_flow", content)
-	DeployFlow(ctx, "test_flow")
+	mustSaveFlow(t, ctx, "test_flow", content)
+	mustDeployFlow(t, ctx, "test_flow")
 
 	// Try to deploy again
 	_, err := DeployFlow(ctx, "test_flow")
@@ -245,7 +261,7 @@ on: cli.manual
 steps: []
 `
 
-	SaveFlow(ctx, "test_flow", content)
+	mustSaveFlow(t, ctx, "test_flow", content)
 
 	_, err := DeployFlow(ctx, "test_flow")
 	if err == nil || !strings.Contains(err.Error(), "version field") {
@@ -292,8 +308,8 @@ steps:
     with:
       text: "v1"
 `
-	SaveFlow(ctx, "test_flow", content1)
-	DeployFlow(ctx, "test_flow")
+	mustSaveFlow(t, ctx, "test_flow", content1)
+	mustDeployFlow(t, ctx, "test_flow")
 
 	// Deploy v2.0.0
 	content2 := `name: test_flow
@@ -305,8 +321,8 @@ steps:
     with:
       text: "v2"
 `
-	SaveFlow(ctx, "test_flow", content2)
-	DeployFlow(ctx, "test_flow")
+	mustSaveFlow(t, ctx, "test_flow", content2)
+	mustDeployFlow(t, ctx, "test_flow")
 
 	// Rollback to v1.0.0
 	result, err := RollbackFlow(ctx, "test_flow", "1.0.0")
@@ -341,8 +357,8 @@ version: "1.0.0"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "test_flow", content)
-	DeployFlow(ctx, "test_flow")
+	mustSaveFlow(t, ctx, "test_flow", content)
+	mustDeployFlow(t, ctx, "test_flow")
 
 	_, err := RollbackFlow(ctx, "test_flow", "9.9.9")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
@@ -359,8 +375,8 @@ func TestRollbackFlow_MultipleVersionJumps(t *testing.T) {
 	// Deploy v1, v2, v3
 	for _, ver := range []string{"1.0.0", "2.0.0", "3.0.0"} {
 		content := "name: test\nversion: \"" + ver + "\"\non: cli.manual\nsteps: []"
-		SaveFlow(ctx, "test", content)
-		DeployFlow(ctx, "test")
+		mustSaveFlow(t, ctx, "test", content)
+		mustDeployFlow(t, ctx, "test")
 	}
 
 	// Jump to v1.0.0 (skip v2)
@@ -394,7 +410,7 @@ on: cli.manual
 steps: []
 `
 
-	SaveFlow(ctx, "test_flow", content)
+	mustSaveFlow(t, ctx, "test_flow", content)
 	result, err := DeleteFlow(ctx, "test_flow")
 	if err != nil {
 		t.Fatalf("DeleteFlow failed: %v", err)
@@ -428,8 +444,8 @@ func TestGetFlowVersionHistory_MultipleVersions(t *testing.T) {
 
 	for _, ver := range []string{"1.0.0", "1.1.0", "2.0.0"} {
 		content := "name: test\nversion: \"" + ver + "\"\non: cli.manual\nsteps: []"
-		SaveFlow(ctx, "test", content)
-		DeployFlow(ctx, "test")
+		mustSaveFlow(t, ctx, "test", content)
+		mustDeployFlow(t, ctx, "test")
 	}
 
 	history, err := GetFlowVersionHistory(ctx, "test")
@@ -496,8 +512,8 @@ steps:
     with:
       text: "deployed"
 `
-	SaveFlow(ctx, "run_test", content1)
-	DeployFlow(ctx, "run_test")
+	mustSaveFlow(t, ctx, "run_test", content1)
+	mustDeployFlow(t, ctx, "run_test")
 
 	// Edit file to v1.0.1 (don't deploy)
 	content2 := `name: run_test
@@ -509,7 +525,7 @@ steps:
     with:
       text: "draft"
 `
-	SaveFlow(ctx, "run_test", content2)
+	mustSaveFlow(t, ctx, "run_test", content2)
 
 	// Run should use v1.0.0 from DB
 	runID, err := StartRun(ctx, "run_test", map[string]any{})
@@ -532,8 +548,8 @@ version: "1.0.0"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "draft_test", content1)
-	DeployFlow(ctx, "draft_test")
+	mustSaveFlow(t, ctx, "draft_test", content1)
+	mustDeployFlow(t, ctx, "draft_test")
 
 	// Edit file to v1.0.1
 	content2 := `name: draft_test
@@ -541,7 +557,7 @@ version: "1.0.1"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "draft_test", content2)
+	mustSaveFlow(t, ctx, "draft_test", content2)
 
 	// Draft should use file
 	runID, err := StartRunDraft(ctx, "draft_test", map[string]any{})
@@ -563,7 +579,7 @@ version: "1.0.0"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "undeployed", content)
+	mustSaveFlow(t, ctx, "undeployed", content)
 
 	_, err := StartRun(ctx, "undeployed", map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "not deployed") {
@@ -584,7 +600,7 @@ steps:
     with:
       text: "draft"
 `
-	SaveFlow(ctx, "draft_only", content)
+	mustSaveFlow(t, ctx, "draft_only", content)
 
 	runID, err := StartRunDraft(ctx, "draft_only", map[string]any{})
 	if err != nil {
@@ -612,8 +628,8 @@ version: "1.0.0"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "complete", content1)
-	DeployFlow(ctx, "complete")
+	mustSaveFlow(t, ctx, "complete", content1)
+	mustDeployFlow(t, ctx, "complete")
 
 	// Save v1.0.1
 	content2 := `name: complete
@@ -621,7 +637,7 @@ version: "1.0.1"
 on: cli.manual
 steps: []
 `
-	SaveFlow(ctx, "complete", content2)
+	mustSaveFlow(t, ctx, "complete", content2)
 
 	// Try to save v1.0.0 again → should fail
 	if _, err := SaveFlow(ctx, "complete", content1); err == nil {
@@ -629,7 +645,7 @@ steps: []
 	}
 
 	// Deploy v1.0.1
-	DeployFlow(ctx, "complete")
+	mustDeployFlow(t, ctx, "complete")
 
 	// View history
 	history, _ := GetFlowVersionHistory(ctx, "complete")

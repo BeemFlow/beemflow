@@ -80,8 +80,12 @@ steps:
 	defer store.Close()
 
 	ctx := WithStore(context.Background(), store)
-	SaveFlow(ctx, "test_workflow", testFlow)
-	DeployFlow(ctx, "test_workflow")
+	if _, err := SaveFlow(ctx, "test_workflow", testFlow); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+	if _, err := DeployFlow(ctx, "test_workflow"); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
 
 	op, exists := GetOperation("workflow_cron")
 	require.True(t, exists)
@@ -389,8 +393,12 @@ steps:
 	defer store.Close()
 
 	ctx := WithStore(context.Background(), store)
-	SaveFlow(ctx, "specific_workflow", testFlow)
-	DeployFlow(ctx, "specific_workflow")
+	if _, err := SaveFlow(ctx, "specific_workflow", testFlow); err != nil {
+		t.Fatalf("SaveFlow failed: %v", err)
+	}
+	if _, err := DeployFlow(ctx, "specific_workflow"); err != nil {
+		t.Fatalf("DeployFlow failed: %v", err)
+	}
 
 	// Create request for specific workflow
 	req := httptest.NewRequest(http.MethodPost, "/cron/specific_workflow", nil)
