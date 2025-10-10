@@ -10,7 +10,7 @@ Instantly use thousands of curated MCP servers and LLM tools with zero-config --
 
 Generate new workflows with natural language via BeemFlow runtime's MCP server to move even faster.
 
-The same universal protocol powers the BeemFlow agency, SaaS, and acquisition flywheel—now you can build on it too.
+The same universal protocol powers the BeemFlow agency, SaaS, and acquisition flywheel -- now you can build on it too.
 
 > **BeemFlow: Program the world.**
 
@@ -95,7 +95,7 @@ We are in a new age, and things are happening fast:
 
 ### The Hidden Opportunity
 
-BeemFlow isn't just about automation—it's about **acquisition**:
+BeemFlow isn't just about automation, it's about **acquisition**:
 
 > Deploy automation → Learn & optimize your favorite business → Build trust → Acquire with creative financing & retire a deserving business owner.
 
@@ -1037,8 +1037,6 @@ flow save <name>        # Create or update flow file
 flow delete <name>      # Delete flow file
 ```
 
-See [FLOW_VERSIONING.md](./docs/FLOW_VERSIONING.md) for complete guide.
-
 ---
 
 ## CLI • HTTP • MCP — One Brain
@@ -1336,9 +1334,10 @@ func BuildApprovalFlow(requiresLegal, requiresFinance bool) *model.Flow {
 
 ## License
 
-We'll see -- feel free to read the code and try things out but not sure if MIT or not yet.
-Commercial cloud & SLA on the way.
+We'll see -- feel free to read the code and try things out.
+Commercial cloud & SLA upon request.
 
 ---
 
-> Docs at <https://docs.beemflow.com> • X: [@BeemFlow](https://X.com/beemflow)
+Website: [BeemBeem](https://beembeem.com)
+X: [@BeemFlow](https://X.com/beemflow)
