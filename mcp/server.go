@@ -21,6 +21,12 @@ type ToolRegistration struct {
 
 // Serve starts an MCP server with the given configuration.
 func Serve(debug, stdio bool, addr string, tools []ToolRegistration) error {
+	// Default to stdio mode if no address is specified
+	// This is the typical case for MCP clients like Claude
+	if !stdio && addr == "" {
+		stdio = true
+	}
+
 	if stdio && !debug {
 		utils.SetUserOutput(io.Discard)
 	}
