@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beemflow/beemflow/config"
@@ -67,6 +68,14 @@ var flowsDir = config.DefaultFlowsDir
 // cachedConfig stores the loaded configuration to avoid repeated file reads
 var cachedConfig *config.Config
 
+// rollbackLocks provides per-flow locking to prevent concurrent rollbacks
+var rollbackLocks = struct {
+	sync.Mutex
+	locks map[string]*sync.Mutex
+}{
+	locks: make(map[string]*sync.Mutex),
+}
+
 // SetFlowsDir allows overriding the base directory for flow definitions.
 func SetFlowsDir(dir string) {
 	if dir != "" {
@@ -112,6 +121,51 @@ func GetConfig() (*config.Config, error) {
 // ResetConfigCache clears the cached config - for testing only
 func ResetConfigCache() {
 	cachedConfig = nil
+}
+
+// getFlowLock returns a mutex for a specific flow to prevent concurrent modifications
+func getFlowLock(flowName string) *sync.Mutex {
+	rollbackLocks.Lock()
+	defer rollbackLocks.Unlock()
+
+	if _, exists := rollbackLocks.locks[flowName]; !exists {
+		rollbackLocks.locks[flowName] = &sync.Mutex{}
+	}
+	return rollbackLocks.locks[flowName]
+}
+
+// validateFlowName ensures the flow name is safe and doesn't allow path traversal
+func validateFlowName(name string) error {
+	// Prevent path traversal attacks
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("invalid flow name: contains '..'")
+	}
+	if strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid flow name: absolute paths not allowed")
+	}
+	if strings.Contains(name, "\x00") {
+		return fmt.Errorf("invalid flow name: contains null byte")
+	}
+
+	// Ensure resolved path stays within flowsDir
+	path := filepath.Join(flowsDir, name+constants.FlowFileExtension)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("invalid flow name: %w", err)
+	}
+
+	absFlowsDir, err := filepath.Abs(flowsDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve flows directory: %w", err)
+	}
+
+	// Must be within flows directory (with separator to prevent prefix attacks)
+	if !strings.HasPrefix(absPath, absFlowsDir+string(filepath.Separator)) &&
+		absPath != absFlowsDir {
+		return fmt.Errorf("invalid flow name: path escapes flows directory")
+	}
+
+	return nil
 }
 
 // ListFlows returns the names of all available flows.
@@ -956,22 +1010,17 @@ func writeFlowFile(path string, flow *model.Flow) (bool, error) {
 		existed = true
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, fmt.Errorf("failed to create directory: %w", err)
-	}
-
 	yamlBytes, err := yaml.Marshal(flow)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal flow: %w", err)
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, yamlBytes, 0644); err != nil {
-		return false, fmt.Errorf("failed to write flow: %w", err)
-	}
+	// Use context with reasonable timeout for file operations
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+	// Use the secure atomic write function
+	if err := writeFileAtomicWithContext(ctx, path, yamlBytes); err != nil {
 		return false, fmt.Errorf("failed to save flow: %w", err)
 	}
 
@@ -1065,18 +1114,39 @@ func loadAndValidateFlow(name string) (string, *model.Flow, error) {
 
 // RollbackFlow switches to a specific deployed version
 func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]any, error) {
+	// Validate flow name to prevent path traversal attacks
+	if err := validateFlowName(name); err != nil {
+		return nil, err
+	}
+
+	// Per-flow locking to prevent concurrent rollbacks causing corruption
+	lock := getFlowLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
 	store := GetStoreFromContext(ctx)
 	if store == nil {
 		return nil, fmt.Errorf("storage not available")
 	}
 
-	// Get current deployed version
-	currentVersion, _ := store.GetDeployedVersion(ctx, name)
+	// Get current deployed version (don't ignore errors)
+	currentVersion, err := store.GetDeployedVersion(ctx, name)
+	if err != nil {
+		utils.WarnCtx(ctx, "Failed to get current version: %v", err)
+		currentVersion = "unknown"
+	}
 
 	// Verify target version exists in DB
 	content, err := store.GetFlowVersionContent(ctx, name, targetVersion)
 	if err != nil {
 		return nil, fmt.Errorf("version %s not found (must be previously deployed)", targetVersion)
+	}
+
+	// Check for context cancellation before expensive operations
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 
 	// CRITICAL: Update database FIRST to maintain consistency
@@ -1085,14 +1155,22 @@ func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]a
 		return nil, fmt.Errorf("failed to update deployed version: %w", err)
 	}
 
+	// Check for context cancellation after DB update
+	select {
+	case <-ctx.Done():
+		utils.WarnCtx(ctx, "Context cancelled after DB update to v%s. File may be stale.", targetVersion)
+		return nil, ctx.Err()
+	default:
+	}
+
 	// Then restore file atomically from snapshot
 	// Use atomic write (tmp file + rename) to prevent corruption
 	path := buildFlowPath(name)
-	if err := writeFileAtomic(path, []byte(content)); err != nil {
-		// DB is updated but file write failed - log critical warning
+	if err := writeFileAtomicWithContext(ctx, path, []byte(content)); err != nil {
+		// DB is updated but file write failed - log critical error
 		// The DB is still the source of truth, so the system can recover
-		utils.WarnCtx(ctx, "Database updated to v%s but file write failed: %v. System will use DB version.", targetVersion, err)
-		return nil, fmt.Errorf("failed to restore file (DB updated): %w", err)
+		utils.ErrorCtx(ctx, "CRITICAL: Database updated to v%s but file write failed: %v. System INCONSISTENT. Manual recovery required.", targetVersion, err)
+		return nil, fmt.Errorf("rollback incomplete - DB updated but file write failed: %w", err)
 	}
 
 	return map[string]any{
@@ -1104,23 +1182,68 @@ func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]a
 	}, nil
 }
 
-// writeFileAtomic writes data to a file atomically using tmp file + rename
-func writeFileAtomic(path string, data []byte) error {
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+// writeFileAtomicWithContext writes data to a file atomically using tmp file + rename
+// Includes: random temp names, fsync for durability, context cancellation, proper cleanup
+func writeFileAtomicWithContext(ctx context.Context, path string, data []byte) error {
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Write to temporary file first
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	// Create temp file with random name to prevent collision
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Ensure cleanup on any error
+	var tmpFilePtr *os.File = tmpFile
+	defer func() {
+		if tmpFilePtr != nil {
+			tmpFilePtr.Close()
+		}
+	}()
+
+	// Write data to temp file
+	if _, err := tmpFile.Write(data); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
 
-	// Atomic rename (if this fails, tmp file remains but original is unchanged)
+	// Fsync data to disk for durability (survives power loss)
+	if err := tmpFile.Sync(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to sync temporary file: %w", err)
+	}
+
+	// Close before rename
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+	tmpFilePtr = nil // Prevent double-close in defer
+
+	// Atomic rename - this is the commit point
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // Clean up tmp file on failure
+		// Log cleanup failure instead of ignoring it
+		if cleanupErr := os.Remove(tmpPath); cleanupErr != nil {
+			utils.WarnCtx(ctx, "Failed to clean up temp file %s: %v", tmpPath, cleanupErr)
+		}
 		return fmt.Errorf("failed to rename file: %w", err)
+	}
+
+	// Sync directory to persist the rename (best-effort)
+	if dirFile, err := os.Open(dir); err == nil {
+		dirFile.Sync()
+		dirFile.Close()
 	}
 
 	return nil
