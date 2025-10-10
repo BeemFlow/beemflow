@@ -1079,14 +1079,20 @@ func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]a
 		return nil, fmt.Errorf("version %s not found (must be previously deployed)", targetVersion)
 	}
 
-	// Restore file from snapshot
-	if err := os.WriteFile(buildFlowPath(name), []byte(content), 0644); err != nil {
-		return nil, fmt.Errorf("failed to restore file: %w", err)
+	// CRITICAL: Update database FIRST to maintain consistency
+	// If DB update fails, file remains unchanged (safe)
+	if err := store.SetDeployedVersion(ctx, name, targetVersion); err != nil {
+		return nil, fmt.Errorf("failed to update deployed version: %w", err)
 	}
 
-	// Switch deployed pointer
-	if err := store.SetDeployedVersion(ctx, name, targetVersion); err != nil {
-		return nil, err
+	// Then restore file atomically from snapshot
+	// Use atomic write (tmp file + rename) to prevent corruption
+	path := buildFlowPath(name)
+	if err := writeFileAtomic(path, []byte(content)); err != nil {
+		// DB is updated but file write failed - log critical warning
+		// The DB is still the source of truth, so the system can recover
+		utils.WarnCtx(ctx, "Database updated to v%s but file write failed: %v. System will use DB version.", targetVersion, err)
+		return nil, fmt.Errorf("failed to restore file (DB updated): %w", err)
 	}
 
 	return map[string]any{
@@ -1096,6 +1102,28 @@ func RollbackFlow(ctx context.Context, name, targetVersion string) (map[string]a
 		"previous_version": currentVersion,
 		"message":          fmt.Sprintf("Flow '%s' switched to v%s", name, targetVersion),
 	}, nil
+}
+
+// writeFileAtomic writes data to a file atomically using tmp file + rename
+func writeFileAtomic(path string, data []byte) error {
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Write to temporary file first
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temporary file: %w", err)
+	}
+
+	// Atomic rename (if this fails, tmp file remains but original is unchanged)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath) // Clean up tmp file on failure
+		return fmt.Errorf("failed to rename file: %w", err)
+	}
+
+	return nil
 }
 
 // GetFlowVersionHistory returns version history for a flow
