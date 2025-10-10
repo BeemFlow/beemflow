@@ -229,6 +229,7 @@ func generateMCPHandler(op *OperationDefinition) any {
 			result, err := op.Handler(context.Background(), &StartRunArgs{
 				FlowName: args.FlowName,
 				Event:    parseJSONString(args.Event),
+				Draft:    args.Draft,
 			})
 			if err != nil {
 				return nil, err
@@ -318,6 +319,41 @@ func generateMCPHandler(op *OperationDefinition) any {
 			return convertToMCPResponse(result)
 		}
 
+	case "SaveFlowArgs":
+		return func(args MCPSaveFlowArgs) (*mcpgolang.ToolResponse, error) {
+			result, err := op.Handler(context.Background(), &SaveFlowArgs{
+				Name:    args.Name,
+				Content: args.Content,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return convertToMCPResponse(result)
+		}
+
+	case "DeleteFlowArgs":
+		return func(args MCPDeleteFlowArgs) (*mcpgolang.ToolResponse, error) {
+			result, err := op.Handler(context.Background(), &DeleteFlowArgs{
+				Name: args.Name,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return convertToMCPResponse(result)
+		}
+
+	case "RollbackFlowArgs":
+		return func(args MCPRollbackFlowArgs) (*mcpgolang.ToolResponse, error) {
+			result, err := op.Handler(context.Background(), &RollbackFlowArgs{
+				Name:    args.Name,
+				Version: args.Version,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return convertToMCPResponse(result)
+		}
+
 	case "EmptyArgs":
 		return func(args EmptyArgs) (*mcpgolang.ToolResponse, error) {
 			result, err := op.Handler(context.Background(), &args)
@@ -366,12 +402,13 @@ func GenerateCLICommands() []*cobra.Command {
 
 		// Split CLIUse to check if it's a subcommand
 		parts := strings.Fields(op.CLIUse)
-		if len(parts) >= 2 {
-			// This is a subcommand like "flows list" or "run get"
+		if len(parts) >= 2 && !strings.HasPrefix(parts[1], "<") && !strings.HasPrefix(parts[1], "[") {
+			// This is a subcommand like "runs start" or "tools list"
+			// (not an argument like "save <name>" or "lint [file]")
 			parentName := parts[0]
 			commandGroups[parentName] = append(commandGroups[parentName], op)
 		} else {
-			// This is a standalone command
+			// This is a standalone command (possibly with args)
 			standaloneOps = append(standaloneOps, op)
 		}
 	}
@@ -603,8 +640,21 @@ func runGeneratedCLICommand(cmd *cobra.Command, args []string, op *OperationDefi
 		return err
 	}
 
+	// Inject dependencies into context
+	ctx := cmd.Context()
+
+	// Get config and inject into context
+	if cfg, err := GetConfig(); err == nil && cfg != nil {
+		ctx = WithConfig(ctx, cfg)
+
+		// Get storage and inject into context
+		if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
+			ctx = WithStore(ctx, store)
+		}
+	}
+
 	// Execute operation
-	result, err := op.Handler(cmd.Context(), opArgs)
+	result, err := op.Handler(ctx, opArgs)
 	if err != nil {
 		return err
 	}

@@ -105,7 +105,7 @@ steps:
 	}
 	tmp.Close()
 
-	os.Args = []string{"flow", "lint", "[file]", tmpPath}
+	os.Args = []string{"flow", "lint", tmpPath}
 	out := captureOutput(func() {
 		if err := NewRootCmd().Execute(); err != nil {
 			log.Printf("Execute failed: %v", err)
@@ -616,14 +616,14 @@ steps:
 		expectError bool
 		description string
 	}{
-		// Flow operations
-		{"flow flows list", []string{"flows", "list"}, false, "List all flows"},
-		{"flow flows get", []string{"flows", "get", "test-flow"}, false, "Get specific flow"},
-		{"flow flows validate", []string{"flows", "validate", "--file", testFlowFile}, false, "Validate flow (with real file)"},
-		{"flow flows graph", []string{"flows", "graph", "--file", testFlowFile}, false, "Generate flow graph (with real file)"},
+		// Flow operations (flattened!)
+		{"flow list", []string{"list"}, false, "List all flows"},
+		{"flow get", []string{"get", "test-flow"}, false, "Get specific flow"},
+		{"flow validate", []string{"validate", "--file", testFlowFile}, false, "Validate flow (with real file)"},
+		{"flow graph", []string{"graph", "--file", testFlowFile}, false, "Generate flow graph (with real file)"},
 
 		// Run operations
-		{"flow runs start", []string{"runs", "start", "test-flow"}, false, "Start new run (may succeed with empty outputs)"},
+		{"flow runs start", []string{"runs", "start", "test-flow"}, true, "Start new run (fails - not deployed)"},
 		{"flow runs get", []string{"runs", "get", "test-run-id"}, true, "Get run details (invalid UUID)"},
 		{"flow runs list", []string{"runs", "list"}, false, "List all runs"},
 
@@ -631,13 +631,8 @@ steps:
 		{"flow tools list", []string{"tools", "list"}, false, "List all tools"},
 		{"flow tools get", []string{"tools", "get", "http.fetch"}, false, "Get specific tool"},
 
-		// Legacy commands should fail or redirect
-		{"legacy get-run", []string{"get-run"}, true, "Legacy command should not exist"},
-		{"legacy list-flows", []string{"list-flows"}, true, "Legacy command should not exist"},
-
 		// Invalid subcommands
 		{"invalid subcommand", []string{"invalid", "command"}, true, "Invalid subcommand"},
-		{"missing subcommand", []string{"flows"}, false, "Missing subcommand (help will be shown)"},
 		{"empty args", []string{}, false, "Help should be shown for empty args"},
 	}
 
@@ -695,8 +690,8 @@ func TestCLIFlags(t *testing.T) {
 		}
 	}
 
-	// Test that subcommands exist
-	expectedSubcommands := []string{"flows", "runs", "tools", "serve", "mcp"}
+	// Test that subcommands exist (both grouped and flattened)
+	expectedSubcommands := []string{"runs", "tools", "serve", "mcp", "list", "get", "deploy"}
 	for _, subcmdName := range expectedSubcommands {
 		found := false
 		for _, cmd := range rootCmd.Commands() {
@@ -711,50 +706,37 @@ func TestCLIFlags(t *testing.T) {
 	}
 }
 
-// TestFlowsSubcommand tests the flows subcommand specifically
+// TestFlowsSubcommand tests that flow commands are now top-level (flattened)
 func TestFlowsSubcommand(t *testing.T) {
 	rootCmd := NewRootCmd()
 
-	// Find the flows subcommand
-	var flowsCmd *cobra.Command
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "flows" {
-			flowsCmd = cmd
-			break
-		}
-	}
-
-	if flowsCmd == nil {
-		t.Fatal("flows subcommand not found")
-	}
-
-	// Check that flows has the expected subcommands
-	expectedFlowSubcommands := []string{"list", "get", "validate", "graph"}
-	for _, subcmdName := range expectedFlowSubcommands {
+	// Flow commands should be top-level now, not under "flows" subcommand
+	expectedTopLevelFlowCommands := []string{"list", "get", "validate", "graph", "deploy", "rollback", "save", "delete"}
+	for _, cmdName := range expectedTopLevelFlowCommands {
 		found := false
-		for _, cmd := range flowsCmd.Commands() {
-			if cmd.Name() == subcmdName {
+		for _, cmd := range rootCmd.Commands() {
+			if cmd.Name() == cmdName {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("Expected flows subcommand '%s' to exist", subcmdName)
+			t.Errorf("Expected top-level command '%s' to exist", cmdName)
 		}
 	}
 
-	// Test flows validate command has output flag
-	var validateCmd *cobra.Command
-	for _, cmd := range flowsCmd.Commands() {
+	// Test graph command has output flag
+	var graphCmd *cobra.Command
+	for _, cmd := range rootCmd.Commands() {
 		if cmd.Name() == "graph" {
-			validateCmd = cmd
+			graphCmd = cmd
 			break
 		}
 	}
 
-	if validateCmd != nil {
-		if validateCmd.Flags().Lookup("output") == nil {
-			t.Error("Expected flows graph command to have --output flag")
+	if graphCmd != nil {
+		if graphCmd.Flags().Lookup("output") == nil {
+			t.Error("Expected graph command to have --output flag")
 		}
 	}
 }

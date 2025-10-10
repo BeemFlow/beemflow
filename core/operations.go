@@ -71,6 +71,7 @@ type GraphFlowArgs struct {
 type StartRunArgs struct {
 	FlowName string         `json:"flowName" flag:"flow-name" description:"Name of the flow to run"`
 	Event    map[string]any `json:"event" flag:"event-json" description:"Event data as JSON"`
+	Draft    bool           `json:"draft" flag:"draft" description:"Run draft version (bypass deployment check)"`
 }
 
 type GetRunArgs struct {
@@ -101,6 +102,23 @@ type FlowFileArgs struct {
 // SearchArgs represents arguments for search operations
 type SearchArgs struct {
 	Query string `json:"query" flag:"query" description:"Search query"`
+}
+
+// SaveFlowArgs represents arguments for saving/updating a flow (idempotent)
+type SaveFlowArgs struct {
+	Name    string `json:"name" flag:"name,n" description:"Flow name (optional if specified in YAML)"`
+	Content string `json:"content" flag:"content" description:"YAML content of the flow"`
+}
+
+// DeleteFlowArgs represents arguments for deleting a flow
+type DeleteFlowArgs struct {
+	Name string `json:"name" flag:"name,n" description:"Flow name to delete"`
+}
+
+// RollbackFlowArgs represents arguments for rolling back a flow
+type RollbackFlowArgs struct {
+	Name    string `json:"name" flag:"name,n" description:"Flow name"`
+	Version string `json:"version" flag:"version,v" description:"Version to rollback to"`
 }
 
 // Global operation registry
@@ -520,8 +538,8 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodGet,
 		HTTPPath:    "/flows",
-		CLIUse:      "flows list",
-		CLIShort:    "List all available flows",
+		CLIUse:      "list",
+		CLIShort:    "List all flows",
 		MCPName:     "beemflow_list_flows",
 		ArgsType:    reflect.TypeOf(EmptyArgs{}),
 		Handler: func(ctx context.Context, args any) (any, error) {
@@ -537,13 +555,168 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodGet,
 		HTTPPath:    "/flows/{name}",
-		CLIUse:      "flows get <name>",
+		CLIUse:      "get <name>",
 		CLIShort:    "Get a flow by name",
 		MCPName:     "beemflow_get_flow",
 		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
 		Handler: func(ctx context.Context, args any) (any, error) {
 			a := args.(*GetFlowArgs)
 			return GetFlow(ctx, a.Name)
+		},
+	})
+
+	// Save Flow (idempotent - create or update)
+	RegisterOperation(&OperationDefinition{
+		ID:          "save_flow",
+		Name:        "Save Flow",
+		Description: "Save or update a workflow definition (idempotent)",
+		Group:       "flows",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/flows",
+		CLIUse:      "save <name>",
+		CLIShort:    "Save or update a flow definition",
+		MCPName:     "beemflow_save_flow",
+		ArgsType:    reflect.TypeOf(SaveFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*SaveFlowArgs)
+			name := a.Name
+			if name == "" {
+				// Try to extract from YAML
+				flow, err := dsl.ParseFromString(a.Content)
+				if err != nil {
+					return nil, fmt.Errorf("invalid YAML and no name provided: %w", err)
+				}
+				name = flow.Name
+				if name == "" {
+					return nil, fmt.Errorf("flow must have a name")
+				}
+			}
+			return SaveFlow(ctx, name, a.Content)
+		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			if name == "" {
+				name, _ = cmd.Flags().GetString("name")
+			}
+
+			content, _ := cmd.Flags().GetString("content")
+			if content == "" {
+				data, err := HandleCLIFileArgs(cmd, args[1:], "file")
+				if err != nil {
+					return fmt.Errorf("failed to read flow content: %w", err)
+				}
+				content = string(data)
+			}
+
+			// Inject dependencies into context
+			ctx := cmd.Context()
+			if cfg, err := GetConfig(); err == nil && cfg != nil {
+				ctx = WithConfig(ctx, cfg)
+				if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
+					ctx = WithStore(ctx, store)
+				}
+			}
+
+			result, err := SaveFlow(ctx, name, content)
+			if err != nil {
+				return err
+			}
+			return outputCLIResult(result)
+		},
+	})
+
+	// Delete Flow
+	RegisterOperation(&OperationDefinition{
+		ID:          "delete_flow",
+		Name:        "Delete Flow",
+		Description: "Delete a workflow definition",
+		Group:       "flows",
+		HTTPMethod:  http.MethodDelete,
+		HTTPPath:    "/flows/{name}",
+		CLIUse:      "delete <name>",
+		CLIShort:    "Delete a flow definition",
+		MCPName:     "beemflow_delete_flow",
+		ArgsType:    reflect.TypeOf(DeleteFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*DeleteFlowArgs)
+			return DeleteFlow(ctx, a.Name)
+		},
+	})
+
+	// Deploy Flow
+	RegisterOperation(&OperationDefinition{
+		ID:          "deploy_flow",
+		Name:        "Deploy Flow",
+		Description: "Deploy current flow version to production",
+		Group:       "flows",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/flows/{name}/deploy",
+		CLIUse:      "deploy <name>",
+		CLIShort:    "Deploy to production",
+		MCPName:     "beemflow_deploy_flow",
+		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*GetFlowArgs)
+			return DeployFlow(ctx, a.Name)
+		},
+	})
+
+	// Rollback Flow
+	RegisterOperation(&OperationDefinition{
+		ID:          "rollback_flow",
+		Name:        "Rollback Flow",
+		Description: "Rollback to a specific deployed version",
+		Group:       "flows",
+		HTTPMethod:  http.MethodPost,
+		HTTPPath:    "/flows/{name}/rollback",
+		CLIUse:      "rollback <name> <version>",
+		CLIShort:    "Rollback to a specific version",
+		MCPName:     "beemflow_rollback_flow",
+		ArgsType:    reflect.TypeOf(RollbackFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*RollbackFlowArgs)
+			return RollbackFlow(ctx, a.Name, a.Version)
+		},
+		CLIHandler: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return fmt.Errorf("usage: flow rollback <name> <version>")
+			}
+
+			// Inject dependencies into context
+			ctx := cmd.Context()
+			if cfg, err := GetConfig(); err == nil && cfg != nil {
+				ctx = WithConfig(ctx, cfg)
+				if store, err := GetStoreFromConfig(cfg); err == nil && store != nil {
+					ctx = WithStore(ctx, store)
+				}
+			}
+
+			result, err := RollbackFlow(ctx, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			return outputCLIResult(result)
+		},
+	})
+
+	// Flow History
+	RegisterOperation(&OperationDefinition{
+		ID:          "flow_history",
+		Name:        "Flow History",
+		Description: "Show version history for a flow",
+		Group:       "flows",
+		HTTPMethod:  http.MethodGet,
+		HTTPPath:    "/flows/{name}/history",
+		CLIUse:      "history <name>",
+		CLIShort:    "Show version history",
+		MCPName:     "beemflow_flow_history",
+		ArgsType:    reflect.TypeOf(GetFlowArgs{}),
+		Handler: func(ctx context.Context, args any) (any, error) {
+			a := args.(*GetFlowArgs)
+			return GetFlowVersionHistory(ctx, a.Name)
 		},
 	})
 
@@ -555,7 +728,7 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodPost,
 		HTTPPath:    "/validate",
-		CLIUse:      "flows validate",
+		CLIUse:      "validate",
 		CLIShort:    "Validate a flow (from name or file)",
 		MCPName:     "beemflow_validate_flow",
 		ArgsType:    reflect.TypeOf(ValidateFlowArgs{}),
@@ -571,7 +744,7 @@ func init() {
 		Group:       "flows",
 		HTTPMethod:  http.MethodPost,
 		HTTPPath:    "/flows/graph",
-		CLIUse:      "flows graph",
+		CLIUse:      "graph",
 		CLIShort:    "Generate a Mermaid diagram for a flow",
 		MCPName:     "beemflow_graph_flow",
 		ArgsType:    reflect.TypeOf(GraphFlowArgs{}),
@@ -593,6 +766,9 @@ func init() {
 		ArgsType:    reflect.TypeOf(StartRunArgs{}),
 		Handler: func(ctx context.Context, args any) (any, error) {
 			a := args.(*StartRunArgs)
+			if a.Draft {
+				return StartRunDraft(ctx, a.FlowName, a.Event)
+			}
 			return StartRun(ctx, a.FlowName, a.Event)
 		},
 	})

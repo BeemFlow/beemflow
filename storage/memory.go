@@ -416,3 +416,31 @@ func (m *MemoryStorage) DeleteOAuthTokenByRefresh(ctx context.Context, refresh s
 
 	return sql.ErrNoRows
 }
+
+// Flow versioning methods (in-memory stubs for dev/test)
+
+func (m *MemoryStorage) DeployFlowVersion(ctx context.Context, flowName, version, content string) error {
+	// In-memory storage doesn't persist flows - this is a no-op
+	// Production should use SQLite/Postgres
+	return nil
+}
+
+func (m *MemoryStorage) SetDeployedVersion(ctx context.Context, flowName, version string) error {
+	// In-memory storage doesn't track deployments
+	return nil
+}
+
+func (m *MemoryStorage) GetDeployedVersion(ctx context.Context, flowName string) (string, error) {
+	// In-memory storage doesn't track deployments
+	return "", nil
+}
+
+func (m *MemoryStorage) GetFlowVersionContent(ctx context.Context, flowName, version string) (string, error) {
+	// In-memory storage doesn't store flow content
+	return "", sql.ErrNoRows
+}
+
+func (m *MemoryStorage) ListFlowVersions(ctx context.Context, flowName string) ([]FlowSnapshot, error) {
+	// In-memory storage doesn't track versions
+	return []FlowSnapshot{}, nil
+}
