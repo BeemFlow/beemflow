@@ -51,8 +51,12 @@ func TestStartRun(t *testing.T) {
 	// Use test context with memory storage
 	ctx := WithStore(context.Background(), storage.NewMemoryStorage())
 	_, err := StartRun(ctx, "dummy", map[string]any{})
-	if err != nil {
-		t.Errorf("StartRun returned error: %v", err)
+	// Should error because flow is not deployed
+	if err == nil {
+		t.Error("Expected error for undeployed flow")
+	}
+	if !strings.Contains(err.Error(), "not deployed") && !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Expected deployment error, got: %v", err)
 	}
 }
 
@@ -167,8 +171,9 @@ func TestStartRun_ConfigError(t *testing.T) {
 	}
 	defer func() { _ = os.Rename(orig+".bak", orig) }()
 	_, err := StartRun(context.Background(), "dummy", map[string]any{})
-	if err != nil && !os.IsNotExist(err) {
-		t.Errorf("expected nil or not exist error, got: %v", err)
+	// Should error (flow not found or not deployed)
+	if err == nil {
+		t.Error("Expected error")
 	}
 }
 
@@ -183,7 +188,15 @@ func TestStartRun_ParseError(t *testing.T) {
 	}
 	defer os.Remove(badPath)
 	SetFlowsDir(flowsDir)
-	_, err := StartRun(context.Background(), "bad", map[string]any{})
+
+	// Setup storage
+	dbPath := filepath.Join(flowsDir, "test.db")
+	store, _ := storage.NewSqliteStorage(dbPath)
+	defer store.Close()
+	ctx := WithStore(context.Background(), store)
+
+	// Should fail on parse (before deployment check)
+	_, err := StartRun(ctx, "bad", map[string]any{})
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
 	}
@@ -337,21 +350,20 @@ func TestResumeRun_InvalidStorageDriver(t *testing.T) {
 }
 
 func TestStartRun_ListRunsError(t *testing.T) {
-	// Patch storage to return error from ListRuns
-	// Not possible without interface injection or reflection, so just test empty runs case
+	// Test StartRun with undeployed flow
 	if err := os.MkdirAll("flows", 0755); err != nil {
 		t.Fatalf("os.MkdirAll failed: %v", err)
 	}
-	if err := os.WriteFile(config.DefaultFlowsDir+"/empty.flow.yaml", []byte("name: empty\nsteps: []"), 0644); err != nil {
+	if err := os.WriteFile(config.DefaultFlowsDir+"/empty.flow.yaml", []byte("name: empty\nversion: 1.0.0\non: cli.manual\nsteps: []"), 0644); err != nil {
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(config.DefaultFlowsDir + "/empty.flow.yaml")
-	id, err := StartRun(context.Background(), "empty", map[string]any{})
-	if err != nil {
-		t.Errorf("expected no error for empty runs, got: %v", err)
-	}
-	if id != uuid.Nil {
-		t.Errorf("expected uuid.Nil for no runs, got: %v", id)
+
+	ctx := WithStore(context.Background(), storage.NewMemoryStorage())
+	_, err := StartRun(ctx, "empty", map[string]any{})
+	// Should error - not deployed
+	if err == nil {
+		t.Error("Expected error for undeployed flow")
 	}
 }
 
@@ -450,6 +462,7 @@ func TestIntegration_ResumeRun(t *testing.T) {
 	}
 	SetFlowsDir(flowsDir)
 	flowYAML := `name: resumeflow
+version: "1.0.0"
 on: cli.manual
 steps:
   - id: s1
@@ -470,15 +483,19 @@ steps:
 		t.Fatalf("os.WriteFile failed: %v", err)
 	}
 	defer os.Remove(filepath.Join(flowsDir, "resumeflow.flow.yaml"))
-	// Write minimal schema for validation
-	schema := `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`
-	if err := os.WriteFile("beemflow.schema.json", []byte(schema), 0644); err != nil {
-		t.Fatalf("os.WriteFile failed: %v", err)
-	}
-	defer os.Remove("beemflow.schema.json")
+
+	// Setup storage and deploy
+	dbPath := filepath.Join(flowsDir, "test.db")
+	store, _ := storage.NewSqliteStorage(dbPath)
+	defer store.Close()
+
+	ctx := WithStore(context.Background(), store)
+	SaveFlow(ctx, "resumeflow", flowYAML)
+	DeployFlow(ctx, "resumeflow")
+
 	// StartRun with token triggers pause
 	event := map[string]any{"token": "tok123"}
-	runID, err := StartRun(context.Background(), "resumeflow", event)
+	runID, err := StartRun(ctx, "resumeflow", event)
 	if err != nil {
 		if !strings.Contains(err.Error(), "is waiting for event") {
 			t.Fatalf("StartRun error: %v", err)
@@ -886,8 +903,9 @@ func TestStartRun_WithPausedRun(t *testing.T) {
 	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
-	// Create a flow with await_event step
+	// Create a flow with await_event step and version
 	flowContent := `name: pause_flow
+version: "1.0.0"
 on: cli.manual
 steps:
   - id: wait_step
@@ -900,7 +918,15 @@ steps:
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
 
-	ctx := context.Background()
+	// Setup storage and deploy
+	dbPath := filepath.Join(tempDir, "test.db")
+	store, _ := storage.NewSqliteStorage(dbPath)
+	defer store.Close()
+
+	ctx := WithStore(context.Background(), store)
+	SaveFlow(ctx, "pause_flow", flowContent)
+	DeployFlow(ctx, "pause_flow")
+
 	runID, err := StartRun(ctx, "pause_flow", map[string]any{})
 	if err != nil {
 		if !strings.Contains(err.Error(), "is waiting for event") {
@@ -974,8 +1000,9 @@ func TestStartRun_EdgeCases(t *testing.T) {
 	SetFlowsDir(tempDir)
 	defer SetFlowsDir(originalDir)
 
-	// Create a simple flow
+	// Create a simple flow with version
 	flowContent := `name: edge_test_flow
+version: "1.0.0"
 on: cli.manual
 steps:
   - id: echo_step
@@ -988,7 +1015,14 @@ steps:
 		t.Fatalf("Failed to write test flow: %v", err)
 	}
 
-	ctx := context.Background()
+	// Setup storage and deploy
+	dbPath := filepath.Join(tempDir, "test.db")
+	store, _ := storage.NewSqliteStorage(dbPath)
+	defer store.Close()
+
+	ctx := WithStore(context.Background(), store)
+	SaveFlow(ctx, "edge_test_flow", flowContent)
+	DeployFlow(ctx, "edge_test_flow")
 
 	// Test with nil event
 	runID, err := StartRun(ctx, "edge_test_flow", nil)

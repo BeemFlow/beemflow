@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -58,16 +59,29 @@ func TestCronPathTraversal(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	// Create a valid workflow
+	// Create a valid workflow with version
 	testFlow := `name: test_workflow
+version: "1.0.0"
 on: schedule.cron
 steps:
   - id: test
-    use: core.echo`
+    use: core.echo
+    with:
+      text: "test"`
 
 	flowPath := filepath.Join(tmpDir, "test_workflow.flow.yaml")
 	os.WriteFile(flowPath, []byte(testFlow), 0644)
 	SetFlowsDir(tmpDir)
+
+	// Deploy the workflow
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := storage.NewSqliteStorage(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := WithStore(context.Background(), store)
+	SaveFlow(ctx, "test_workflow", testFlow)
+	DeployFlow(ctx, "test_workflow")
 
 	op, exists := GetOperation("workflow_cron")
 	require.True(t, exists)
@@ -92,6 +106,8 @@ steps:
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			// Inject storage into request context
+			req = req.WithContext(ctx)
 			w := httptest.NewRecorder()
 			op.HTTPHandler(w, req)
 			assert.Equal(t, tt.expectCode, w.Code, "Path: %s", tt.path)
@@ -348,11 +364,11 @@ func TestCron_SpecificWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	// Create a workflow with schedule.cron trigger
+	// Create a workflow with schedule.cron trigger and version
 	testFlow := `name: specific_workflow
+version: "1.0.0"
 on: schedule.cron
 cron: "0 * * * *"
-
 steps:
   - id: echo
     use: core.echo
@@ -366,8 +382,20 @@ steps:
 	// Set flows directory
 	SetFlowsDir(tmpDir)
 
+	// Deploy the workflow
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := storage.NewSqliteStorage(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := WithStore(context.Background(), store)
+	SaveFlow(ctx, "specific_workflow", testFlow)
+	DeployFlow(ctx, "specific_workflow")
+
 	// Create request for specific workflow
 	req := httptest.NewRequest(http.MethodPost, "/cron/specific_workflow", nil)
+	// Inject storage into request context
+	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	// Get the operation handler
