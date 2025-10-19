@@ -91,6 +91,45 @@
             background: #fff3e0;
             color: #e65100;
         }
+        .scopes-list {
+            margin-top: 12px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .scopes-list.expanded {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .scope-item {
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 13px;
+        }
+        .scope-name {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 2px;
+        }
+        .scope-description {
+            color: #666;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .toggle-scopes {
+            cursor: pointer;
+            color: #667eea;
+            font-weight: 600;
+            font-size: 14px;
+            margin-top: 8px;
+            display: inline-block;
+            user-select: none;
+        }
+        .toggle-scopes:hover {
+            color: #5568d3;
+        }
     </style>
 </head>
 <body>
@@ -119,7 +158,21 @@
             </div>
             <div class="provider-description">
                 <strong>ID:</strong> {{ provider.id }}<br>
-                <strong>Scopes:</strong> {{ provider.scopes_str }}
+                {% if provider.scopes|length > 0 %}
+                <span class="toggle-scopes" onclick="toggleScopes(this)">▸ Show {{ provider.scopes|length }} scopes</span>
+                <div class="scopes-list">
+                    {% for scope in provider.scopes %}
+                    <div class="scope-item">
+                        <div class="scope-name">{{ scope.scope }}</div>
+                        {% if scope.description %}
+                        <div class="scope-description">{{ scope.description }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <strong>Scopes:</strong> None
+                {% endif %}
             </div>
             {% if provider.connected %}
             <span class="status-badge status-connected">✓ Connected</span>
@@ -131,5 +184,19 @@
         {% endfor %}
         {% endif %}
     </div>
+    <script>
+        function toggleScopes(element) {
+            const scopesList = element.nextElementSibling;
+            const isExpanded = scopesList.classList.contains('expanded');
+
+            if (isExpanded) {
+                scopesList.classList.remove('expanded');
+                element.textContent = '▸ Show ' + element.textContent.match(/\d+/)[0] + ' scopes';
+            } else {
+                scopesList.classList.add('expanded');
+                element.textContent = '▾ Hide ' + element.textContent.match(/\d+/)[0] + ' scopes';
+            }
+        }
+    </script>
 </body>
 </html>

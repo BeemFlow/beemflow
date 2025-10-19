@@ -19,6 +19,23 @@ pub use manager::RegistryManager;
 pub use remote::RemoteRegistry;
 pub use smithery::SmitheryRegistry;
 
+/// OAuth scope with description
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeEntry {
+    /// Scope identifier (e.g. "https://www.googleapis.com/auth/spreadsheets")
+    pub scope: String,
+
+    /// Human-readable description of what this scope grants
+    pub description: String,
+}
+
+impl ScopeEntry {
+    /// Extract just the scope strings from a slice of ScopeEntry
+    pub fn to_scope_strings(entries: &[ScopeEntry]) -> Vec<String> {
+        entries.iter().map(|e| e.scope.clone()).collect()
+    }
+}
+
 /// Registry entry for tools and MCP servers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
@@ -111,7 +128,7 @@ pub struct RegistryEntry {
 
     /// OAuth scopes (for oauth_provider)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scopes: Option<Vec<String>>,
+    pub scopes: Option<Vec<ScopeEntry>>,
 
     /// OAuth authorization parameters (for oauth_provider)
     /// Additional query parameters to append to the authorization URL
@@ -122,6 +139,18 @@ pub struct RegistryEntry {
     /// Webhook configuration (for oauth_provider)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook: Option<WebhookConfig>,
+}
+
+impl RegistryEntry {
+    /// Extract scope strings from the registry entry
+    ///
+    /// Converts `Option<Vec<ScopeEntry>>` to `Option<Vec<String>>` by extracting
+    /// just the scope identifiers without descriptions.
+    pub fn scope_strings(&self) -> Option<Vec<String>> {
+        self.scopes
+            .as_ref()
+            .map(|scopes| ScopeEntry::to_scope_strings(scopes))
+    }
 }
 
 /// Webhook configuration for providers

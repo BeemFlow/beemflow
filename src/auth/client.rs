@@ -78,6 +78,10 @@ impl OAuthClientManager {
         {
             // Convert RegistryEntry to OAuthProvider
             // Note: id, created_at, updated_at are dummy values for registry providers
+
+            // Extract scope strings first (borrows entry)
+            let scopes = entry.scope_strings();
+
             return Ok(OAuthProvider {
                 id: entry.name.clone(),
                 name: entry.display_name.unwrap_or(entry.name),
@@ -105,7 +109,7 @@ impl OAuthClientManager {
                         provider_id
                     ))
                 })?,
-                scopes: entry.scopes,
+                scopes,
                 auth_params: entry.auth_params,
                 created_at: Utc::now(), // Dummy timestamp for registry providers
                 updated_at: Utc::now(), // Dummy timestamp for registry providers
@@ -596,24 +600,14 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
         .iter()
         .map(|entry| {
             let name = entry.display_name.as_ref().unwrap_or(&entry.name);
-            // Use icon from registry entry, default to 🔗 if not specified
             let icon = entry.icon.as_deref().unwrap_or("🔗");
-
-            // Format scopes
-            let scopes_str = entry
-                .scopes
-                .as_ref()
-                .map(|s| s.join(", "))
-                .unwrap_or_else(|| "None".to_string());
-
-            // Check if provider has any credentials stored (O(1) lookup)
             let connected = connected_providers.contains(&entry.name);
 
             json!({
                 "id": entry.name,
                 "name": name,
                 "icon": icon,
-                "scopes_str": scopes_str,
+                "scopes": entry.scopes.as_deref().unwrap_or(&[]),
                 "connected": connected,
             })
         })
@@ -621,24 +615,15 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
 
     // Add storage providers (custom providers added by users)
     for p in storage_providers.iter() {
-        // Custom storage providers use a default icon (could be extended to support icons in storage)
-        let icon = "🔗";
-
-        // Format scopes
-        let scopes_str = p
-            .scopes
-            .as_ref()
-            .map(|s| s.join(", "))
-            .unwrap_or_else(|| "None".to_string());
-
-        // Check if provider has any credentials stored (O(1) lookup)
         let connected = connected_providers.contains(&p.id);
 
         provider_data.push(json!({
             "id": p.id,
             "name": p.name,
-            "icon": icon,
-            "scopes_str": scopes_str,
+            "icon": "🔗",
+            "scopes": p.scopes.as_deref().map(|scopes| {
+                scopes.iter().map(|s| json!({"scope": s, "description": ""})).collect::<Vec<_>>()
+            }).unwrap_or_default(),
             "connected": connected,
         }));
     }
@@ -890,7 +875,9 @@ async fn oauth_provider_handler(
 ) -> impl IntoResponse {
     // Get default scopes for the provider from registry
     let scopes = match state.registry_manager.get_oauth_provider(&provider).await {
-        Ok(Some(entry)) => entry.scopes.unwrap_or_else(|| vec!["read".to_string()]),
+        Ok(Some(entry)) => entry
+            .scope_strings()
+            .unwrap_or_else(|| vec!["read".to_string()]),
         _ => vec!["read".to_string()],
     };
 
