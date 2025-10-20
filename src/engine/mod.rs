@@ -41,7 +41,6 @@ pub struct PausedRun {
 /// shared via Arc<Engine>. For unit tests, use `Engine::for_testing()`.
 pub struct Engine {
     adapters: Arc<AdapterRegistry>,
-    mcp_adapter: Arc<crate::adapter::McpAdapter>,
     templater: Arc<Templater>,
     storage: Arc<dyn Storage>,
     secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
@@ -56,10 +55,8 @@ impl Engine {
     /// This is the internal constructor used by `core::create_dependencies()`.
     /// For production use, call `create_dependencies()` instead.
     /// For tests, use `Engine::for_testing()` or `TestEnvironment`.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         adapters: Arc<AdapterRegistry>,
-        mcp_adapter: Arc<crate::adapter::McpAdapter>,
         templater: Arc<Templater>,
         storage: Arc<dyn Storage>,
         secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
@@ -69,7 +66,6 @@ impl Engine {
     ) -> Self {
         Self {
             adapters,
-            mcp_adapter,
             templater,
             storage,
             secrets_provider,
@@ -187,14 +183,6 @@ impl Engine {
                 run_id: Uuid::nil(),
                 outputs: HashMap::new(),
             });
-        }
-
-        // Configure MCP servers if present in flow
-        if let Some(ref mcp_servers) = flow.mcp_servers {
-            for (name, config) in mcp_servers {
-                self.mcp_adapter
-                    .register_server(name.clone(), config.clone());
-            }
         }
 
         // Setup execution context (returns error if duplicate run detected)
@@ -744,7 +732,6 @@ impl Engine {
 
         Self::new(
             adapters,
-            mcp_adapter,
             Arc::new(Templater::new()),
             storage_arc,
             secrets_provider,

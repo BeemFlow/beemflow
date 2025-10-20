@@ -358,10 +358,7 @@ pub mod flows {
             })?;
 
             // Pre-validate cron expression BEFORE touching storage (fail fast)
-            if self.deps.cron_manager.is_some()
-                && let Some(trigger) = &flow.on
-                && trigger.includes("schedule.cron")
-            {
+            if self.deps.cron_manager.is_some() && flow.on.includes("schedule.cron") {
                 // Validate cron expression exists
                 let cron_expr = flow.cron.as_ref().ok_or_else(|| {
                     BeemFlowError::validation(
@@ -459,9 +456,7 @@ pub mod flows {
 
                 // Parse and validate cron if present
                 let flow = parse_string(&content, None)?;
-                if let Some(trigger) = &flow.on
-                    && trigger.includes("schedule.cron")
-                {
+                if flow.on.includes("schedule.cron") {
                     let cron_expr = flow.cron.as_ref().ok_or_else(|| {
                         BeemFlowError::validation(
                             "Flow has schedule.cron trigger but missing cron field",
@@ -659,9 +654,7 @@ pub mod flows {
 
                 // Parse and validate cron if present
                 let flow = parse_string(&content, None)?;
-                if let Some(trigger) = &flow.on
-                    && trigger.includes("schedule.cron")
-                {
+                if flow.on.includes("schedule.cron") {
                     let cron_expr = flow.cron.as_ref().ok_or_else(|| {
                         BeemFlowError::validation(
                             "Flow has schedule.cron trigger but missing cron field",

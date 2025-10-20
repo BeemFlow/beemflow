@@ -49,7 +49,6 @@ fn create_test_engine(storage: Arc<dyn Storage>) -> Arc<Engine> {
 
     Arc::new(Engine::new(
         adapters,
-        mcp_adapter,
         templater,
         storage.clone(),
         secrets,

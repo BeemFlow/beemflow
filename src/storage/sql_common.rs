@@ -28,9 +28,7 @@ pub fn extract_topics_from_flow_yaml(content: &str) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
 
-    let Some(trigger) = flow.on else {
-        return Vec::new();
-    };
+    let trigger = flow.on;
 
     match trigger {
         Trigger::Single(topic) => vec![topic],

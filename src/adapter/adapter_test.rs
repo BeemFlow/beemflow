@@ -296,13 +296,11 @@ async fn test_lazy_load_end_to_end_execution() {
             .expect("Failed to create storage"),
     );
 
-    let mcp_adapter = Arc::new(crate::adapter::McpAdapter::new(secrets_provider.clone()));
     let config = Arc::new(crate::config::Config::default());
     let oauth_client =
         crate::auth::create_test_oauth_client(storage.clone(), secrets_provider.clone());
     let engine = crate::engine::Engine::new(
         adapters.clone(),
-        mcp_adapter,
         Arc::new(crate::dsl::Templater::new()),
         storage,
         secrets_provider,
@@ -316,7 +314,7 @@ async fn test_lazy_load_end_to_end_execution() {
         name: "weather_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(crate::model::Trigger::Single("manual".to_string())),
+        on: crate::model::Trigger::Single("manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![crate::model::Step {
@@ -326,7 +324,6 @@ async fn test_lazy_load_end_to_end_execution() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     // Execute the flow - this should lazy-load the tool and execute it

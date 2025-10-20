@@ -149,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_and_get_flow() {
         let temp = TempDir::new().unwrap();
-        let content = "name: test\nsteps: []";
+        let content = "name: test\non: cli.manual\nsteps: []";
 
         // Save new flow
         let created = save_flow(temp.path(), "test_flow", content).await.unwrap();
@@ -173,12 +173,20 @@ mod tests {
         assert_eq!(flows, Vec::<String>::new());
 
         // Add flows
-        save_flow(temp.path(), "flow1", "name: flow1\nsteps: []")
-            .await
-            .unwrap();
-        save_flow(temp.path(), "flow2", "name: flow2\nsteps: []")
-            .await
-            .unwrap();
+        save_flow(
+            temp.path(),
+            "flow1",
+            "name: flow1\non: cli.manual\nsteps: []",
+        )
+        .await
+        .unwrap();
+        save_flow(
+            temp.path(),
+            "flow2",
+            "name: flow2\non: cli.manual\nsteps: []",
+        )
+        .await
+        .unwrap();
 
         let flows = list_flows(temp.path()).await.unwrap();
         assert_eq!(flows, vec!["flow1", "flow2"]);
@@ -187,7 +195,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_flow() {
         let temp = TempDir::new().unwrap();
-        save_flow(temp.path(), "test", "name: test\nsteps: []")
+        save_flow(temp.path(), "test", "name: test\non: cli.manual\nsteps: []")
             .await
             .unwrap();
 
@@ -249,19 +257,31 @@ mod tests {
 
         // Valid names
         assert!(
-            save_flow(temp.path(), "valid-name", "name: test\nsteps: []")
-                .await
-                .is_ok()
+            save_flow(
+                temp.path(),
+                "valid-name",
+                "name: test\non: cli.manual\nsteps: []"
+            )
+            .await
+            .is_ok()
         );
         assert!(
-            save_flow(temp.path(), "valid_name", "name: test\nsteps: []")
-                .await
-                .is_ok()
+            save_flow(
+                temp.path(),
+                "valid_name",
+                "name: test\non: cli.manual\nsteps: []"
+            )
+            .await
+            .is_ok()
         );
         assert!(
-            save_flow(temp.path(), "validName123", "name: test\nsteps: []")
-                .await
-                .is_ok()
+            save_flow(
+                temp.path(),
+                "validName123",
+                "name: test\non: cli.manual\nsteps: []"
+            )
+            .await
+            .is_ok()
         );
     }
 }

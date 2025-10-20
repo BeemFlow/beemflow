@@ -27,7 +27,6 @@ fn test_valid_flow() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_ok());
@@ -44,7 +43,6 @@ fn test_empty_name() {
         vars: None,
         steps: vec![],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_err());
@@ -92,7 +90,6 @@ fn test_duplicate_step_ids() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_err());
@@ -125,7 +122,6 @@ fn test_parallel_without_steps() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_err());
@@ -158,7 +154,6 @@ fn test_foreach_without_as() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_err());
@@ -191,7 +186,6 @@ fn test_invalid_identifier() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&flow).is_err());
@@ -225,7 +219,6 @@ fn test_json_schema_validation() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&valid_flow).is_ok());
@@ -259,7 +252,6 @@ fn test_schema_validation_missing_step_action() {
             }
         ],
         catch: None,
-        mcp_servers: None,
     };
     
     assert!(Validator::validate(&invalid_flow).is_err());

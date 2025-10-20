@@ -83,7 +83,7 @@ async fn test_execute_minimal_valid_flow() {
         name: "test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -97,7 +97,6 @@ async fn test_execute_minimal_valid_flow() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;
@@ -114,12 +113,11 @@ async fn test_execute_empty_steps() {
         name: "empty".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![],
         catch: None,
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;
@@ -138,7 +136,7 @@ async fn test_execute_with_event_data() {
         name: "event_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -155,7 +153,6 @@ async fn test_execute_with_event_data() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let mut event = HashMap::new();
@@ -172,7 +169,7 @@ async fn test_execute_with_vars() {
         name: "vars_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: Some({
             let mut m = HashMap::new();
@@ -194,7 +191,6 @@ async fn test_execute_with_vars() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;
@@ -213,7 +209,7 @@ async fn test_execute_step_output_chaining() {
         name: "chaining_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![
@@ -242,7 +238,6 @@ async fn test_execute_step_output_chaining() {
             },
         ],
         catch: None,
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;
@@ -264,7 +259,7 @@ async fn test_execute_concurrent_flows() {
         name: "concurrent".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -278,7 +273,6 @@ async fn test_execute_concurrent_flows() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     });
 
     // Spawn 5 concurrent executions
@@ -308,7 +302,7 @@ async fn test_execute_catch_block() {
         name: "catch_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -339,7 +333,6 @@ async fn test_execute_catch_block() {
                 ..Default::default()
             },
         ]),
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;
@@ -412,7 +405,7 @@ async fn test_execute_secrets_injection() {
         name: "secrets_test".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -429,7 +422,6 @@ async fn test_execute_secrets_injection() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let mut event = HashMap::new();
@@ -456,7 +448,7 @@ async fn test_execute_secrets_dot_access() {
         name: "secrets_dot".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -473,7 +465,6 @@ async fn test_execute_secrets_dot_access() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let mut event = HashMap::new();
@@ -509,7 +500,7 @@ async fn test_execute_array_access_in_template() {
         name: "array_access".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -528,7 +519,6 @@ async fn test_execute_array_access_in_template() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let mut event = HashMap::new();
@@ -565,7 +555,7 @@ async fn test_adapter_error_propagation() {
         name: "adapter_error".to_string().into(),
         description: None,
         version: None,
-        on: Some(Trigger::Single("cli.manual".to_string())),
+        on: Trigger::Single("cli.manual".to_string()),
         cron: None,
         vars: None,
         steps: vec![Step {
@@ -575,7 +565,6 @@ async fn test_adapter_error_propagation() {
             ..Default::default()
         }],
         catch: None,
-        mcp_servers: None,
     };
 
     let result = engine.execute(&flow, HashMap::new()).await;

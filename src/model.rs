@@ -266,11 +266,10 @@ pub struct Flow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 
-    /// Trigger type (optional for testing)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub on: Option<Trigger>,
+    /// Trigger type (REQUIRED)
+    pub on: Trigger,
 
-    /// Cron expression (required if on: schedule.cron)
+    /// Cron expression (REQUIRED if on contains schedule.cron trigger)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cron: Option<String>,
 
@@ -284,10 +283,6 @@ pub struct Flow {
     /// Error handling steps (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catch: Option<Vec<Step>>,
-
-    /// MCP server configurations (optional)
-    #[serde(skip_serializing_if = "Option::is_none", rename = "mcpServers")]
-    pub mcp_servers: Option<HashMap<String, McpServerConfig>>,
 }
 
 impl Flow {
@@ -298,12 +293,11 @@ impl Flow {
             name: FlowName::new(name).expect("Invalid test flow name"),
             description: None,
             version: None,
-            on: None,
+            on: Trigger::Single("cli.manual".to_string()),
             cron: None,
             vars: None,
             steps: Vec::new(),
             catch: None,
-            mcp_servers: None,
         }
     }
 }
@@ -315,12 +309,11 @@ impl Default for Flow {
             name: FlowName::from("default_flow".to_string()),
             description: None,
             version: None,
-            on: None,
+            on: Trigger::Single("cli.manual".to_string()),
             cron: None,
             vars: None,
             steps: Vec::new(),
             catch: None,
-            mcp_servers: None,
         }
     }
 }

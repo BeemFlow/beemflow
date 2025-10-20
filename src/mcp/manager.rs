@@ -131,10 +131,7 @@ impl McpManager {
             .get(server_name)
             .cloned()
             .ok_or_else(|| {
-                BeemFlowError::adapter(format!(
-                    "MCP server '{}' not configured in flow's mcpServers section",
-                    server_name
-                ))
+                BeemFlowError::adapter(format!("MCP server '{}' not configured", server_name))
             })?;
 
         let server =

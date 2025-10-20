@@ -238,11 +238,7 @@ impl CronManager {
         let flow: Flow = parse_string(&content, None)
             .map_err(|e| BeemFlowError::validation(format!("Failed to parse flow: {}", e)))?;
 
-        let has_cron = flow
-            .on
-            .as_ref()
-            .map(|t| t.includes("schedule.cron"))
-            .unwrap_or(false);
+        let has_cron = flow.on.includes("schedule.cron");
 
         if !has_cron {
             tracing::debug!(flow = flow_name, "Flow has no cron trigger");

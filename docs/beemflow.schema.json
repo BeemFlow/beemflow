@@ -8,6 +8,10 @@
     "description": { "type": "string" },
     "version": { "type": "string" },
     "on": {},
+    "cron": {
+      "type": "string",
+      "pattern": "^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$"
+    },
     "vars": { "type": "object" },
     "steps": {
       "type": "array",
@@ -16,10 +20,6 @@
     "catch": {
       "type": "array",
       "items": { "$ref": "#/definitions/step" }
-    },
-    "mcpServers": {
-      "type": "object",
-      "additionalProperties": { "$ref": "#/definitions/MCPServerConfig" }
     }
   },
   "definitions": {
@@ -93,18 +93,6 @@
         "seconds": {"type": "integer"},
         "until": {"type": "string"}
       }
-    },
-    "MCPServerConfig": {
-      "type": "object",
-      "properties": {
-        "command": { "type": "string" },
-        "args": { "type": "array", "items": { "type": "string" } },
-        "env": { "type": "object", "additionalProperties": { "type": "string" } },
-        "port": { "type": "integer" },
-        "transport": { "type": "string" },
-        "endpoint": { "type": "string" }
-      },
-      "required": ["command"]
     }
   }
 } 

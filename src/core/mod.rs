@@ -264,7 +264,6 @@ pub async fn create_dependencies(config: &Config) -> Result<Dependencies> {
     // Create engine with shared storage and secrets provider
     let engine = Arc::new(Engine::new(
         adapters,
-        mcp_adapter,
         templater,
         storage.clone(),
         secrets_provider.clone(),

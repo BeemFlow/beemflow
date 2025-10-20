@@ -135,7 +135,6 @@ impl TestEnvironment {
         // Create engine with test environment config and storage
         let engine = Arc::new(crate::engine::Engine::new(
             adapters,
-            mcp_adapter,
             Arc::new(crate::dsl::Templater::new()),
             storage.clone(),
             secrets_provider.clone(),
