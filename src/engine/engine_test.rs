@@ -664,7 +664,7 @@ async fn test_generate_deterministic_run_id() {
 #[tokio::test]
 async fn test_generate_deterministic_run_id_time_window() {
     let engine = Engine::for_testing().await;
-    // Verify that UUIDs within the same minute window are identical
+    // Verify that UUIDs within the same 30-second window are identical
     let flow_name = "test-flow";
     let event: HashMap<String, serde_json::Value> = {
         let mut m = HashMap::new();
@@ -679,8 +679,11 @@ async fn test_generate_deterministic_run_id_time_window() {
 
     let id2 = engine.generate_deterministic_run_id(flow_name, &event);
 
-    // Should still be the same (within 1 min window)
-    assert_eq!(id1, id2, "UUIDs within same minute should be identical");
+    // Should still be the same (within 30-second window)
+    assert_eq!(
+        id1, id2,
+        "UUIDs within same 30-second window should be identical"
+    );
 }
 
 #[tokio::test]

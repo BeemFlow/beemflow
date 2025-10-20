@@ -619,6 +619,9 @@ impl Engine {
     }
 
     /// Generate deterministic run ID for deduplication
+    ///
+    /// Uses 30-second time windows to prevent duplicate executions while allowing
+    /// high-frequency cron jobs (e.g., every minute) to execute reliably.
     fn generate_deterministic_run_id(
         &self,
         flow_name: &str,
@@ -632,9 +635,11 @@ impl Engine {
         // Add flow name
         hasher.update(flow_name.as_bytes());
 
-        // Add time bucket (1 minute windows)
+        // Add time bucket (30-second windows for better granularity)
+        // This prevents duplicate executions within 30s while allowing
+        // 1-minute cron jobs to execute reliably (60s > 30s)
         let now = chrono::Utc::now();
-        let time_bucket = now.timestamp() / 60 * 60; // truncate to minute
+        let time_bucket = now.timestamp() / 30 * 30; // truncate to 30-second intervals
         hasher.update(time_bucket.to_string().as_bytes());
 
         // Add event data in sorted order for determinism
