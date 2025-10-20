@@ -404,6 +404,7 @@ pub mod flows {
             }
 
             let message = format!("Flow '{}' v{} deployed to production", input.name, version);
+            tracing::info!("{}", message);
 
             Ok(DeployOutput {
                 flow: input.name,
@@ -510,6 +511,7 @@ pub mod flows {
             }
 
             let message = format!("Flow '{}' rolled back to v{}", input.name, input.version);
+            tracing::info!("{}", message);
 
             Ok(RollbackOutput {
                 flow: input.name,
@@ -582,6 +584,7 @@ pub mod flows {
                 "Flow '{}' v{} disabled from production",
                 input.name, version
             );
+            tracing::info!("{}", message);
 
             Ok(DisableOutput {
                 flow_name: input.name,
@@ -703,6 +706,7 @@ pub mod flows {
                 "Flow '{}' v{} enabled in production",
                 input.name, latest_version
             );
+            tracing::info!("{}", message);
 
             Ok(EnableOutput {
                 flow_name: input.name,
@@ -775,6 +779,7 @@ pub mod flows {
                 "Flow '{}' v{} restored from deployment history to filesystem",
                 input.name, version
             );
+            tracing::info!("{}", message);
 
             Ok(RestoreOutput {
                 name: input.name,

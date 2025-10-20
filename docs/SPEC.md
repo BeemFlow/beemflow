@@ -225,6 +225,43 @@ catch:
       limit: 10
 ```
 
+### Scheduled Flows (Cron)
+```yaml
+name: daily_report
+version: 1.0.0
+on: schedule.cron
+cron: "0 0 9 * * *"  # 6-field format: SEC MIN HOUR DAY MONTH DOW
+steps:
+  - id: generate_report
+    use: core.echo
+    with:
+      text: "Generating daily report at 9 AM"
+
+# Multiple triggers (manual + scheduled)
+name: flexible_flow
+version: 1.0.0
+on:
+  - cli.manual
+  - schedule.cron
+cron: "0 0 */6 * * *"  # Every 6 hours
+steps:
+  - id: sync
+    use: core.echo
+    with:
+      text: "Syncing data"
+```
+
+**Cron Expression Format (6 fields):**
+```
+SEC  MIN  HOUR  DAY  MONTH  DOW
+0    0    9     *    *      *     # Daily at 9:00 AM
+0    0    */6   *    *      *     # Every 6 hours
+0    30   8     *    *      1-5   # Weekdays at 8:30 AM
+0    0    0     1    *      *     # First of month at midnight
+```
+
+**Important:** Cron jobs only run when `flow serve` HTTP server is running.
+
 ### Google Sheets Example
 ```yaml
 name: sheets_integration
@@ -237,7 +274,7 @@ steps:
     with:
       spreadsheetId: "{{ vars.SHEET_ID }}"
       range: "Sheet1!A1:D10"
-      
+
   - id: append_row
     use: google_sheets.values.append
     with:
