@@ -39,7 +39,7 @@ catch: [...]                   # optional error handler
 ```yaml
 # Variables & References (Always use explicit scopes!)
 {{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables  
+{{ secrets.USER }}                 # Environment variables  
 {{ secrets.API_KEY }}          # Secrets
 {{ event.field }}              # Event data
 {{ outputs.step_id.field }}    # Step outputs (preferred)
@@ -65,7 +65,7 @@ catch: [...]                   # optional error handler
 
 # Conditions (MUST use template syntax)
 if: "{{ vars.status == 'active' }}"           # Required format
-if: "{{ vars.count > 5 and env.DEBUG }}"      # Complex conditions
+if: "{{ vars.count > 5 and secrets.DEBUG }}"      # Complex conditions
 if: "{{ not (vars.disabled) }}"               # Negation
 ```
 
@@ -136,7 +136,7 @@ steps:
 
 # Complex conditions
 - id: complex_check
-  if: "{{ vars.count > 10 and env.NODE_ENV == 'production' }}"
+  if: "{{ vars.count > 10 and secrets.NODE_ENV == 'production' }}"
   use: core.echo
   with:
     text: "Multiple conditions"
@@ -218,7 +218,7 @@ catch:
     url: "https://api.example.com/endpoint"
     method: POST
     headers:
-      Authorization: "Bearer {{ env.API_TOKEN }}"
+      Authorization: "Bearer {{ secrets.API_TOKEN }}"
       Content-Type: "application/json"
     body:
       query: "{{ vars.search_term }}"
@@ -230,7 +230,7 @@ catch:
 name: sheets_integration
 on: cli.manual
 vars:
-  SHEET_ID: "{{ env.GOOGLE_SPREADSHEET_ID }}"
+  SHEET_ID: "{{ secrets.GOOGLE_SPREADSHEET_ID }}"
 steps:
   - id: read_data
     use: google_sheets.values.get

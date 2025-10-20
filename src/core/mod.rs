@@ -18,10 +18,12 @@ use crate::registry::RegistryManager;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Dependencies that operations need access to
 #[derive(Clone)]
@@ -31,6 +33,10 @@ pub struct Dependencies {
     pub registry_manager: Arc<RegistryManager>,
     pub config: Arc<Config>,
     pub oauth_client: Arc<crate::auth::OAuthClientManager>,
+    pub cron_manager: Option<Arc<crate::cron::CronManager>>,
+    /// Per-flow locks to prevent concurrent operations on the same flow.
+    /// Prevents TOCTOU bugs in deploy/enable/rollback/disable operations.
+    pub flow_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Metadata for an operation (HTTP routes, CLI patterns, etc.)
@@ -273,5 +279,9 @@ pub async fn create_dependencies(config: &Config) -> Result<Dependencies> {
         registry_manager,
         config,
         oauth_client,
+        // Cron manager is None by default
+        // Only created in HTTP server mode (flow serve) to prevent duplicate executions
+        cron_manager: None,
+        flow_locks: Arc::new(DashMap::new()),
     })
 }

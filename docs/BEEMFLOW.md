@@ -273,7 +273,7 @@ Always use explicit scopes for clarity:
 
 ```yaml
 {{ vars.MY_VAR }}              # Flow variables
-{{ env.USER }}                 # Environment variables
+{{ secrets.USER }}                 # Environment variables
 {{ secrets.API_KEY }}          # Secrets (from .env or system)
 {{ event.field }}              # Event data
 {{ outputs.step_id.field }}    # Step outputs (preferred)
@@ -320,7 +320,7 @@ Minijinja supports both the `default` filter and the `or` operator:
 ```yaml
 # In step conditions (must use template syntax)
 if: "{{ vars.status == 'active' }}"
-if: "{{ vars.count > 5 and env.DEBUG }}"
+if: "{{ vars.count > 5 and secrets.DEBUG }}"
 if: "{{ not (vars.disabled) }}"
 
 # In template content
@@ -672,7 +672,7 @@ mcpServers:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-github"]
     env:
-      GITHUB_TOKEN: "{{ env.GITHUB_TOKEN }}"
+      GITHUB_TOKEN: "{{ secrets.GITHUB_TOKEN }}"
 
 steps:
   # Use MCP tools
@@ -1325,7 +1325,7 @@ steps:
 | Scope | Usage | Example |
 |-------|-------|---------|
 | `vars` | Flow variables | `{{ vars.API_KEY }}` |
-| `env` | Environment | `{{ env.USER }}` |
+| `env` | Environment | `{{ secrets.USER }}` |
 | `secrets` | Secrets | `{{ secrets.TOKEN }}` |
 | `event` | Event data | `{{ event.payload }}` |
 | `outputs` | Step outputs | `{{ outputs.step1.result }}` |

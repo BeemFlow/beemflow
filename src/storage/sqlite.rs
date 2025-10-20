@@ -633,6 +633,41 @@ impl FlowStorage for SqliteStorage {
             .filter_map(|row| row.try_get("flow_name").ok())
             .collect())
     }
+
+    async fn get_deployed_flows_content(
+        &self,
+        flow_names: &[String],
+    ) -> Result<Vec<(String, String)>> {
+        if flow_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build placeholders for IN clause
+        let placeholders = flow_names
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let query_str = format!(
+            "SELECT df.flow_name, fv.content
+             FROM deployed_flows df
+             INNER JOIN flow_versions fv ON df.flow_name = fv.flow_name AND df.deployed_version = fv.version
+             WHERE df.flow_name IN ({})",
+            placeholders
+        );
+
+        let mut query = sqlx::query(&query_str);
+        for name in flow_names {
+            query = query.bind(name);
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        rows.iter()
+            .map(|row| Ok((row.try_get("flow_name")?, row.try_get("content")?)))
+            .collect()
+    }
 }
 
 #[async_trait]

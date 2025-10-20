@@ -150,6 +150,8 @@ impl TestEnvironment {
             registry_manager,
             config,
             oauth_client,
+            cron_manager: None,
+            flow_locks: Arc::new(dashmap::DashMap::new()),
         };
 
         TestEnvironment {

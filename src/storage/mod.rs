@@ -164,6 +164,28 @@ pub trait FlowStorage: Send + Sync {
     /// }
     /// ```
     async fn find_flow_names_by_topic(&self, topic: &str) -> Result<Vec<String>>;
+
+    /// Get content for multiple deployed flows by name (batch query).
+    ///
+    /// More efficient than N individual queries. Only returns flows that
+    /// are currently deployed (have entry in deployed_flows table).
+    ///
+    /// # Performance
+    ///
+    /// Single JOIN query instead of N queries. For 10 flows:
+    /// - N queries: 10 round trips
+    /// - Batch query: 1 round trip
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let flow_names = storage.find_flow_names_by_topic("schedule.cron").await?;
+    /// let contents = storage.get_deployed_flows_content(&flow_names).await?;
+    /// ```
+    async fn get_deployed_flows_content(
+        &self,
+        flow_names: &[String],
+    ) -> Result<Vec<(String, String)>>;
 }
 
 /// OAuth storage for credentials, providers, clients, and tokens

@@ -336,6 +336,15 @@ pub mod flows {
         type Output = DeployOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Acquire per-flow lock to prevent concurrent operations on the same flow
+            let lock = self
+                .deps
+                .flow_locks
+                .entry(input.name.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+
             // Get flow content from filesystem (draft)
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
             let content = crate::storage::flows::get_flow(&flows_dir, &input.name)
@@ -348,11 +357,51 @@ pub mod flows {
                 BeemFlowError::validation("Flow must have a version field to deploy")
             })?;
 
-            // Deploy the version to database
+            // Pre-validate cron expression BEFORE touching storage (fail fast)
+            if self.deps.cron_manager.is_some()
+                && let Some(trigger) = &flow.on
+                && trigger.includes("schedule.cron")
+            {
+                // Validate cron expression exists
+                let cron_expr = flow.cron.as_ref().ok_or_else(|| {
+                    BeemFlowError::validation(
+                        "Flow has schedule.cron trigger but missing cron field",
+                    )
+                })?;
+
+                // Validate cron expression format (let Job::new_async validate it)
+                use tokio_cron_scheduler::Job;
+                Job::new_async(cron_expr.as_str(), |_uuid, _lock| Box::pin(async move {}))
+                    .map_err(|e| {
+                        BeemFlowError::validation(format!(
+                            "Invalid cron expression '{}': {}",
+                            cron_expr, e
+                        ))
+                    })?;
+            }
+
+            // Deploy the version to database (atomic transaction)
             self.deps
                 .storage
                 .deploy_flow_version(&input.name, &version, &content)
                 .await?;
+
+            // Add to cron scheduler (should succeed - we pre-validated)
+            if let Some(cron_manager) = &self.deps.cron_manager
+                && let Err(e) = cron_manager.add_schedule(&input.name).await
+            {
+                // Rare failure (scheduler crash) - rollback deployment
+                if let Err(rollback_err) =
+                    self.deps.storage.unset_deployed_version(&input.name).await
+                {
+                    tracing::error!(
+                        flow = %input.name,
+                        error = %rollback_err,
+                        "Failed to rollback deployment after cron scheduling failed"
+                    );
+                }
+                return Err(e);
+            }
 
             let message = format!("Flow '{}' v{} deployed to production", input.name, version);
 
@@ -383,15 +432,82 @@ pub mod flows {
         type Output = RollbackOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
-            // Get current deployed version
+            // Acquire per-flow lock to prevent concurrent operations on the same flow
+            let lock = self
+                .deps
+                .flow_locks
+                .entry(input.name.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+
+            // Get current deployed version (for rollback if cron fails)
             let current_version = self.deps.storage.get_deployed_version(&input.name).await?;
 
-            // Update deployed version pointer
+            // Pre-validate target version's cron expression BEFORE touching storage
+            if self.deps.cron_manager.is_some() {
+                // Get target version content
+                let content = self
+                    .deps
+                    .storage
+                    .get_flow_version_content(&input.name, &input.version)
+                    .await?
+                    .ok_or_else(|| {
+                        not_found("Flow version", &format!("{}@{}", input.name, input.version))
+                    })?;
+
+                // Parse and validate cron if present
+                let flow = parse_string(&content, None)?;
+                if let Some(trigger) = &flow.on
+                    && trigger.includes("schedule.cron")
+                {
+                    let cron_expr = flow.cron.as_ref().ok_or_else(|| {
+                        BeemFlowError::validation(
+                            "Flow has schedule.cron trigger but missing cron field",
+                        )
+                    })?;
+
+                    use tokio_cron_scheduler::Job;
+                    Job::new_async(cron_expr.as_str(), |_uuid, _lock| Box::pin(async move {}))
+                        .map_err(|e| {
+                            BeemFlowError::validation(format!(
+                                "Invalid cron expression '{}': {}",
+                                cron_expr, e
+                            ))
+                        })?;
+                }
+            }
+
+            // Update deployed version pointer (atomic)
             // Database foreign key constraint ensures version exists in flow_versions table
             self.deps
                 .storage
                 .set_deployed_version(&input.name, &input.version)
                 .await?;
+
+            // Update cron schedule (should succeed - we pre-validated)
+            if let Some(cron_manager) = &self.deps.cron_manager
+                && let Err(e) = cron_manager.add_schedule(&input.name).await
+            {
+                // Rare failure (scheduler crash) - rollback to previous version
+                let rollback_result = if let Some(prev_version) = &current_version {
+                    self.deps
+                        .storage
+                        .set_deployed_version(&input.name, prev_version)
+                        .await
+                } else {
+                    self.deps.storage.unset_deployed_version(&input.name).await
+                };
+
+                if let Err(rollback_err) = rollback_result {
+                    tracing::error!(
+                        flow = %input.name,
+                        error = %rollback_err,
+                        "Failed to rollback after cron scheduling failed"
+                    );
+                }
+                return Err(e);
+            }
 
             let message = format!("Flow '{}' rolled back to v{}", input.name, input.version);
 
@@ -423,6 +539,15 @@ pub mod flows {
         type Output = DisableOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Acquire per-flow lock to prevent concurrent operations on the same flow
+            let lock = self
+                .deps
+                .flow_locks
+                .entry(input.name.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+
             // Check if flow is currently deployed
             let deployed_version = self.deps.storage.get_deployed_version(&input.name).await?;
 
@@ -438,6 +563,20 @@ pub mod flows {
                 .storage
                 .unset_deployed_version(&input.name)
                 .await?;
+
+            // Remove from cron scheduler (warn but don't fail disable)
+            // Rationale: Flow is already removed from storage, so it won't execute.
+            // If cron removal fails, the orphaned job will fail when it tries to run.
+            // Failing disable would prevent users from stopping flows, which is dangerous.
+            if let Some(cron_manager) = &self.deps.cron_manager
+                && let Err(e) = cron_manager.remove_schedule(&input.name).await
+            {
+                tracing::warn!(
+                    flow = %input.name,
+                    error = %e,
+                    "Flow disabled, but failed to remove cron schedule. Orphaned cron job will fail when it runs."
+                );
+            }
 
             let message = format!(
                 "Flow '{}' v{} disabled from production",
@@ -470,6 +609,15 @@ pub mod flows {
         type Output = EnableOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Acquire per-flow lock to prevent concurrent operations on the same flow
+            let lock = self
+                .deps
+                .flow_locks
+                .entry(input.name.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+
             // Check if already enabled
             if let Some(current) = self.deps.storage.get_deployed_version(&input.name).await? {
                 return Err(BeemFlowError::validation(format!(
@@ -491,11 +639,65 @@ pub mod flows {
                     )
                 })?;
 
-            // Re-deploy it
+            // Pre-validate cron expression BEFORE touching storage (fail fast)
+            if self.deps.cron_manager.is_some() {
+                // Get version content
+                let content = self
+                    .deps
+                    .storage
+                    .get_flow_version_content(&input.name, &latest_version)
+                    .await?
+                    .ok_or_else(|| {
+                        not_found(
+                            "Flow version",
+                            &format!("{}@{}", input.name, latest_version),
+                        )
+                    })?;
+
+                // Parse and validate cron if present
+                let flow = parse_string(&content, None)?;
+                if let Some(trigger) = &flow.on
+                    && trigger.includes("schedule.cron")
+                {
+                    let cron_expr = flow.cron.as_ref().ok_or_else(|| {
+                        BeemFlowError::validation(
+                            "Flow has schedule.cron trigger but missing cron field",
+                        )
+                    })?;
+
+                    use tokio_cron_scheduler::Job;
+                    Job::new_async(cron_expr.as_str(), |_uuid, _lock| Box::pin(async move {}))
+                        .map_err(|e| {
+                            BeemFlowError::validation(format!(
+                                "Invalid cron expression '{}': {}",
+                                cron_expr, e
+                            ))
+                        })?;
+                }
+            }
+
+            // Re-deploy it (atomic)
             self.deps
                 .storage
                 .set_deployed_version(&input.name, &latest_version)
                 .await?;
+
+            // Add to cron scheduler (should succeed - we pre-validated)
+            if let Some(cron_manager) = &self.deps.cron_manager
+                && let Err(e) = cron_manager.add_schedule(&input.name).await
+            {
+                // Rare failure (scheduler crash) - rollback enable
+                if let Err(rollback_err) =
+                    self.deps.storage.unset_deployed_version(&input.name).await
+                {
+                    tracing::error!(
+                        flow = %input.name,
+                        error = %rollback_err,
+                        "Failed to rollback enable after cron scheduling failed"
+                    );
+                }
+                return Err(e);
+            }
 
             let message = format!(
                 "Flow '{}' v{} enabled in production",

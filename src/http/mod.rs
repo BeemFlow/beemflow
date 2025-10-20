@@ -218,7 +218,34 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     });
 
     // Use centralized dependency creation from core module
-    let dependencies = crate::core::create_dependencies(&config).await?;
+    let mut dependencies = crate::core::create_dependencies(&config).await?;
+
+    // Create cron manager ONLY in HTTP server mode (prevents duplicate executions)
+    // CLI and MCP-stdio modes don't need cron scheduler
+    dependencies.cron_manager = match crate::cron::CronManager::new(
+        dependencies.storage.clone(),
+        dependencies.engine.clone(),
+    )
+    .await
+    {
+        Ok(manager) => {
+            let manager = Arc::new(manager);
+
+            // Initial sync - load all cron jobs on startup
+            if let Err(e) = manager.sync().await {
+                tracing::warn!(error = %e, "Failed to sync cron jobs on startup");
+            }
+
+            Some(manager)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to initialize cron scheduler, continuing without scheduling"
+            );
+            None
+        }
+    };
 
     // Create registry (takes ownership, so we clone dependencies to keep using them below)
     let registry = Arc::new(OperationRegistry::new(dependencies.clone()));
@@ -325,6 +352,13 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         .with_graceful_shutdown(shutdown_signal)
         .await
         .map_err(|e| BeemFlowError::config(format!("Server error: {}", e)))?;
+
+    // Shutdown cron scheduler
+    if let Some(cron_mgr) = &dependencies.cron_manager
+        && let Err(e) = cron_mgr.shutdown().await
+    {
+        tracing::error!(error = %e, "Failed to shutdown cron scheduler");
+    }
 
     tracing::info!("Server shutdown complete");
     Ok(())

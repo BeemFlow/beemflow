@@ -55,6 +55,7 @@ pub mod engine;
 // Infrastructure
 pub mod blob;
 pub mod config;
+pub mod cron;
 pub mod registry;
 pub mod secrets;
 pub mod storage;
