@@ -133,7 +133,7 @@ tempfile = "3.10.1"
 [dev-dependencies]
 # Testing & Development
 wiremock = "0.6.0"
-criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.7.0", features = ["html_reports", "async_tokio"] }
 tokio-test = "0.4.4"
 
 [profile.release]
