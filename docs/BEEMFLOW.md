@@ -1,1356 +1,804 @@
-# BeemFlow: The Complete LLM Reference
+# BeemFlow Technical Specification
 
-> **FOR LLMs**: This is the authoritative, comprehensive reference for BeemFlow. Read this entire document before working with BeemFlow workflows, tools, or architecture. This document is designed for complete understanding and should be ingested in full.
+## Overview
 
----
+BeemFlow is a universal workflow orchestration runtime written in Rust. It enables text-first automation through YAML-defined workflows that execute consistently across CLI, HTTP REST API, and Model Context Protocol (MCP) interfaces.
 
-## Table of Contents
+### Core Value Proposition
 
-1. [Core Philosophy & Mission](#core-philosophy--mission)
-2. [Architecture Overview](#architecture-overview)
-3. [The BeemFlow Protocol](#the-beemflow-protocol)
-4. [Workflow Language Specification](#workflow-language-specification)
-5. [Template System (Minijinja)](#template-system-minijinja)
-6. [Tool System & Registry](#tool-system--registry)
-7. [Runtime Execution Model](#runtime-execution-model)
-8. [MCP Integration](#mcp-integration)
-9. [Event System](#event-system)
-10. [Security & Secrets](#security--secrets)
-11. [Common Patterns](#common-patterns)
-12. [Implementation Guidelines](#implementation-guidelines)
-13. [Complete Examples](#complete-examples)
-14. [Error Handling](#error-handling)
-15. [Testing & Validation](#testing--validation)
+- **Text-First Workflows**: YAML/JSON definitions that are version-controllable, AI-readable, and auditable
+- **Universal Protocol**: Single workflow definition executes across all interfaces (CLI, HTTP, MCP)
+- **Composable Tools**: Registry-based tool system with automatic discovery and OAuth integration
+- **Durable Execution**: State persistence enabling workflows that pause and resume across webhook events
 
----
+### Design Philosophy
 
-## Core Philosophy & Mission
+1. **Protocol Over Platform**: BeemFlow is a protocol specification, not a vendor platform. Workflows are portable and can be implemented natively in any language.
 
-### The Vision
+2. **Declarative DAG Construction**: Workflows define steps with dependencies automatically inferred from template references, eliminating manual DAG specification.
 
-BeemFlow is **GitHub Actions for every business process** — a text-first, AI-native, open-source workflow automation protocol that fundamentally reimagines how business processes are automated in the AI age.
+3. **Separation of Concerns**: Tool inputs remain JSON-serializable while execution context provides system capabilities (storage, secrets, OAuth) separately.
 
-### Key Principles
-
-1. **Text > GUI**: Workflows are defined in human and AI-readable YAML/JSON, not drag-and-drop interfaces
-2. **Universal Protocol**: One workflow runs everywhere — CLI, HTTP API, or Model Context Protocol
-3. **AI-Native**: LLMs can read, write, and execute BeemFlow workflows as first-class citizens
-4. **Open Ecosystem**: No vendor lock-in, fully open-source, community-driven
-5. **Zero-Config Tools**: Instant access to thousands of tools through registry and MCP
-6. **Business-Focused**: Encodes actual business logic, not just data movement
-
-### The Hidden Mission
-
-BeemFlow addresses the **$15 trillion generational wealth transfer** as baby boomers retire:
-- **Learn**: Every workflow teaches how a business operates
-- **Automate**: Demonstrate value through operational efficiency
-- **Acquire**: Use knowledge and relationships to acquire businesses
-
-This "automation-to-acquisition flywheel" enables technical entrepreneurs to own businesses rather than just serve them.
-
----
-
-## Architecture Overview
+## Architecture
 
 ### System Components
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     BeemFlow Runtime                    │
-├───────────────┬──────────────┬──────────────┬───────────┤
-│   Protocol    │    Engine    │   Registry   │    MCP    │
-├───────────────┼──────────────┼──────────────┼───────────┤
-│ YAML/JSON     │ Executor     │ Tool Store   │ Servers   │
-│ Validation    │ Scheduler    │ Manifests    │ Bridge    │
-│ Templating    │ State Mgmt   │ Resolution   │ Protocol  │
-└───────────────┴──────────────┴──────────────┴───────────┘
-                            ↓
-        ┌──────────┬────────────┬──────────┬──────────┐
-        │   CLI    │  HTTP API  │  Events  │  Storage │
-        └──────────┴────────────┴──────────┴──────────┘
+┌─────────────────────────────────────────────────┐
+│              Interface Layer                    │
+├───────────────┬──────────────┬──────────────────┤
+│   CLI Tool    │   HTTP API   │   MCP Server     │
+│   (Axum)      │   (Axum)     │   (rmcp)         │
+└───────────────┴──────────────┴──────────────────┘
+         ↓              ↓              ↓
+┌─────────────────────────────────────────────────┐
+│          Operations Layer                       │
+│  - Flows (create, deploy, validate)             │
+│  - Runs (execute, list, resume)                 │
+│  - Tools (search, install, list)                │
+│  - System (status, spec)                        │
+└─────────────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────────────┐
+│          Execution Engine                       │
+│  ┌───────────────────────────────────────────┐  │
+│  │ Executor: Step orchestration, parallel    │  │
+│  │ blocks, loops, conditionals, retries      │  │
+│  └───────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────┐  │
+│  │ Templater: Minijinja2 variable expansion  │  │
+│  └───────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────┐  │
+│  │ Analyzer: Automatic DAG from templates    │  │
+│  └───────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────────────┐
+│          Adapter System                         │
+│  ┌─────────┬──────────┬──────────────────────┐  │
+│  │  Core   │   HTTP   │   MCP Servers        │  │
+│  │  Tools  │ Adapter  │   Adapter            │  │
+│  └─────────┴──────────┴──────────────────────┘  │
+└─────────────────────────────────────────────────┘
+         ↓
+┌────────────────────────────────────────────────┐
+│    Infrastructure & Services                   │
+├──────────┬──────────┬────────┬─────────────────┤
+│ Storage  │ Registry │ OAuth  │ Webhooks/Cron   │
+│ (SQLite/ │ (Tool    │ Client │ Scheduler       │
+│  PG)     │  Discovery)│      │                 │
+└──────────┴──────────┴────────┴─────────────────┘
 ```
 
-### Execution Contexts
+### Module Organization
 
-1. **CLI Mode**: Direct execution via `flow run workflow.yaml`
-2. **HTTP Mode**: RESTful API for remote execution
-3. **MCP Mode**: Model Context Protocol server integration
-4. **Event-Driven**: Triggered by events, webhooks, or schedules
+| Module | Responsibility | Key Files |
+|--------|----------------|-----------|
+| `src/core/` | Business logic operations exposed uniformly | `flows.rs`, `runs.rs`, `tools.rs` |
+| `src/engine/` | Workflow execution orchestration | `executor.rs`, `context.rs` |
+| `src/dsl/` | Parsing, validation, templating | `mod.rs`, `template.rs`, `analyzer.rs` |
+| `src/adapter/` | Pluggable tool execution | `core.rs`, `http.rs`, `mcp.rs` |
+| `src/http/` | REST API server and webhooks | `mod.rs`, `webhook.rs` |
+| `src/auth/` | OAuth 2.0 client/server | `client.rs`, `server.rs` |
+| `src/mcp/` | Model Context Protocol integration | `server.rs`, `manager.rs` |
+| `src/registry/` | Tool discovery and resolution | `manager.rs`, `default.rs` |
+| `src/storage/` | Multi-backend persistence | `sqlite.rs`, `postgres.rs` |
+| `src/secrets/` | Environment variable and secret access | `env.rs` |
 
----
+### Request Flow
 
-## The BeemFlow Protocol
+**HTTP API Request** (`POST /api/operations/runs.start_run`):
+1. Axum router receives request
+2. Operation name extracted from path
+3. OperationRegistry.execute_json() invoked
+4. Operation trait impl called (StartRun)
+5. Storage layer accessed with tenant scoping
+6. JSON response serialized and returned
 
-### Flow Definition Structure
+**CLI Command** (`flow runs start`):
+1. Clap parses command-line arguments
+2. Dependencies initialized (engine, storage, registry)
+3. Same Operation trait impl invoked
+4. Results formatted as YAML/JSON
+5. Output to stdout
+
+**MCP Tool Call** (`beemflow_start_run()`):
+1. AI agent calls MCP tool
+2. MCP server handler receives JSON-RPC request
+3. Same Operation trait impl invoked
+4. Results returned as MCP tool response
+
+This unified operations layer ensures interface parity across all access methods.
+
+## Technology Stack
+
+### Language & Runtime
+
+- **Rust** (2024 edition): Type safety, zero-cost abstractions, memory safety, concurrency
+- **Tokio** (1.47): Async runtime with full feature set
+- **Axum** (0.8): Modern async web framework
+
+### Key Dependencies
+
+**Serialization & Templating**:
+- `serde` + `serde_json`: JSON serialization with order preservation
+- `serde_yaml`: YAML parsing for flow definitions
+- `minijinja` (2.12): Jinja2-compatible templating
+
+**Database**:
+- `sqlx` (0.8): Compile-time checked SQL with SQLite and PostgreSQL backends
+- `aws-sdk-s3`: S3 blob storage
+
+**Authentication**:
+- `jsonwebtoken` (10.0): JWT generation/validation
+- `oauth2` (5.0): OAuth 2.0 client flows
+- `hmac` + `sha2`: Webhook signature verification
+
+**MCP Integration**:
+- `rmcp` (0.8): Official Rust SDK for Model Context Protocol
+
+**Observability**:
+- `tracing` + `tracing-subscriber`: Structured logging
+- `prometheus`: Metrics
+- `opentelemetry` + `opentelemetry-otlp`: Distributed tracing
+
+### Storage Architecture
+
+**Multi-Backend Support**:
+- **SQLite**: Default for single-instance deployments (file-based, zero-config)
+- **PostgreSQL**: Production multi-instance with connection pooling
+
+**Key Tables**:
+- `runs`: Workflow execution records with status and timing
+- `steps`: Individual step execution results
+- `flows`: Workflow definitions (optional, can be filesystem-based)
+- `oauth_credentials`: Encrypted external OAuth tokens
+- `paused_runs`: Serialized context for durable execution resumption
+- `webhooks`: Webhook configurations and handlers
+
+## Core Features
+
+### 1. Flow Definition
+
+Workflows are declarative YAML documents describing a directed acyclic graph of steps:
 
 ```yaml
-# REQUIRED fields
-name: string                    # Unique workflow identifier
-on: trigger                     # Trigger type (see Triggers section)
-steps: []                       # Array of execution steps
+name: payment_processor
+version: 1.0.0
+description: Process payments and send notifications
+on: webhook
+vars:
+  currency: USD
+  timeout: 30
 
-# OPTIONAL fields
-version: string                 # Semantic version
-vars: {}                       # Workflow-level variables
-cron: string                   # Cron expression (if on: schedule.cron)
-catch: []                      # Error handling steps
-mcpServers: {}                 # MCP server configurations
+steps:
+  - id: validate_payment
+    use: http.fetch
+    with:
+      url: "{{ vars.api_url }}/validate"
+
+  - id: process_payment
+    use: stripe.charge
+    with:
+      amount: "{{ event.amount }}"
+      currency: "{{ vars.currency }}"
+
+  - id: notify_customer
+    use: email.send
+    with:
+      to: "{{ event.email }}"
+      body: "Payment processed: {{ steps.process_payment.id }}"
 ```
 
-### Triggers
+### 2. Execution Model
 
-BeemFlow supports multiple trigger types:
+**DAG Construction**: Dependency analyzer parses template references to build execution graph automatically.
 
+**Topological Execution**: Steps execute in dependency order with automatic parallelization of independent steps.
+
+**Context Propagation**: Each step receives immutable access to:
+- `event`: Trigger data (webhook payload, CLI args, HTTP request)
+- `vars`: Workflow-level variables
+- `outputs` / `steps`: Results from completed steps
+- `secrets`: Environment variables
+- `runs.previous`: Prior execution outputs (organizational memory)
+
+**State Management**: For durable waits (`await_event`), execution context is serialized to database, returning a resume token. Later webhook delivery or manual resume continues from that point.
+
+### 3. Step Types
+
+Each step has exactly one action (mutually exclusive):
+
+**Tool Execution**:
 ```yaml
-# Manual CLI execution
-on: cli.manual
-
-# Scheduled execution
-on: schedule.cron
-cron: "0 9 * * 1-5"  # 9 AM weekdays
-
-# Event-driven
-on: event:user.signup
-on: event:payment.received
-
-# HTTP request
-on: http.request
-
-# Multiple triggers
-on:
-  - cli.manual
-  - schedule.cron
-  - event:topic.name
-```
-
-### Step Definition
-
-Every step MUST have an `id` and ONE primary action:
-
-```yaml
-# Tool execution step
-- id: unique_identifier
-  use: tool.name              # Tool to execute
-  with: {}                     # Tool parameters
-  
-# Parallel execution block
-- id: parallel_block
-  parallel: true
-  steps: []                    # Steps to run in parallel
-  
-# Loop execution
-- id: foreach_block
-  foreach: "{{ array }}"       # Array to iterate
-  as: item                     # Loop variable name
-  do: []                       # Steps to execute per item
-  
-# Event waiting
-- id: wait_for_event
-  await_event:
-    source: "system"
-    match: {key: value}
-    timeout: "1h"
-    
-# Time delay
-- id: delay
-  wait:
-    seconds: 30
-```
-
-### Optional Step Modifiers
-
-```yaml
-- id: step_with_modifiers
-  use: tool.name
-  with: {}
-  
-  # Conditional execution
-  if: "{{ condition }}"
-  
-  # Dependencies
-  depends_on: [step1, step2]
-  
-  # Retry configuration
+- id: call_api
+  use: http.fetch
+  with:
+    url: "https://api.example.com"
+  if: "{{ event.type == 'critical' }}"
   retry:
     attempts: 3
     delay_sec: 5
 ```
 
-### IMPORTANT: Fields That Don't Exist
-
-These fields are commonly hallucinated but **DO NOT EXIST**:
-
+**Parallel Block**:
 ```yaml
-# ❌ THESE DON'T EXIST
-continue_on_error: true    # Use catch blocks instead
-timeout: 30s               # Only in await_event.timeout
-on_error: handler          # Use catch blocks
-on_success: next          # Doesn't exist
-break: true               # No flow control keywords
-continue: true            # No flow control keywords
-exit: true                # No flow control keywords
+- id: fetch_all
+  parallel: true
+  steps:
+    - id: fetch_users
+      use: http.fetch
+    - id: fetch_posts
+      use: http.fetch
 ```
 
----
-
-## Workflow Language Specification
-
-### Complete Data Model (Go Source)
-
-This is the EXACT model BeemFlow implements:
-
-```go
-type Flow struct {
-    Name        string                  `yaml:"name"`        // REQUIRED
-    Description string                  `yaml:"description"` // optional
-    Version     string                  `yaml:"version"`     
-    On          any                     `yaml:"on"`          // REQUIRED
-    Cron        string                  `yaml:"cron"`        
-    Vars        map[string]any          `yaml:"vars"`        
-    Steps       []Step                  `yaml:"steps"`       // REQUIRED
-    Catch       []Step                  `yaml:"catch"`       
-    MCPServers  map[string]MCPServerCfg `yaml:"mcpServers"`  
-}
-
-type Step struct {
-    ID         string          `yaml:"id"`          // REQUIRED
-    Use        string          `yaml:"use"`         
-    With       map[string]any  `yaml:"with"`        
-    DependsOn  []string        `yaml:"depends_on"`  
-    Parallel   bool            `yaml:"parallel"`    
-    If         string          `yaml:"if"`          
-    Foreach    string          `yaml:"foreach"`     
-    As         string          `yaml:"as"`          
-    Do         []Step          `yaml:"do"`          
-    Steps      []Step          `yaml:"steps"`       
-    Retry      *RetrySpec      `yaml:"retry"`       
-    AwaitEvent *AwaitEventSpec `yaml:"await_event"` 
-    Wait       *WaitSpec       `yaml:"wait"`        
-}
-
-type RetrySpec struct {
-    Attempts int `yaml:"attempts"`
-    DelaySec int `yaml:"delay_sec"`
-}
-
-type AwaitEventSpec struct {
-    Source  string         `yaml:"source"`
-    Match   map[string]any `yaml:"match"`
-    Timeout string         `yaml:"timeout"`
-}
-
-type WaitSpec struct {
-    Seconds int    `yaml:"seconds"`
-    Until   string `yaml:"until"`
-}
-```
-
-### Validation Rules
-
-1. **Step Requirements**: Every step must have ONE of:
-   - `use` → Execute a tool
-   - `parallel: true` with `steps` → Parallel block
-   - `foreach` with `as` and `do` → Loop
-   - `await_event` → Wait for event
-   - `wait` → Time delay
-
-2. **Constraints**:
-   - `id` is always required and must be unique within scope
-   - `parallel: true` REQUIRES `steps` array
-   - `foreach` REQUIRES both `as` and `do`
-   - Cannot combine `use` with `parallel` or `foreach`
-   - Step IDs must be valid identifiers (alphanumeric + underscore)
-
----
-
-## Template System (Minijinja)
-
-BeemFlow uses **Minijinja** templating (Django-like syntax) for variable interpolation and logic.
-
-### Variable Scopes
-
-Always use explicit scopes for clarity:
-
-```yaml
-{{ vars.MY_VAR }}              # Flow variables
-{{ secrets.USER }}                 # Environment variables
-{{ secrets.API_KEY }}          # Secrets (from .env or system)
-{{ event.field }}              # Event data
-{{ outputs.step_id.field }}    # Step outputs (preferred)
-{{ step_id.field }}            # Step outputs (shorthand)
-{{ runs.previous.field }}      # Previous run data
-```
-
-### Array Access
-
-Minijinja uses bracket notation for arrays:
-
-```yaml
-{{ array[0] }}                  # First element
-{{ array[1] }}                  # Second element
-{{ data.rows[0].name }}         # Nested access
-{{ array[variable_index] }}     # Variable index
-```
-
-### Filters
-
-```yaml
-{{ text | upper }}             # Convert to uppercase
-{{ text | lower }}             # Convert to lowercase
-{{ text | title }}             # Title case
-{{ array | length }}           # Array/string length
-{{ array | join(", ") }}        # Join array elements
-{{ number + 10 }}              # Math operations (no filter needed)
-{{ text | truncate(50) }}       # Truncate string
-{{ value | escape }}           # HTML escape
-```
-
-### Default Values
-
-Minijinja supports both the `default` filter and the `or` operator:
-
-```yaml
-{{ value | default('fallback') }}  # ✅ Using filter
-{{ value or 'fallback' }}          # ✅ Using or operator (preferred)
-{{ value || 'default' }}           # ❌ Wrong - use 'or' not '||'
-```
-
-### Conditionals
-
-```yaml
-# In step conditions (must use template syntax)
-if: "{{ vars.status == 'active' }}"
-if: "{{ vars.count > 5 and secrets.DEBUG }}"
-if: "{{ not (vars.disabled) }}"
-
-# In template content
-{% if condition %}
-  True branch
-{% elif other_condition %}
-  Elif branch
-{% else %}
-  False branch
-{% endif %}
-```
-
-### Loops in Templates
-
-```yaml
-# In template content
-{% for item in array %}
-  {{ item }}{% if not loop.last %}, {% endif %}
-{% endfor %}
-
-# Loop variables
-{{ loop.index0 }}    # 0-based index
-{{ loop.index }}      # 1-based index
-{{ loop.first }}      # True if first iteration
-{{ loop.last }}       # True if last iteration
-```
-
-### In Foreach Steps
-
-BeemFlow automatically provides these variables:
-
+**Loop (foreach)**:
 ```yaml
 - id: process_items
-  foreach: "{{ vars.items }}"
+  foreach: "{{ event.items }}"
   as: item
   do:
-    - id: process_{{ item_index }}    # 0-based index
-      use: core.echo
+    - id: process_item
+      use: api.process
       with:
-        text: |
-          Item: {{ item }}
-          Index: {{ item_index }}      # 0-based
-          Row: {{ item_row }}          # 1-based
+        data: "{{ item }}"
 ```
 
-### Functions That Don't Exist
-
+**Durable Wait**:
 ```yaml
-{{ now() }}              # ❌ No function calls
-{{ date() }}             # ❌ No date function
-{{ 'now' | date }}       # ❌ No date filter
-{{ uuid() }}             # ❌ No UUID generation
+- id: wait_for_approval
+  await_event:
+    source: slack
+    match:
+      token: "{{ vars.approval_token }}"
+    timeout: 24h
 ```
 
----
+**Time Delay**:
+```yaml
+- id: pause
+  wait:
+    seconds: 30
+```
 
-## Tool System & Registry
+### 4. Tool System
 
-### Tool Resolution Order
+Tools are reusable atomic operations exposed through a unified adapter interface.
 
-1. **Core Adapters**: Built-in tools
-   - `core.echo` - Print text output
-   - `core.wait` - Pause execution
-   - `core.log` - Structured logging
-
-2. **Registry Tools**: From registry files
-   - Default: `/registry/default.json`
-   - User: `.beemflow/registry.json`
-   - Federated: Remote registry URLs
-
-3. **MCP Servers**: Model Context Protocol tools
-   - Format: `mcp://server_name/tool_name`
-   - Configured in `mcpServers` section
-
-4. **HTTP Adapter**: Generic HTTP requests
-   - Tool name: `http`
-   - Supports all HTTP methods
-
-### Registry Tool Format
-
+**Tool Manifest Example**:
 ```json
 {
   "type": "tool",
-  "name": "google_sheets.values.get",
-  "description": "Read values from a Google Sheet",
-  "kind": "task",
-  "version": "1.0.0",
-  "registry": "default",
+  "name": "stripe.charge",
+  "description": "Charge a payment method",
   "parameters": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "required": ["spreadsheetId", "range"],
+    "required": ["amount", "currency"],
     "properties": {
-      "spreadsheetId": {
-        "type": "string",
-        "description": "The ID of the spreadsheet"
-      },
-      "range": {
-        "type": "string",
-        "description": "A1 notation range"
-      }
+      "amount": {"type": "number"},
+      "currency": {"type": "string"}
     }
   },
-  "manifest": {
-    "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
-    "method": "GET",
-    "headers": {
-      "Authorization": "Bearer $env:GOOGLE_ACCESS_TOKEN"
-    }
+  "endpoint": "https://api.stripe.com/v1/charges",
+  "method": "POST",
+  "headers": {
+    "Authorization": "Bearer $oauth:stripe:default"
   }
 }
 ```
 
-### Common Tools
+**Adapter Pattern**:
 
-```yaml
-# Core Tools
-core.echo                      # Print text
-core.wait                      # Pause execution
-core.log                       # Structured logging
+All tool execution implements the `Adapter` trait:
 
-# HTTP
-http.fetch                     # Simple GET request
-http                          # Full HTTP control
-
-# AI Services
-openai.chat_completion        # OpenAI GPT models
-anthropic.chat_completion     # Anthropic Claude
-
-# Google Services
-google_sheets.values.get      # Read spreadsheet
-google_sheets.values.update   # Update cells
-google_sheets.values.append   # Add rows
-google_sheets.values.clear    # Clear range
-
-# Communication
-slack.chat.postMessage        # Send Slack messages
-twilio.messages.create        # Send SMS
-
-# Data Processing
-jq.transform                  # JSON transformation
-csv.parse                     # Parse CSV data
+```rust
+#[async_trait]
+pub trait Adapter: Send + Sync {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        ctx: &ExecutionContext,
+    ) -> Result<HashMap<String, Value>>;
+}
 ```
 
-### HTTP Adapter
+Three concrete implementations:
 
-The generic HTTP adapter provides full control:
+1. **CoreAdapter**: Built-in tools (echo, wait, log, convert_openapi) with no external dependencies
+2. **HttpAdapter**: HTTP-based tools from registry with automatic OAuth token and environment variable expansion
+3. **McpAdapter**: Model Context Protocol servers with automatic tool discovery
 
-```yaml
-- id: api_call
-  use: http
-  with:
-    url: "https://api.example.com/endpoint"
-    method: POST              # GET, POST, PUT, DELETE, PATCH
-    headers:
-      Authorization: "Bearer {{ secrets.API_TOKEN }}"
-      Content-Type: "application/json"
-    body:                      # Can be object or string
-      query: "{{ vars.search }}"
-      limit: 10
-    query:                     # URL query parameters
-      page: 1
-      size: 20
+**ExecutionContext Design**:
+
+Passed separately from inputs to maintain JSON-serializability while providing:
+- Storage access
+- Secrets provider
+- OAuth client manager
+- Future: user_id, permissions, audit logging
+
+### 5. Registry System
+
+**Three-Tier Discovery**:
+
+1. **Default Registry**: Embedded tools in `/registry/default.json` (OpenAI, Stripe, GitHub, Slack, etc.)
+2. **Local Registry**: User-defined tools in `.beemflow/registry.json` for custom APIs and overrides
+3. **Remote Registry**: Hub for community tools (Smithery integration, future BeemFlow Hub)
+
+**Tool Resolution**:
+```
+use: stripe.charge
+    ↓
+1. Check if "stripe" adapter cached
+2. Search registries for "stripe.charge"
+3. Load manifest
+4. Create HttpAdapter instance
+5. Execute with OAuth token expansion ($oauth:stripe:default)
 ```
 
----
+### 6. Webhook Handling
 
-## Runtime Execution Model
+**Flow**:
+1. External service posts to `/webhooks/{topic}`
+2. System matches flows with `on: webhook` trigger
+3. For durable execution, workflow pauses at `await_event`
+4. Event stored in database
+5. Workflow resumes with event data in context
+6. HMAC-SHA256 signature verification supported
 
-### Execution Flow
+### 7. OAuth Integration
 
-1. **Parse**: YAML/JSON → Internal flow structure
-2. **Validate**: Schema validation & constraint checking
-3. **Template**: Initial variable expansion
-4. **Execute**: Step-by-step execution with state tracking
-5. **Output**: Results returned or stored
+**OAuthClientManager** handles:
+- Token storage/retrieval per provider per integration
+- Automatic refresh before expiration
+- Header expansion in HTTP requests (`$oauth:provider:integration`)
 
-### State Management
+**OAuthServer** provides:
+- Authorization code flow for external OAuth
+- Pending flow storage
+- Token generation and validation
+
+### 8. HTTP API
+
+**Unified Operations Interface**:
+
+All business logic exposed via:
+```
+POST /api/operations/{operation_name}
+{
+  "input": {...}
+}
+```
+
+**Examples**:
+- `POST /api/operations/flows.create_flow`
+- `POST /api/operations/runs.start_run`
+- `GET /api/operations/runs.list_runs`
+- `POST /api/operations/tools.search_tools`
+
+**OpenAPI Support**: JSON schemas auto-generated for all operations via schemars.
+
+### 9. MCP Integration
+
+**Dual Role**:
+1. **MCP Server**: Exposes all BeemFlow operations as MCP tools, enabling AI agents to manage workflows
+2. **MCP Client**: Connects to external MCP servers (Postgres, filesystem, etc.) and exposes their tools in workflows
+
+**Example MCP Server Config**:
+```json
+{
+  "type": "mcp_server",
+  "name": "postgres",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-postgres"],
+  "env": {
+    "DATABASE_URL": "$env:PG_CONNECTION_STRING"
+  }
+}
+```
+
+## Flow Specification
+
+### Required Fields
 
 ```yaml
-# Outputs are available immediately after step completion
-- id: step1
-  use: tool.name
-  with: {param: value}
-  
-- id: step2
-  use: another.tool
+name: string          # Alphanumeric, _, -, . only
+steps: array          # At least one step
+on: trigger_type      # cli.manual, webhook, schedule.cron, http.request
+```
+
+### Optional Fields
+
+```yaml
+version: string       # Semantic version
+description: string   # Natural language specification
+vars: object          # Workflow variables
+catch: array          # Error handler steps
+cron: string          # Required if on: schedule.cron
+```
+
+### Template Namespaces
+
+Available in all `{{ }}` expressions:
+
+- `vars.*`: Workflow variables
+- `secrets.*`: Environment variables
+- `event.*`: Trigger data
+- `outputs.*` / `steps.*`: Step results
+- `runs.previous.*`: Prior execution outputs
+
+### Template Filters (Minijinja)
+
+```yaml
+{{ text | upper }}              # UPPERCASE
+{{ items | length }}            # Count
+{{ items | join(", ") }}        # Join array
+{{ value | default("n/a") }}    # Fallback
+```
+
+### Control Flow
+
+**Conditional Execution**:
+```yaml
+- id: notify_error
+  if: "{{ status.code >= 400 }}"
+  use: slack.post
+```
+
+**Automatic Dependencies**:
+Dependencies inferred from template references:
+```yaml
+- id: step_c
+  # Implicitly depends on step_a and step_b
+  use: echo
   with:
-    # Access step1's output
-    input: "{{ outputs.step1.result }}"
+    text: "{{ step_a.result }} + {{ step_b.result }}"
+```
+
+**Explicit Dependencies**:
+```yaml
+- id: finalize
+  depends_on: [process_all, validate_all]
+  use: echo
+  with:
+    text: "Complete"
+```
+
+### Retry Logic
+
+```yaml
+- id: unreliable_api
+  use: http.fetch
+  with:
+    url: "https://api.example.com"
+  retry:
+    attempts: 3
+    delay_sec: 5
+    backoff: exponential  # or linear
+```
+
+### Error Handling
+
+```yaml
+name: resilient_flow
+steps:
+  - id: risky_operation
+    use: external.api
+
+catch:
+  - id: log_error
+    use: core.log
+    with:
+      level: error
+      message: "Flow failed: {{ error }}"
+
+  - id: notify_admin
+    use: email.send
+    with:
+      to: "admin@example.com"
+```
+
+## Tool/Adapter System
+
+### Adapter Interface
+
+All adapters implement:
+
+```rust
+#[async_trait]
+pub trait Adapter: Send + Sync {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        ctx: &ExecutionContext,
+    ) -> Result<HashMap<String, Value>>;
+}
+```
+
+### Built-in Tools (CoreAdapter)
+
+| Tool | Description |
+|------|-------------|
+| `core.echo` | Returns input text |
+| `core.wait` | Sleeps for duration |
+| `core.log` | Structured logging |
+| `core.convert_openapi` | Generates tool from OpenAPI spec |
+
+### HTTP Tools (HttpAdapter)
+
+Defined by JSON manifest with:
+- `endpoint`: URL template with `{param}` placeholders
+- `method`: HTTP method
+- `headers`: Headers with `$oauth:` and `$env:` expansion
+- `parameters`: JSON Schema for validation
+
+**Variable Expansion**:
+- `$oauth:provider:integration`: Replaced with OAuth token
+- `$env:VAR_NAME`: Replaced with environment variable
+
+### MCP Tools (McpAdapter)
+
+Automatically discovered from MCP server process:
+- Server spawned as child process
+- JSON-RPC communication over stdio
+- Tools registered dynamically
+- Namespace: `mcp://server-name/tool-name`
+
+### OpenAPI Integration
+
+Convert any OpenAPI spec to BeemFlow tools:
+
+```bash
+flow convert openapi-spec.json > custom-tools.json
+```
+
+Tools can then be registered in local registry and used in workflows with automatic parameter validation.
+
+## Security Architecture
+
+### Current State (Single-User)
+
+- No authentication on HTTP API
+- OAuth tokens stored encrypted in database
+- Secrets sourced from environment variables
+- Webhook signature verification via HMAC-SHA256
+- SQL injection prevention via parameterized queries (sqlx)
+
+### Planned Multi-User Features
+
+From design documents, planned implementation includes:
+
+**Phase 1: User Isolation**
+- JWT-based authentication middleware
+- `users` and `tenants` tables
+- `tenant_id` and `user_id` on all resources
+- Query filtering by tenant scope
+
+**Phase 2: RBAC**
+- Role-based access control (Owner, Admin, Member, Viewer)
+- Per-user OAuth credential scoping
+- Secrets encryption at rest
+
+**Phase 3: Advanced**
+- Audit logging of all operations
+- Usage quotas and rate limiting
+- Two-factor authentication (TOTP)
+
+## Concurrency Model
+
+### Tokio-Based Execution
+
+- Each workflow runs in separate async task
+- Parallel steps use `tokio::join_all` for concurrent execution
+- CPU-bound work delegated to `tokio::spawn_blocking`
+
+### Thread-Safe State
+
+- `Arc<Mutex<>>` for shared mutable state
+- `DashMap` for concurrent hash maps (lock-free reads)
+- Immutable event/vars in step context
+- Concurrent-safe output storage
+
+**Step Isolation**:
+```rust
+pub struct StepContext {
+    event: Arc<HashMap<String, Value>>,      // Immutable
+    vars: Arc<HashMap<String, Value>>,       // Immutable
+    outputs: Arc<DashMap<String, Value>>,    // Concurrent
+    secrets: Arc<HashMap<String, Value>>,    // Read-only
+}
+```
+
+No shared mutable state between steps prevents race conditions.
+
+## Deployment
+
+### Single Binary
+
+Rust compilation produces single executable with no runtime dependencies:
+- Fast startup (~100ms)
+- Low memory footprint
+- Cross-platform compilation
+
+### Database
+
+**SQLite** (default):
+```bash
+DATABASE_URL=sqlite:beemflow.db flow serve
+```
+
+**PostgreSQL** (production):
+```bash
+DATABASE_URL=postgres://user:pass@host/db flow serve
+```
+
+### Environment Configuration
+
+Key environment variables:
+- `DATABASE_URL`: Database connection string
+- `HTTP_HOST` / `HTTP_PORT`: Server binding
+- `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`: OAuth app credentials
+- Custom secrets accessible via `{{ secrets.VAR_NAME }}`
+
+### Observability
+
+**Logging**:
+```bash
+RUST_LOG=info flow serve
+```
+
+**Metrics**: Prometheus endpoint at `/metrics`
+
+**Tracing**: OpenTelemetry OTLP exporter configured via environment:
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+```
+
+## Example Workflows
+
+### Hello World
+
+```yaml
+name: hello
+on: cli.manual
+steps:
+  - id: greet
+    use: core.echo
+    with:
+      text: "Hello, BeemFlow!"
+```
+
+### HTTP API Call
+
+```yaml
+name: fetch_user
+on: http.request
+steps:
+  - id: get_user
+    use: http.fetch
+    with:
+      url: "https://api.github.com/users/{{ event.username }}"
+
+  - id: log_result
+    use: core.log
+    with:
+      message: "Found user: {{ steps.get_user.body.name }}"
+```
+
+### Webhook with Durable Wait
+
+```yaml
+name: approval_flow
+on: webhook
+steps:
+  - id: request_approval
+    use: slack.post
+    with:
+      channel: "#approvals"
+      text: "Approve request {{ event.id }}?"
+
+  - id: wait_for_response
+    await_event:
+      source: slack
+      match:
+        request_id: "{{ event.id }}"
+      timeout: 24h
+
+  - id: process_approval
+    if: "{{ steps.wait_for_response.approved == true }}"
+    use: api.approve
+    with:
+      id: "{{ event.id }}"
 ```
 
 ### Parallel Execution
 
 ```yaml
-- id: parallel_operations
-  parallel: true
-  steps:
-    - id: task1
-      use: http.fetch
-      with: {url: "https://api1.com"}
-    - id: task2
-      use: http.fetch
-      with: {url: "https://api2.com"}
-    - id: task3
-      use: http.fetch
-      with: {url: "https://api3.com"}
-
-# All outputs available after parallel block
-- id: combine_results
-  use: core.echo
-  with:
-    text: |
-      Task1: {{ outputs.task1.body }}
-      Task2: {{ outputs.task2.body }}
-      Task3: {{ outputs.task3.body }}
-```
-
-### Loop Execution
-
-```yaml
-- id: process_items
-  foreach: "{{ vars.items }}"
-  as: item
-  do:
-    - id: validate_{{ item_index }}
-      use: validation.check
-      with:
-        data: "{{ item }}"
-    
-    - id: process_{{ item_index }}
-      if: "{{ outputs['validate_' + item_index].valid }}"
-      use: processor.run
-      with:
-        input: "{{ item }}"
-```
-
-### Dependency Management
-
-```yaml
-# Explicit dependencies
-- id: prepare_data
-  use: data.prepare
-  
-- id: analyze
-  depends_on: [prepare_data]
-  use: ai.analyze
-  
-- id: report
-  depends_on: [analyze]
-  use: report.generate
-
-# Implicit dependencies (output references)
-- id: fetch
-  use: http.fetch
-  
-- id: process
-  use: processor.run
-  with:
-    # Creates implicit dependency on 'fetch'
-    data: "{{ outputs.fetch.body }}"
-```
-
----
-
-## OAuth Configuration for ChatGPT MCP
-
-BeemFlow supports OAuth 2.1 authentication for secure MCP access. By default, OAuth is **disabled** for easier local development. Enable it only when you need secure access for ChatGPT or production deployments.
-
-### Enabling OAuth
-
-Add OAuth configuration to your `flow.config.json`:
-
-```json
-{
-  "oauth": {
-    "enabled": true
-  }
-}
-```
-
-When OAuth is enabled:
-- MCP endpoints require Bearer token authentication
-- OAuth 2.1 endpoints are available at `/oauth/*`
-- ChatGPT can authenticate and access your BeemFlow operations securely
-
-### OAuth Endpoints
-
-When OAuth is enabled, these endpoints become available:
-
-- `/.well-known/oauth-authorization-server` - Server metadata
-- `/oauth/authorize` - Authorization endpoint
-- `/oauth/token` - Token endpoint
-- `/oauth/register` - Dynamic client registration
-
-### ChatGPT MCP Setup
-
-1. **Enable OAuth** in your BeemFlow config
-2. **Start BeemFlow server**: `flow serve`
-3. **Configure ChatGPT MCP**:
-   - **Server URL**: `https://your-domain.com/mcp`
-   - **Authentication**: Choose "OAuth"
-   - **Client Registration**: ChatGPT will automatically register as an OAuth client
-
-4. **Complete OAuth flow** when ChatGPT connects
-
-### Example Configuration
-
-```json
-{
-  "storage": {
-    "driver": "sqlite",
-    "dsn": ".beemflow/flow.db"
-  },
-  "oauth": {
-    "enabled": true
-  },
-  "http": {
-    "host": "0.0.0.0",
-    "port": 443
-  }
-}
-```
-
-### Security Notes
-
-- OAuth is **disabled by default** for local development
-- Only enable OAuth when deploying for ChatGPT or production use
-- Use HTTPS in production (OAuth requires secure transport)
-- MCP automatically requires authentication when OAuth is enabled
-
----
-
-## MCP Integration
-
-### MCP Server Configuration
-
-```yaml
-name: mcp_workflow
+name: multi_fetch
 on: cli.manual
-
-# Define MCP servers
-mcpServers:
-  filesystem:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-  
-  github:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_TOKEN: "{{ secrets.GITHUB_TOKEN }}"
-
 steps:
-  # Use MCP tools
-  - id: read_file
-    use: mcp://filesystem/read_file
-    with:
-      path: "/tmp/data.json"
-  
-  - id: create_issue
-    use: mcp://github/create_issue
-    with:
-      repo: "owner/repo"
-      title: "New issue"
-      body: "Issue content"
-```
-
-### MCP Tool Format
-
-```yaml
-# Format: mcp://server_name/tool_name
-use: mcp://server/tool
-
-# Examples
-use: mcp://filesystem/read_file
-use: mcp://github/search_repositories
-use: mcp://slack/send_message
-```
-
----
-
-## Event System
-
-### Event-Driven Workflows
-
-```yaml
-name: event_driven
-on: event:payment.received
-
-steps:
-  - id: process_payment
-    use: payment.processor
-    with:
-      amount: "{{ event.amount }}"
-      customer: "{{ event.customer_id }}"
-```
-
-### Awaiting Events
-
-```yaml
-- id: send_approval_request
-  use: slack.message
-  with:
-    text: "Please approve: {{ vars.request }}"
-    token: "approval_123"
-
-- id: wait_for_approval
-  await_event:
-    source: "slack"
-    match:
-      token: "approval_123"
-    timeout: "24h"
-
-- id: process_response
-  use: core.echo
-  with:
-    text: "Response: {{ event.text }}"
-```
-
-### Event Publishing
-
-```yaml
-- id: publish_event
-  use: event.publish
-  with:
-    topic: "order.completed"
-    payload:
-      order_id: "{{ vars.order_id }}"
-      status: "completed"
-```
-
----
-
-## Security & Secrets
-
-### Secret Management
-
-Secrets are accessed via the `secrets` scope:
-
-```yaml
-steps:
-  - id: api_call
-    use: http
-    with:
-      url: "https://api.service.com"
-      headers:
-        Authorization: "Bearer {{ secrets.API_KEY }}"
-```
-
-### Secret Sources
-
-1. **Environment Variables**: System environment
-2. **`.env` Files**: Local development
-3. **Secret Stores**: Production systems
-4. **MCP Configuration**: Server-specific secrets
-
-### Security Best Practices
-
-1. **Never hardcode secrets** in workflows
-2. **Use explicit secret references** via `{{ secrets.NAME }}`
-3. **Mask sensitive outputs** in logs
-4. **Validate input data** before processing
-5. **Use HTTPS** for all external calls
-6. **Implement retry limits** to prevent abuse
-
----
-
-## Common Patterns
-
-### Pattern: Multi-Source Data Aggregation
-
-```yaml
-name: data_aggregation
-on: cli.manual
-
-steps:
-  - id: fetch_sources
+  - id: fetch_all
     parallel: true
     steps:
-      - id: database
-        use: database.query
-        with:
-          query: "SELECT * FROM metrics"
-      
-      - id: api
+      - id: fetch_users
         use: http.fetch
         with:
-          url: "https://api.metrics.com/latest"
-      
-      - id: spreadsheet
-        use: google_sheets.values.get
+          url: "{{ vars.api }}/users"
+
+      - id: fetch_posts
+        use: http.fetch
         with:
-          spreadsheetId: "{{ vars.SHEET_ID }}"
-          range: "Data!A:Z"
-  
+          url: "{{ vars.api }}/posts"
+
   - id: combine
-    use: ai.analyze
-    with:
-      database: "{{ outputs.database.results }}"
-      api: "{{ outputs.api.body }}"
-      sheets: "{{ outputs.spreadsheet.values }}"
-```
-
-### Pattern: Conditional Branching
-
-```yaml
-name: conditional_flow
-on: cli.manual
-
-steps:
-  - id: check_condition
-    use: data.evaluate
-    with:
-      expression: "{{ vars.value > 100 }}"
-  
-  - id: high_value_path
-    if: "{{ outputs.check_condition.result == true }}"
-    use: premium.processor
-    with:
-      data: "{{ vars.data }}"
-  
-  - id: normal_path
-    if: "{{ outputs.check_condition.result == false }}"
-    use: standard.processor
-    with:
-      data: "{{ vars.data }}"
-```
-
-### Pattern: Error Recovery
-
-```yaml
-name: resilient_workflow
-on: cli.manual
-
-steps:
-  - id: primary_operation
-    use: critical.operation
-    retry:
-      attempts: 3
-      delay_sec: 5
-    with:
-      data: "{{ vars.input }}"
-
-catch:
-  - id: handle_error
-    use: notification.send
-    with:
-      message: "Operation failed: {{ error.message }}"
-  
-  - id: fallback
-    use: backup.processor
-    with:
-      data: "{{ vars.input }}"
-```
-
-### Pattern: Human-in-the-Loop
-
-```yaml
-name: human_approval
-on: cli.manual
-
-steps:
-  - id: generate_proposal
-    use: ai.generate
-    with:
-      prompt: "Create proposal for: {{ vars.request }}"
-  
-  - id: send_for_review
-    use: slack.message
-    with:
-      channel: "#approvals"
-      text: |
-        Proposal: {{ outputs.generate_proposal.content }}
-        Reply 'approve' or 'reject'
-      thread_ts: "{{ vars.timestamp }}"
-  
-  - id: await_response
-    await_event:
-      source: "slack"
-      match:
-        thread_ts: "{{ vars.timestamp }}"
-      timeout: "2h"
-  
-  - id: process_approval
-    if: "{{ event.text == 'approve' }}"
-    use: proposal.execute
-    with:
-      content: "{{ outputs.generate_proposal.content }}"
-```
-
----
-
-## Implementation Guidelines
-
-### Workflow Design Principles
-
-1. **Single Responsibility**: Each step should do one thing well
-2. **Idempotency**: Steps should be safe to retry
-3. **Explicit Dependencies**: Use `depends_on` for clarity
-4. **Error Boundaries**: Use `catch` blocks for error handling
-5. **Resource Cleanup**: Ensure resources are properly released
-
-### Naming Conventions
-
-```yaml
-# Workflows
-name: snake_case_workflow_name
-
-# Step IDs
-- id: snake_case_step_id
-- id: fetch_data
-- id: process_item_0  # For dynamic IDs
-
-# Variables
-vars:
-  UPPER_CASE_CONSTANTS: "value"
-  lower_case_variables: "value"
-
-# Tools
-use: namespace.tool_name
-use: google_sheets.values.get
-use: core.echo
-```
-
-### Performance Optimization
-
-1. **Use Parallel Execution** when steps are independent
-2. **Batch Operations** instead of individual calls
-3. **Cache Results** in variables for reuse
-4. **Limit Retries** to prevent infinite loops
-5. **Set Timeouts** on long-running operations
-
-### Testing Workflows
-
-```yaml
-# Test workflow with mock data
-name: test_workflow
-on: cli.manual
-
-vars:
-  TEST_MODE: true
-  MOCK_DATA: 
-    - {id: 1, value: "test1"}
-    - {id: 2, value: "test2"}
-
-steps:
-  - id: test_step
     use: core.echo
     with:
-      text: "Testing with: {{ vars.MOCK_DATA }}"
+      text: "Users: {{ steps.fetch_users.body | length }}, Posts: {{ steps.fetch_posts.body | length }}"
 ```
 
----
+## Technology Decisions Rationale
 
-## Complete Examples
+### Why Rust?
 
-### Example: Daily Financial Report
+**Advantages Leveraged**:
+- Type safety prevents entire classes of runtime errors
+- Zero-cost abstractions yield optimal performance
+- Excellent async/await for concurrent workflow execution
+- Memory safety without garbage collection pauses
+- Single binary deployment with no runtime dependencies
 
-```yaml
-name: daily_financial_report
-on: schedule.cron
-cron: "0 7 * * *"  # 7 AM daily
+**Tradeoffs Accepted**:
+- Steeper learning curve (offset by excellent compiler diagnostics)
+- Longer development time (offset by fewer production bugs)
 
-vars:
-  ALERT_THRESHOLD: 50000
-  RECIPIENTS: ["cfo@company.com", "finance@company.com"]
+### Why Minijinja over Handlebars?
 
-steps:
-  # Gather financial data
-  - id: fetch_data
-    parallel: true
-    steps:
-      - id: stripe_balance
-        use: stripe.balance.retrieve
-        with:
-          api_key: "{{ secrets.STRIPE_KEY }}"
-      
-      - id: bank_balance
-        use: banking.balance
-        with:
-          account: "{{ secrets.BANK_ACCOUNT }}"
-      
-      - id: pending_invoices
-        use: quickbooks.invoices.list
-        with:
-          status: "pending"
-          token: "{{ secrets.QB_TOKEN }}"
-  
-  # Analyze with AI
-  - id: analyze
-    use: openai.chat_completion
-    with:
-      model: "gpt-4o"
-      messages:
-        - role: system
-          content: |
-            Analyze the financial data and create a summary:
-            1. Total available cash
-            2. Pending receivables
-            3. Key insights
-            4. Action items if cash < ${{ vars.ALERT_THRESHOLD }}
-        - role: user
-          content: |
-            Stripe: {{ outputs.stripe_balance }}
-            Bank: {{ outputs.bank_balance }}
-            Invoices: {{ outputs.pending_invoices }}
-  
-  # Generate report
-  - id: create_report
-    use: report.generate
-    with:
-      template: "financial_daily"
-      data:
-        summary: "{{ outputs.analyze.choices[0].message.content }}"
-        stripe: "{{ outputs.stripe_balance }}"
-        bank: "{{ outputs.bank_balance }}"
-        invoices: "{{ outputs.pending_invoices }}"
-  
-  # Send notifications
-  - id: notify
-    foreach: "{{ vars.RECIPIENTS }}"
-    as: recipient
-    do:
-      - id: send_email_{{ recipient_index }}
-        use: email.send
-        with:
-          to: "{{ recipient }}"
-          subject: "Daily Financial Report"
-          body: "{{ outputs.create_report.html }}"
-          attachments:
-            - "{{ outputs.create_report.pdf_url }}"
+- Jinja2 compatibility with Python/JavaScript ecosystems
+- Superior error messages for template debugging
+- Broader feature set (filters, tests, macros)
 
-catch:
-  - id: error_notification
-    use: slack.message
-    with:
-      channel: "#finance-alerts"
-      text: "⚠️ Daily financial report failed: {{ error.message }}"
-```
+### Why sqlx over ORM?
 
-### Example: Customer Onboarding
+- Compile-time SQL query validation
+- Simpler for procedural queries without object mapping
+- Built-in migration support
+- Better performance for complex queries
 
-```yaml
-name: customer_onboarding
-on: event:customer.signup
+### Why Axum over Actix?
 
-vars:
-  ONBOARDING_STEPS:
-    - send_welcome_email
-    - create_account
-    - setup_billing
-    - schedule_demo
-    - add_to_crm
+- Modern async-first design aligned with Tokio
+- Composable middleware via Tower
+- Type-safe routing with minimal boilerplate
+- Excellent error handling ergonomics
 
-steps:
-  # Validate customer data
-  - id: validate
-    use: validation.customer
-    with:
-      email: "{{ event.email }}"
-      company: "{{ event.company }}"
-  
-  # Parallel onboarding tasks
-  - id: onboard
-    parallel: true
-    steps:
-      - id: welcome_email
-        use: email.send
-        with:
-          to: "{{ event.email }}"
-          template: "welcome"
-          vars:
-            name: "{{ event.name }}"
-            company: "{{ event.company }}"
-      
-      - id: create_account
-        use: api.account.create
-        with:
-          email: "{{ event.email }}"
-          plan: "{{ event.plan }}"
-      
-      - id: setup_billing
-        use: stripe.customer.create
-        with:
-          email: "{{ event.email }}"
-          name: "{{ event.company }}"
-      
-      - id: add_to_crm
-        use: salesforce.lead.create
-        with:
-          email: "{{ event.email }}"
-          company: "{{ event.company }}"
-          source: "signup"
-  
-  # Schedule follow-up
-  - id: schedule_demo
-    use: calendar.event.create
-    with:
-      title: "Demo with {{ event.company }}"
-      attendees: ["{{ event.email }}", "sales@company.com"]
-      duration: "30m"
-      days_from_now: 3
-  
-  # AI-powered personalization
-  - id: personalize
-    use: openai.chat_completion
-    with:
-      model: "gpt-4o"
-      messages:
-        - role: system
-          content: "Create a personalized onboarding message"
-        - role: user
-          content: |
-            Customer: {{ event.company }}
-            Industry: {{ event.industry }}
-            Size: {{ event.company_size }}
-            Plan: {{ event.plan }}
-  
-  # Send personalized follow-up
-  - id: followup
-    use: email.send
-    with:
-      to: "{{ event.email }}"
-      subject: "Your personalized onboarding plan"
-      body: "{{ outputs.personalize.choices[0].message.content }}"
-  
-  # Track completion
-  - id: track
-    use: analytics.track
-    with:
-      event: "onboarding_completed"
-      properties:
-        customer_id: "{{ outputs.create_account.id }}"
-        stripe_id: "{{ outputs.setup_billing.id }}"
-        crm_id: "{{ outputs.add_to_crm.id }}"
-```
+## Project Status
 
----
+### Current Capabilities
 
-## Error Handling
+- Single-user workflow runtime
+- Full YAML specification implemented
+- CLI, HTTP API, and MCP interfaces operational
+- Default registry with 20+ tools (OpenAI, Stripe, Slack, GitHub, etc.)
+- SQLite and PostgreSQL support
+- Durable execution with await_event
+- OAuth 2.0 client and server
+- Webhook handling with signature verification
 
-### Catch Blocks
+### Known Gaps
 
-```yaml
-name: error_handling
-on: cli.manual
+- Multi-user/tenant isolation (design complete, implementation pending)
+- Rate limiting (planned)
+- Audit logging (planned)
+- Two-factor authentication (planned)
+- Horizontal scaling documentation
 
-steps:
-  - id: risky_operation
-    use: external.api
-    with:
-      endpoint: "{{ vars.endpoint }}"
-    retry:
-      attempts: 3
-      delay_sec: 5
+## Conclusion
 
-catch:
-  # Catch blocks run if any step fails
-  - id: log_error
-    use: core.log
-    with:
-      level: "error"
-      message: "Workflow failed: {{ error.message }}"
-      context:
-        step: "{{ error.step_id }}"
-        type: "{{ error.type }}"
-  
-  - id: notify_ops
-    use: slack.message
-    with:
-      channel: "#ops-alerts"
-      text: "🚨 Workflow failed: {{ name }}"
-  
-  - id: cleanup
-    use: resource.cleanup
-    with:
-      resources: "{{ vars.allocated_resources }}"
-```
+BeemFlow is a production-grade workflow orchestration runtime designed for the AI era. Its key differentiators are:
 
-### Retry Configuration
+1. **Universal Protocol**: Same workflow executes across CLI, HTTP, and MCP interfaces
+2. **Text-First Design**: YAML workflows are version-controllable and AI-readable
+3. **Automatic DAG Construction**: Dependencies inferred from template references
+4. **Composable Tools**: Registry-based discovery with zero-configuration integrations
+5. **Durable Execution**: State persistence enables workflows that pause and resume
 
-```yaml
-- id: flaky_service
-  use: external.service
-  retry:
-    attempts: 5        # Total attempts (including first)
-    delay_sec: 10      # Delay between attempts
-  with:
-    data: "{{ vars.input }}"
-```
-
-### Graceful Degradation
-
-```yaml
-steps:
-  - id: primary_service
-    use: service.primary
-    with:
-      data: "{{ vars.data }}"
-  
-  - id: check_primary
-    if: "{{ not outputs.primary_service.success }}"
-    use: service.fallback
-    with:
-      data: "{{ vars.data }}"
-```
-
----
-
-## Testing & Validation
-
-### Workflow Validation
-
-```bash
-# Validate workflow syntax
-flow validate workflow.yaml
-
-# Dry run without execution
-flow run workflow.yaml --dry-run
-
-# Run with debug output
-flow run workflow.yaml --debug
-```
-
-### Test Workflows
-
-```yaml
-name: test_integration
-on: cli.manual
-
-vars:
-  TEST_MODE: true
-  TEST_DATA:
-    - {id: 1, expected: "result1"}
-    - {id: 2, expected: "result2"}
-
-steps:
-  - id: test_cases
-    foreach: "{{ vars.TEST_DATA }}"
-    as: test
-    do:
-      - id: run_test_{{ test.id }}
-        use: function.under.test
-        with:
-          input: "{{ test.id }}"
-      
-      - id: assert_{{ test.id }}
-        use: test.assert
-        with:
-          actual: "{{ outputs['run_test_' + test.id].result }}"
-          expected: "{{ test.expected }}"
-```
-
-### Performance Testing
-
-```yaml
-name: performance_test
-on: cli.manual
-
-vars:
-  ITERATIONS: 100
-  PARALLEL_BATCH: 10
-
-steps:
-  - id: load_test
-    foreach: "{{ range(0, vars.ITERATIONS) }}"
-    as: iteration
-    parallel: true
-    do:
-      - id: request_{{ iteration }}
-        use: http
-        with:
-          url: "{{ vars.TARGET_URL }}"
-          method: "GET"
-  
-  - id: analyze_results
-    use: performance.analyze
-    with:
-      results: "{{ outputs }}"
-      threshold_ms: 1000
-```
-
----
-
-## Appendix: Quick Reference
-
-### Required Fields by Context
-
-| Context | Required Fields |
-|---------|----------------|
-| Flow | `name`, `on`, `steps` |
-| Step | `id` + one of: `use`, `parallel`, `foreach`, `await_event`, `wait` |
-| Tool Step | `id`, `use` |
-| Parallel | `id`, `parallel: true`, `steps` |
-| Foreach | `id`, `foreach`, `as`, `do` |
-| Retry | `attempts`, `delay_sec` |
-| Await Event | `source`, `match` |
-
-### Template Variable Scopes
-
-| Scope | Usage | Example |
-|-------|-------|---------|
-| `vars` | Flow variables | `{{ vars.API_KEY }}` |
-| `env` | Environment | `{{ secrets.USER }}` |
-| `secrets` | Secrets | `{{ secrets.TOKEN }}` |
-| `event` | Event data | `{{ event.payload }}` |
-| `outputs` | Step outputs | `{{ outputs.step1.result }}` |
-| `runs` | Run history | `{{ runs.previous.output }}` |
-
-### Common Tool Patterns
-
-| Pattern | Tool | Purpose |
-|---------|------|---------|
-| Print output | `core.echo` | Display text |
-| HTTP request | `http` | API calls |
-| AI completion | `openai.chat_completion` | LLM tasks |
-| Read sheets | `google_sheets.values.get` | Get data |
-| Send message | `slack.chat.postMessage` | Notifications |
-| Wait for event | `await_event` | Async ops |
-
-### Validation Checklist
-
-- [ ] All steps have unique IDs
-- [ ] Template syntax uses `{{ }}` not `${}`
-- [ ] Arrays use bracket notation `array[0]` not `array.0`
-- [ ] Defaults use `or` or `| default()` filter
-- [ ] No hallucinated fields
-- [ ] Proper scope prefixes
-- [ ] Valid tool names
-- [ ] Retry limits set
-- [ ] Error handling present
-
+The architecture reflects strong software engineering practices: trait-based polymorphism, separation of concerns, comprehensive error handling, and a clear extensibility model for enterprise features.
