@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useFlowEditorStore } from '../../stores/flowEditorStore';
 import { ParameterEditor } from './ParameterEditor';
 import { NestedStepEditor } from './NestedStepEditor';
+import { CronExpressionBuilder } from './CronExpressionBuilder';
 import type { Step, Trigger } from '../../types/beemflow';
 
 interface StepNodeData {
@@ -65,30 +66,13 @@ export function Inspector() {
 
         {hasCronTrigger && (
           <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Cron Expression
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Cron Schedule
             </label>
-            <input
-              type="text"
+            <CronExpressionBuilder
               value={triggerData.cronExpression || ''}
-              onChange={(e) => updateNode(selectedNode.id, { cronExpression: e.target.value })}
-              placeholder="*/5 * * * *"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+              onChange={(expr) => updateNode(selectedNode.id, { cronExpression: expr })}
             />
-            <p className="mt-2 text-xs text-gray-600">
-              Standard cron format: minute hour day month weekday
-            </p>
-            <p className="mt-1 text-xs text-gray-500">
-              (Seconds field will be added automatically as 0)
-            </p>
-            <div className="mt-2 text-xs text-gray-500">
-              Examples:
-              <ul className="mt-1 space-y-0.5 ml-3">
-                <li>• <code className="bg-white px-1 rounded">*/5 * * * *</code> - Every 5 minutes</li>
-                <li>• <code className="bg-white px-1 rounded">0 */2 * * *</code> - Every 2 hours</li>
-                <li>• <code className="bg-white px-1 rounded">0 9 * * 1-5</code> - 9 AM on weekdays</li>
-              </ul>
-            </div>
           </div>
         )}
       </div>

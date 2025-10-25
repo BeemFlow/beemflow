@@ -1,8 +1,18 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 
+// Type for webhook trigger objects
+interface WebhookTrigger {
+  webhook: {
+    topic: string;
+  };
+}
+
+// Union type for all possible trigger formats
+type TriggerValue = string | WebhookTrigger;
+
 export interface TriggerNodeData {
-  trigger: string | string[];
+  trigger: TriggerValue | TriggerValue[];
   label?: string;
 }
 
@@ -10,19 +20,41 @@ export const TriggerNode = memo(({ data, selected }: NodeProps) => {
   const triggerData = data as unknown as TriggerNodeData;
   const triggers = Array.isArray(triggerData.trigger) ? triggerData.trigger : [triggerData.trigger];
 
-  const getTriggerIcon = (trigger: string) => {
-    if (trigger.includes('cli')) return '⌨️';
-    if (trigger.includes('http') || trigger.includes('webhook')) return '🌐';
-    if (trigger.includes('schedule') || trigger.includes('cron')) return '⏰';
+  // Normalize trigger to string (handle both string and object formats)
+  const normalizeTrigger = (trigger: TriggerValue): string => {
+    if (typeof trigger === 'string') {
+      return trigger;
+    }
+    if (typeof trigger === 'object' && trigger !== null) {
+      // Handle webhook object: { webhook: { topic: "..." } }
+      if (trigger.webhook) {
+        return `webhook:${trigger.webhook.topic || 'unknown'}`;
+      }
+      // Handle other object formats - just stringify
+      return JSON.stringify(trigger);
+    }
+    return String(trigger);
+  };
+
+  const getTriggerIcon = (trigger: TriggerValue) => {
+    const triggerStr = normalizeTrigger(trigger);
+    if (triggerStr.includes('cli')) return '⌨️';
+    if (triggerStr.includes('http') || triggerStr.includes('webhook')) return '🌐';
+    if (triggerStr.includes('schedule') || triggerStr.includes('cron')) return '⏰';
     return '▶️';
   };
 
-  const getTriggerLabel = (trigger: string) => {
-    if (trigger.includes('cli.manual')) return 'Manual';
-    if (trigger.includes('http.webhook')) return 'Webhook';
-    if (trigger.includes('schedule.cron')) return 'Cron';
-    if (trigger.includes('cron.')) return 'Cron';
-    return trigger;
+  const getTriggerLabel = (trigger: TriggerValue) => {
+    const triggerStr = normalizeTrigger(trigger);
+    if (triggerStr.includes('cli.manual')) return 'Manual';
+    if (triggerStr.includes('http.webhook')) return 'Webhook';
+    if (triggerStr.includes('schedule.cron')) return 'Cron';
+    if (triggerStr.includes('cron.')) return 'Cron';
+    if (triggerStr.startsWith('webhook:')) {
+      const topic = triggerStr.split(':')[1];
+      return `Webhook: ${topic}`;
+    }
+    return triggerStr;
   };
 
   return (
