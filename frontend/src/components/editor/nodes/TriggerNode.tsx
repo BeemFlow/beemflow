@@ -14,11 +14,16 @@ type TriggerValue = string | WebhookTrigger;
 export interface TriggerNodeData {
   trigger: TriggerValue | TriggerValue[];
   label?: string;
+  layoutDirection?: 'TB' | 'LR';
 }
 
 export const TriggerNode = memo(({ data, selected }: NodeProps) => {
   const triggerData = data as unknown as TriggerNodeData;
   const triggers = Array.isArray(triggerData.trigger) ? triggerData.trigger : [triggerData.trigger];
+  const layoutDirection = triggerData.layoutDirection || 'TB';
+
+  // Set handle position based on layout direction (trigger only has source handle)
+  const sourcePosition = layoutDirection === 'LR' ? Position.Right : Position.Bottom;
 
   // Normalize trigger to string (handle both string and object formats)
   const normalizeTrigger = (trigger: TriggerValue): string => {
@@ -81,7 +86,7 @@ export const TriggerNode = memo(({ data, selected }: NodeProps) => {
 
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={sourcePosition}
         className="w-3 h-3 !bg-green-500"
       />
     </div>

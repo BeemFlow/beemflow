@@ -44,6 +44,7 @@ export function FlowEditor() {
   const [showInspector, setShowInspector] = useState(true);
   const [showToolsPalette, setShowToolsPalette] = useState(true);
   const [showAIAssistant, setShowAIAssistant] = useState(false);
+  const [layoutDirection, setLayoutDirection] = useState<'TB' | 'LR'>('TB');
 
   // Resizable panel widths
   const [toolsPaletteWidth, setToolsPaletteWidth] = useState(280);
@@ -100,7 +101,7 @@ export function FlowEditor() {
   useEffect(() => {
     if (existingFlow) {
       // Convert flow to graph and load it
-      const { nodes: flowNodes, edges: flowEdges, metadata } = flowToGraph(existingFlow);
+      const { nodes: flowNodes, edges: flowEdges, metadata } = flowToGraph(existingFlow, { direction: layoutDirection });
       setNodes(flowNodes);
       setEdges(flowEdges);
       setFlowName(metadata.name);
@@ -109,7 +110,20 @@ export function FlowEditor() {
       setCron(metadata.cron || '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingFlow, name]); // Run when existingFlow changes or when navigating to a different flow
+  }, [existingFlow, name, layoutDirection]); // Run when existingFlow changes or when navigating to a different flow or layout changes
+
+  // Re-layout current graph when layout direction changes
+  useEffect(() => {
+    if (nodes.length > 0 && !existingFlow) {
+      // Only re-layout if we have nodes and this is a new flow (not loading an existing one)
+      // Convert current graph back to flow format, then re-layout
+      const currentFlow = graphToFlow(nodes, edges, { name: flowName, description, vars, cron });
+      const { nodes: relayoutedNodes, edges: relayoutedEdges } = flowToGraph(currentFlow, { direction: layoutDirection });
+      setNodes(relayoutedNodes);
+      setEdges(relayoutedEdges);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutDirection]); // Only run when layout direction changes
 
   // Add a new step node
   const handleAddStep = useCallback(() => {
@@ -141,7 +155,11 @@ export function FlowEditor() {
   const handleNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     console.log('Node clicked:', node);
     selectNode(node);
-  }, [selectNode]);
+    // Auto-open inspector when a node is clicked
+    if (!showInspector) {
+      setShowInspector(true);
+    }
+  }, [selectNode, showInspector]);
 
   const handlePaneClick = useCallback(() => {
     // Clear selection when clicking on canvas background
@@ -154,10 +172,14 @@ export function FlowEditor() {
       const selectedNode = params.nodes[0]; // Take first selected node
       console.log('Selection changed:', selectedNode);
       selectNode(selectedNode);
+      // Auto-open inspector when a node is selected
+      if (!showInspector) {
+        setShowInspector(true);
+      }
     } else {
       selectNode(null);
     }
-  }, [selectNode]);
+  }, [selectNode, showInspector]);
 
   // Handle tool selection from palette
   const handleToolSelect = useCallback((tool: RegistryEntry) => {
@@ -500,6 +522,8 @@ export function FlowEditor() {
               animated: true,
               style: { stroke: '#6366f1', strokeWidth: 2 },
             }}
+            minZoom={0.1}
+            maxZoom={4}
             fitView
             className="bg-gray-50"
           >
@@ -508,7 +532,7 @@ export function FlowEditor() {
             <MiniMap />
 
             {/* Toolbar Panel */}
-            <Panel position="top-left" className="bg-white rounded-lg shadow-lg p-2 space-x-2">
+            <Panel position="top-left" className="bg-white rounded-lg shadow-lg p-2 flex items-center gap-2">
               <button
                 onClick={handleAddStep}
                 className="px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm font-medium"
@@ -521,6 +545,14 @@ export function FlowEditor() {
                 className="px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Clear
+              </button>
+              <div className="h-6 border-l border-gray-300" />
+              <button
+                onClick={() => setLayoutDirection(layoutDirection === 'TB' ? 'LR' : 'TB')}
+                className="px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm font-medium"
+                title={layoutDirection === 'TB' ? 'Switch to Horizontal Layout' : 'Switch to Vertical Layout'}
+              >
+                {layoutDirection === 'TB' ? '↔️ Horizontal' : '↕️ Vertical'}
               </button>
             </Panel>
 

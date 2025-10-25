@@ -5,14 +5,20 @@ import type { Step } from '../../../types/beemflow';
 export interface StepNodeData {
   step: Step;
   label?: string;
+  layoutDirection?: 'TB' | 'LR';
 }
 
 export const StepNode = memo(({ data, selected }: NodeProps) => {
   const stepData = data as unknown as StepNodeData;
   const step = stepData.step;
+  const layoutDirection = stepData.layoutDirection || 'TB';
 
   // Check if this is an await_event step
   const isAwaitEvent = !!step.await_event;
+
+  // Set handle positions based on layout direction
+  const targetPosition = layoutDirection === 'LR' ? Position.Left : Position.Top;
+  const sourcePosition = layoutDirection === 'LR' ? Position.Right : Position.Bottom;
 
   return (
     <div
@@ -28,7 +34,7 @@ export const StepNode = memo(({ data, selected }: NodeProps) => {
     >
       <Handle
         type="target"
-        position={Position.Top}
+        position={targetPosition}
         className="w-3 h-3 bg-gray-400!"
       />
 
@@ -60,7 +66,7 @@ export const StepNode = memo(({ data, selected }: NodeProps) => {
 
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={sourcePosition}
         className="w-3 h-3 bg-gray-400!"
       />
     </div>

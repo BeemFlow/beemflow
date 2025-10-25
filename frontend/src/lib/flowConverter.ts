@@ -252,7 +252,10 @@ export function yamlToGraph(yamlString: string): {
  * 1. Explicit `depends_on` fields
  * 2. Implicit template references in `if`, `with`, `foreach`, and nested blocks
  */
-export function flowToGraph(flow: Flow): {
+export function flowToGraph(
+  flow: Flow,
+  options?: { direction?: 'TB' | 'LR' }
+): {
   nodes: Node[];
   edges: Edge[];
   metadata: {
@@ -263,6 +266,7 @@ export function flowToGraph(flow: Flow): {
     cron?: string;
   };
 } {
+  const direction = options?.direction || 'TB';
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -305,7 +309,7 @@ export function flowToGraph(flow: Flow): {
   const dependencyMap = buildDependencyMap(steps);
 
   // Calculate hierarchical layout levels
-  const positions = calculateHierarchicalLayout(steps, dependencyMap);
+  const positions = calculateHierarchicalLayout(steps, dependencyMap, direction);
 
   // Add step nodes and track steps with no dependencies
   const stepsWithNoDeps: string[] = [];
@@ -317,6 +321,7 @@ export function flowToGraph(flow: Flow): {
       position,
       data: {
         step,
+        layoutDirection: direction, // Pass layout direction to node
       },
     };
     nodes.push(node);
@@ -378,6 +383,7 @@ export function flowToGraph(flow: Flow): {
     data: {
       trigger: triggerValue,
       cronExpression,
+      layoutDirection: direction, // Pass layout direction to trigger node
     },
   });
 
@@ -409,14 +415,15 @@ export function flowToGraph(flow: Flow): {
  */
 function calculateHierarchicalLayout(
   steps: Step[],
-  dependencyMap: Map<string, Set<string>>
+  dependencyMap: Map<string, Set<string>>,
+  direction: 'TB' | 'LR' = 'TB'
 ): Map<string, { x: number; y: number }> {
   const dagreGraph = new dagre.graphlib.Graph({ compound: true });
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
   // Configure graph layout with emphasis on uniform vertical alignment
   dagreGraph.setGraph({
-    rankdir: 'TB',        // Top to bottom
+    rankdir: direction,   // TB = Top to bottom, LR = Left to right
     align: undefined,     // Remove alignment to let nodes align naturally at same rank
     nodesep: 200,         // Horizontal spacing between nodes at same rank
     ranksep: 300,         // Vertical spacing between ranks - increased for longer edges
