@@ -73,9 +73,17 @@ export function FlowEditor() {
   const deployFlow = useDeployFlow();
   const startRun = useStartRun();
 
-  // Initialize with trigger node if empty
+  // Clear state and initialize when creating a new flow
   useEffect(() => {
-    if (nodes.length === 0 && !name) {
+    if (!name) {
+      // Clear all state when navigating to /flows/new
+      clearCanvas();
+      setFlowName('');
+      setDescription('');
+      setVars({});
+      setCron('');
+
+      // Add initial trigger node
       const triggerNode = {
         id: 'trigger',
         type: 'trigger',
@@ -83,11 +91,10 @@ export function FlowEditor() {
         data: { trigger: 'cli.manual' },
       };
       addNode(triggerNode);
-      // Auto-select the trigger node
       selectNode(triggerNode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, [name]); // Run when 'name' param changes
 
   // Load existing flow data when editing
   useEffect(() => {

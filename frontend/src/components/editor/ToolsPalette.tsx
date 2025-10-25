@@ -35,7 +35,7 @@ export function ToolsPalette({ onToolSelect }: ToolsPaletteProps) {
   const { data: tools, isLoading, error } = useTools();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    new Set(['Core', 'HTTP'])
+    new Set(['Core'])
   );
 
   // Group tools by category
