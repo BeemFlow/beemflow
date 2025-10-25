@@ -62,6 +62,7 @@ export function FlowEditor() {
     addNode,
     clearCanvas,
     selectNode,
+    selectedNode,
     setNodes,
     setEdges,
   } = useFlowEditorStore();
@@ -154,12 +155,19 @@ export function FlowEditor() {
 
   const handleNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     console.log('Node clicked:', node);
-    selectNode(node);
-    // Auto-open inspector when a node is clicked
-    if (!showInspector) {
-      setShowInspector(true);
+    const isDifferentNode = !selectedNode || selectedNode.id !== node.id;
+
+    if (isDifferentNode) {
+      // Clicking a different node - always open inspector and select the node
+      selectNode(node);
+      if (!showInspector) {
+        setShowInspector(true);
+      }
+    } else {
+      // Re-clicking the same node - toggle inspector like a button
+      setShowInspector(!showInspector);
     }
-  }, [selectNode, showInspector]);
+  }, [selectNode, selectedNode, showInspector]);
 
   const handlePaneClick = useCallback(() => {
     // Clear selection when clicking on canvas background
@@ -169,17 +177,18 @@ export function FlowEditor() {
   const handleSelectionChange = useCallback((params: OnSelectionChangeParams) => {
     // Sync ReactFlow's selection with our store
     if (params.nodes.length > 0) {
-      const selectedNode = params.nodes[0]; // Take first selected node
-      console.log('Selection changed:', selectedNode);
-      selectNode(selectedNode);
-      // Auto-open inspector when a node is selected
-      if (!showInspector) {
+      const newSelectedNode = params.nodes[0]; // Take first selected node
+      console.log('Selection changed:', newSelectedNode);
+      // Only auto-open inspector when selecting a different node
+      const isDifferentNode = !selectedNode || selectedNode.id !== newSelectedNode.id;
+      selectNode(newSelectedNode);
+      if (isDifferentNode && !showInspector) {
         setShowInspector(true);
       }
     } else {
       selectNode(null);
     }
-  }, [selectNode, showInspector]);
+  }, [selectNode, selectedNode, showInspector]);
 
   // Handle tool selection from palette
   const handleToolSelect = useCallback((tool: RegistryEntry) => {
