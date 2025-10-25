@@ -154,7 +154,7 @@ export function YamlPreview({
       )}
 
       {/* YAML Content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1">
         <textarea
           value={yamlContent}
           onChange={(e) => {
