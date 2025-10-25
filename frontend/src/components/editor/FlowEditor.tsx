@@ -91,7 +91,7 @@ export function FlowEditor() {
 
   // Load existing flow data when editing
   useEffect(() => {
-    if (existingFlow && nodes.length === 0) {
+    if (existingFlow) {
       // Convert flow to graph and load it
       const { nodes: flowNodes, edges: flowEdges, metadata } = flowToGraph(existingFlow);
       setNodes(flowNodes);
@@ -102,7 +102,7 @@ export function FlowEditor() {
       setCron(metadata.cron || '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingFlow]); // Only run when existingFlow changes
+  }, [existingFlow, name]); // Run when existingFlow changes or when navigating to a different flow
 
   // Add a new step node
   const handleAddStep = useCallback(() => {

@@ -89,8 +89,9 @@ class BeemFlowAPI {
   }
 
   async getFlow(name: string): Promise<Flow> {
-    const response = await this.client.get<Flow>(`/flows/${encodeURIComponent(name)}`);
-    return response.data;
+    const response = await this.client.get<{ name: string; content: string; version: string }>(`/flows/${encodeURIComponent(name)}`);
+    // Parse the YAML content to get the Flow object
+    return yaml.parse(response.data.content) as Flow;
   }
 
   async saveFlow(flow: Flow): Promise<void> {

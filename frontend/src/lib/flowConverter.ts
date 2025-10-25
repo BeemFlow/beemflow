@@ -26,6 +26,8 @@ function extractStepReferences(template: string): Set<string> {
   const patterns = [
     // Direct step reference: {{ step_id.field }}
     /\{\{\s*([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_.[\]'"]+\s*\}\}/g,
+    // In expression: {{ "string" in step_id.field }}
+    /\bin\s+([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_.[\]'"]+/g,
     // steps.step_id syntax: {{ steps.foo }}
     /\{\{\s*steps\.([a-zA-Z0-9_-]+)/g,
     // steps['step_id'] syntax
@@ -296,28 +298,23 @@ export function flowToGraph(flow: Flow): {
     }
   }
 
-  nodes.push({
-    id: 'trigger',
-    type: 'trigger',
-    position: { x: 250, y: 50 },
-    data: {
-      trigger: triggerValue,
-      cronExpression,
-    },
-  });
+  // Handle flows with no steps
+  const steps = flow.steps || [];
 
   // Build complete dependency map (explicit + implicit from templates)
-  const dependencyMap = buildDependencyMap(flow.steps);
+  const dependencyMap = buildDependencyMap(steps);
 
   // Calculate hierarchical layout levels
-  const positions = calculateHierarchicalLayout(flow.steps, dependencyMap);
+  const positions = calculateHierarchicalLayout(steps, dependencyMap);
 
-  // Add step nodes
-  flow.steps.forEach((step, index) => {
+  // Add step nodes and track steps with no dependencies
+  const stepsWithNoDeps: string[] = [];
+  steps.forEach((step, index) => {
+    const position = positions.get(step.id) || calculatePosition(index);
     const node: Node = {
       id: step.id,
       type: 'step',
-      position: positions.get(step.id) || calculatePosition(index),
+      position,
       data: {
         step,
       },
@@ -335,15 +332,63 @@ export function flowToGraph(flow: Flow): {
           type: 'default',
         });
       });
-    } else if (index === 0) {
-      // First step with no dependencies connects to trigger
-      edges.push({
-        id: `trigger-${step.id}`,
-        source: 'trigger',
-        target: step.id,
-        type: 'default',
-      });
+    } else {
+      // Track steps with no dependencies - they connect to trigger
+      stepsWithNoDeps.push(step.id);
     }
+  });
+
+  // Position trigger node centered above first level nodes
+  const stepNodeWidth = 280; // Must match nodeWidth in calculateHierarchicalLayout
+  const triggerNodeWidth = 200;
+
+  // Calculate centers of all nodes
+  const nodeCenters = Array.from(positions.entries()).map(([id, pos]) => ({
+    id,
+    centerX: pos.x + stepNodeWidth / 2,
+    y: pos.y
+  }));
+
+  // Find the topmost Y position (first level)
+  const minY = steps.length > 0
+    ? Math.min(...nodeCenters.map(n => n.y))
+    : 200;
+
+  // Only consider nodes at the FIRST LEVEL (nodes that connect to trigger)
+  const firstLevelNodes = nodeCenters.filter(n => n.y === minY);
+
+  // Find the average center X of only the first level nodes
+  const avgCenterX = firstLevelNodes.reduce((sum, node) => sum + node.centerX, 0) / firstLevelNodes.length;
+
+  // Position trigger CENTER at the average center of first level nodes
+  const triggerCenterX = avgCenterX;
+  const triggerCenterY = minY - 200; // 200px above the first level for more breathing room
+
+  // Convert from center position to top-left corner position (what ReactFlow uses)
+  const finalTriggerX = triggerCenterX - triggerNodeWidth / 2;
+  const finalTriggerY = triggerCenterY;
+
+  nodes.unshift({
+    id: 'trigger',
+    type: 'trigger',
+    position: {
+      x: finalTriggerX,
+      y: finalTriggerY
+    },
+    data: {
+      trigger: triggerValue,
+      cronExpression,
+    },
+  });
+
+  // Create edges from trigger to steps with no dependencies
+  stepsWithNoDeps.forEach(stepId => {
+    edges.push({
+      id: `trigger-${stepId}`,
+      source: 'trigger',
+      target: stepId,
+      type: 'default',
+    });
   });
 
   return {
@@ -360,31 +405,39 @@ export function flowToGraph(flow: Flow): {
 }
 
 /**
- * Calculate layout positions using Dagre graph layout library
+ * Calculate layout positions using Dagre with optimized settings for clean, non-overlapping layouts
  */
 function calculateHierarchicalLayout(
   steps: Step[],
   dependencyMap: Map<string, Set<string>>
 ): Map<string, { x: number; y: number }> {
-  const dagreGraph = new dagre.graphlib.Graph();
+  const dagreGraph = new dagre.graphlib.Graph({ compound: true });
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-  // Configure graph layout
+  // Configure graph layout with emphasis on uniform vertical alignment
   dagreGraph.setGraph({
-    rankdir: 'LR', // Left to right (better for workflow diagrams)
-    nodesep: 150,  // Vertical spacing between nodes at same rank
-    ranksep: 250,  // Horizontal spacing between ranks (levels)
-    marginx: 100,
+    rankdir: 'TB',        // Top to bottom
+    align: undefined,     // Remove alignment to let nodes align naturally at same rank
+    nodesep: 200,         // Horizontal spacing between nodes at same rank
+    ranksep: 300,         // Vertical spacing between ranks - increased for longer edges
+    edgesep: 80,          // Minimum spacing between edges
+    marginx: 80,
     marginy: 100,
+    ranker: 'network-simplex', // Use network-simplex for uniform rank positioning
+    acyclicer: 'greedy',  // Handle cycles if they exist
   });
 
-  // Node dimensions (approximate size of our step cards)
-  const nodeWidth = 250;
+  // Node dimensions
+  const nodeWidth = 280;
   const nodeHeight = 120;
 
   // Add all step nodes to dagre
   steps.forEach((step) => {
-    dagreGraph.setNode(step.id, { width: nodeWidth, height: nodeHeight });
+    dagreGraph.setNode(step.id, {
+      width: nodeWidth,
+      height: nodeHeight,
+      label: step.id,
+    });
   });
 
   // Add edges based on dependency map
@@ -392,7 +445,10 @@ function calculateHierarchicalLayout(
     const deps = dependencyMap.get(step.id);
     if (deps && deps.size > 0) {
       deps.forEach((depId) => {
-        dagreGraph.setEdge(depId, step.id);
+        dagreGraph.setEdge(depId, step.id, {
+          weight: 1,
+          minlen: 1, // Minimum edge length
+        });
       });
     }
   });
@@ -408,6 +464,55 @@ function calculateHierarchicalLayout(
       positions.set(step.id, {
         x: nodeWithPosition.x - nodeWidth / 2,
         y: nodeWithPosition.y - nodeHeight / 2,
+      });
+    }
+  });
+
+  // Normalize Y positions by using Dagre's rank information directly
+  // Get rank for each node from Dagre's internal graph structure
+  const rankGroups = new Map<number, string[]>();
+
+  steps.forEach((step) => {
+    const node = dagreGraph.node(step.id);
+    if (node && typeof node.rank === 'number') {
+      if (!rankGroups.has(node.rank)) {
+        rankGroups.set(node.rank, []);
+      }
+      rankGroups.get(node.rank)!.push(step.id);
+    }
+  });
+
+  // For each rank, set all nodes to the same Y position and redistribute X positions uniformly
+  // Reduced horizontal spacing for more compact layout with longer edge curves
+  const uniformHorizontalSpacing = 350; // Fixed spacing between nodes
+
+  rankGroups.forEach((nodeIds) => {
+    if (nodeIds.length > 1) {
+      // Calculate average Y for this rank
+      const yPositions = nodeIds.map(id => positions.get(id)!.y);
+      const avgY = yPositions.reduce((sum, y) => sum + y, 0) / yPositions.length;
+
+      // Sort nodes by their current X position to maintain left-to-right order
+      const sortedNodes = nodeIds.sort((a, b) => {
+        const posA = positions.get(a)!;
+        const posB = positions.get(b)!;
+        return posA.x - posB.x;
+      });
+
+      // Calculate center X position for this rank
+      const xPositions = sortedNodes.map(id => positions.get(id)!.x);
+      const centerX = xPositions.reduce((sum, x) => sum + x, 0) / xPositions.length;
+
+      // Redistribute nodes with uniform spacing around the center
+      const totalWidth = (sortedNodes.length - 1) * uniformHorizontalSpacing;
+      const startX = centerX - totalWidth / 2;
+
+      sortedNodes.forEach((nodeId, index) => {
+        const pos = positions.get(nodeId);
+        if (pos) {
+          pos.x = startX + index * uniformHorizontalSpacing;
+          pos.y = avgY;
+        }
       });
     }
   });
