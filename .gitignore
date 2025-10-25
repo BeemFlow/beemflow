@@ -27,3 +27,5 @@ target/
 
 # Build artifacts
 *.log
+
+node_modules

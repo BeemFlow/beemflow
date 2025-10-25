@@ -517,6 +517,16 @@ fn build_router(
                             format!("http://127.0.0.1:{}", http_config.port)
                                 .parse()
                                 .expect("valid 127.0.0.1 origin"),
+                            // Also allow common frontend dev server ports
+                            "http://localhost:5173"
+                                .parse()
+                                .expect("valid localhost:5173 origin"),
+                            "http://localhost:5174"
+                                .parse()
+                                .expect("valid localhost:5174 origin"),
+                            "http://localhost:3000"
+                                .parse()
+                                .expect("valid localhost:3000 origin"),
                         ]
                     };
 
