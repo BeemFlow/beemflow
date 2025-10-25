@@ -14,7 +14,7 @@
 # Setup Instructions:
 # 1. Create a Google Doc with event details (parking, food, schedule, venue)
 # 2. Create a Google Sheet with two tabs: "Responses" and "Questions"
-# 3. Get Twilio phone number and configure webhook to: POST /webhooks/twilio_sms
+# 3. Get Twilio phone number and configure webhook to: POST /webhooks/twilio
 # 4. Set environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY
 # 5. Configure Google OAuth: beemflow oauth authorize google
 # 6. Update vars below with your document IDs and phone number
@@ -23,7 +23,9 @@
 name: eventbot
 description: AI-powered event assistant for SMS conversations
 version: 1.0.0
-on: webhook.twilio_sms
+on:
+  webhook:
+    topic: twilio.sms
 
 vars:
   # === REQUIRED CONFIGURATION ===
@@ -39,9 +41,9 @@ vars:
 
   twilio_phone: "+15559876543"
   # Your Twilio phone number in E.164 format
-
-  twilio_account_sid: "$env:TWILIO_ACCOUNT_SID"
-  # Twilio Account SID from console
+  #
+  # Note: TWILIO_ACCOUNT_SID is automatically available as {{ secrets.TWILIO_ACCOUNT_SID }}
+  # from the environment via the secrets provider
 
   event_name: "Our Wedding"
   # Name of the event (used in responses)
@@ -198,7 +200,7 @@ steps:
     if: "{{ steps.detect_intent.content[0].text == 'rsvp' && vars.organizer_phone != '' }}"
     use: twilio.send_sms
     with:
-      AccountSid: "{{ vars.twilio_account_sid }}"
+      AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
       To: "{{ vars.organizer_phone }}"
       From: "{{ vars.twilio_phone }}"
       Body: |
@@ -271,7 +273,7 @@ steps:
   - id: send_sms
     use: twilio.send_sms
     with:
-      AccountSid: "{{ vars.twilio_account_sid }}"
+      AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
       To: "{{ steps.parse_sms.guest_phone }}"
       From: "{{ vars.twilio_phone }}"
       Body: "{{ steps.generate_response.content[0].text }}"
@@ -336,7 +338,7 @@ steps:
 # [ ] Authorize Google OAuth: beemflow oauth authorize google
 # [ ] Update vars in this file with your IDs and phone numbers
 # [ ] Deploy workflow: beemflow flows deploy eventbot
-# [ ] Configure Twilio webhook: POST https://your-domain.com/webhooks/twilio_sms
+# [ ] Configure Twilio webhook: POST https://your-domain.com/webhooks/twilio
 # [ ] Test with real SMS messages
 # [ ] Monitor logs and refine responses
 #

@@ -1,10 +1,9 @@
 name: tweet_copy_approval
 description: |
-  Generate AI-powered tweet content based on input topic, create an Airtable record 
+  Generate AI-powered tweet content based on input topic, create an Airtable record
   for human review, wait up to 24 hours for approval status change, then mark as posted.
   Demonstrates event-driven workflows with human-in-the-loop approval patterns.
-on:
-  - event: tweet.request
+on: cli.manual
 
 steps:
   - id: generate_copy

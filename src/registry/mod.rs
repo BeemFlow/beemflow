@@ -36,10 +36,39 @@ impl ScopeEntry {
     }
 }
 
-/// Registry entry for tools and MCP servers
+/// Registry entry for tools, MCP servers, OAuth providers, and webhooks
+///
+/// # Entry Types
+/// - `"tool"`: HTTP API tool with endpoint, method, parameters
+/// - `"mcp_server"`: MCP server configuration with command, args, env
+/// - `"oauth_provider"`: OAuth 2.0 provider with client_id, auth_url, token_url
+/// - `"webhook"`: Standalone webhook (non-OAuth services like Twilio)
+///
+/// # Webhook Support
+/// Both `oauth_provider` and `webhook` types can include a `webhook` field
+/// with identical `WebhookConfig` structure. The webhook configuration is the same
+/// regardless of entry type.
+///
+/// # Examples
+/// ```json
+/// // OAuth provider with webhook (e.g., Slack)
+/// {
+///   "type": "oauth_provider",
+///   "name": "slack",
+///   "client_id": "$env:SLACK_CLIENT_ID",
+///   "webhook": { "enabled": true, "events": [...] }
+/// }
+///
+/// // Standalone webhook (e.g., Twilio)
+/// {
+///   "type": "webhook",
+///   "name": "twilio",
+///   "webhook": { "enabled": true, "events": [...] }
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
-    /// Entry type (tool, mcp_server, oauth_provider)
+    /// Entry type: tool, mcp_server, oauth_provider, webhook
     #[serde(rename = "type")]
     pub entry_type: String,
 
@@ -136,7 +165,8 @@ pub struct RegistryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_params: Option<HashMap<String, String>>,
 
-    /// Webhook configuration (for oauth_provider)
+    /// Webhook configuration (for oauth_provider and webhook types)
+    /// Uses identical structure regardless of entry type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook: Option<WebhookConfig>,
 }

@@ -1,0 +1,52 @@
+# Twilio Echo Test
+#
+# Simple test flow to verify Twilio SMS integration is working.
+# This flow receives an SMS and echoes it back to the sender.
+#
+# Setup:
+# 1. Set environment variable: TWILIO_ACCOUNT_SID
+# 2. Configure Twilio webhook: POST https://your-domain.com/webhooks/twilio
+# 3. Deploy: beemflow flows deploy twilio_echo_test
+# 4. Send test SMS to your Twilio number
+#
+# Expected behavior:
+# - Receive SMS: "Hello"
+# - Bot responds: "Echo: Hello (sent from +15551234567)"
+
+name: twilio_echo_test
+description: Simple test to verify Twilio SMS integration
+version: 1.0.1
+on:
+  webhook:
+    topic: twilio.sms
+
+vars:
+  twilio_phone: "+18883961768"
+
+steps:
+  # Step 1: Parse incoming SMS
+  - id: parse_sms
+    use: core.echo
+    with:
+      from: "{{ event.From }}"
+      to: "{{ event.To }}"
+      body: "{{ event.Body }}"
+      sid: "{{ event.MessageSid }}"
+
+  # Step 2: Send echo response
+  - id: send_echo
+    use: twilio.send_sms
+    with:
+      AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
+      To: "{{ steps.parse_sms.from }}"
+      From: "{{ vars.twilio_phone }}"
+      Body: "Echo: {{ steps.parse_sms.body }} (sent from {{ steps.parse_sms.from }})"
+
+  # Step 3: Log success
+  - id: complete
+    use: core.echo
+    with:
+      status: "success"
+      original_message: "{{ steps.parse_sms.body }}"
+      sender: "{{ steps.parse_sms.from }}"
+      message_sid: "{{ steps.parse_sms.sid }}"

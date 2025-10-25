@@ -688,10 +688,9 @@ async fn test_await_event_resume_roundtrip() {
     // Create engine with default settings
     let engine = Arc::new(Engine::for_testing().await);
 
-    // Start the flow with input and token
+    // Start the flow with input
     let mut start_event = HashMap::new();
     start_event.insert("input".to_string(), serde_json::json!("hello world"));
-    start_event.insert("token".to_string(), serde_json::json!("abc123"));
 
     // Execute should pause at await_event
     let result = engine.execute(&flow, start_event).await;
@@ -712,9 +711,13 @@ async fn test_await_event_resume_roundtrip() {
         .await
         .expect("Should load paused runs");
     assert_eq!(paused_runs.len(), 1, "Should have one paused run");
+
+    // Get the auto-generated token
+    let token = paused_runs.keys().next().unwrap();
     assert!(
-        paused_runs.contains_key("abc123"),
-        "Should have token abc123"
+        token.ends_with("-step-1"),
+        "Token should be auto-generated with step-1, got: {}",
+        token
     );
 
     // Verify we can query by source (webhook architecture)
@@ -724,15 +727,17 @@ async fn test_await_event_resume_roundtrip() {
         .await
         .expect("Should query by source");
     assert_eq!(source_runs.len(), 1, "Should find paused run by source");
-    assert_eq!(source_runs[0].0, "abc123");
+    assert!(
+        source_runs[0].0.ends_with("-step-1"),
+        "Token from source query should be auto-generated"
+    );
 
     // Simulate resume by calling engine.resume() directly
     let mut resume_event = HashMap::new();
     resume_event.insert("resume_value".to_string(), serde_json::json!("it worked!"));
-    resume_event.insert("token".to_string(), serde_json::json!("abc123"));
 
-    // Call resume directly
-    let resume_result = engine.resume("abc123", resume_event.clone()).await;
+    // Call resume directly with auto-generated token from database
+    let resume_result = engine.resume(token, resume_event.clone()).await;
     assert!(resume_result.is_ok(), "Resume should succeed");
 
     // Verify the paused run was deleted after resume

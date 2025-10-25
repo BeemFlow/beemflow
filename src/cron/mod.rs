@@ -115,7 +115,7 @@ impl CronManager {
         // Query flows with schedule.cron trigger (O(log N) indexed lookup)
         let cron_flow_names = self
             .storage
-            .find_flow_names_by_topic("schedule.cron")
+            .find_flow_names_by_topic(crate::constants::TRIGGER_SCHEDULE_CRON)
             .await?;
 
         tracing::debug!(
@@ -238,7 +238,7 @@ impl CronManager {
         let flow: Flow = parse_string(&content, None)
             .map_err(|e| BeemFlowError::validation(format!("Failed to parse flow: {}", e)))?;
 
-        let has_cron = flow.on.includes("schedule.cron");
+        let has_cron = flow.on.includes(crate::constants::TRIGGER_SCHEDULE_CRON);
 
         if !has_cron {
             tracing::debug!(flow = flow_name, "Flow has no cron trigger");

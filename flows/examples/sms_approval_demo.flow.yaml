@@ -1,0 +1,67 @@
+name: sms_approval_demo
+version: 1.0.0
+description: |
+  Demonstrate webhook-based human-in-the-loop approval via SMS.
+
+  Flow pauses at step 3, sends SMS to Becky from marketing, then
+  resumes when she replies via SMS webhook.
+
+  This shows how await_event + webhooks enable mid-flow approvals.
+
+  The resume token is auto-generated from run_id + step_idx.
+  Match criteria contains only the actual fields to match (like From number).
+
+on: cli.manual
+
+vars:
+  becky_phone: "+15559876543"
+  twilio_phone: "+18883961768"
+
+steps:
+  # Step 1: Generate draft content
+  - id: draft_content
+    use: core.echo
+    with:
+      text: "Check out our new feature: Multi-trigger flows in BeemFlow!"
+
+  # Step 2: Send draft to Becky for approval
+  - id: send_to_becky
+    use: twilio.send_sms
+    with:
+      AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
+      From: "{{ vars.twilio_phone }}"
+      To: "{{ vars.becky_phone }}"
+      Body: |
+        Hi Becky! Please review this content:
+
+        "{{ steps.draft_content.text }}"
+
+        Reply YES to approve or NO to reject.
+
+  # Step 3: PAUSE and wait for Becky's SMS reply (via webhook)
+  - id: wait_for_approval
+    await_event:
+      source: twilio.sms          # ← Webhook topic to listen for
+      match:
+        From: "{{ vars.becky_phone }}"  # ← Match on Becky's phone number
+      timeout: 24h
+
+  # Step 4: Resume here when webhook arrives with matching token
+  - id: check_approval
+    use: core.echo
+    with:
+      text: |
+        Becky's response: {{ event.Body }}
+
+        {% if event.Body | lower | trim == 'yes' %}
+        ✅ APPROVED! Posting content...
+        {% else %}
+        ❌ REJECTED. Content not posted.
+        {% endif %}
+
+  # Step 5: Post if approved
+  - id: post_content
+    if: "{{ event.Body | lower | trim == 'yes' }}"
+    use: core.echo
+    with:
+      text: "Content posted: {{ steps.draft_content.text }}"

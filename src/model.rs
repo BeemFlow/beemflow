@@ -326,9 +326,9 @@ pub enum Trigger {
     Single(String),
     /// Multiple trigger types as array of strings
     Multiple(Vec<String>),
-    /// Complex trigger with additional data (for event: format)
+    /// Mixed array with strings and objects (e.g., ["schedule.cron", {webhook: {...}}])
     Complex(Vec<serde_json::Value>),
-    /// Raw value for maximum flexibility (accepts any valid JSON)
+    /// Single object or catch-all (e.g., {webhook: {topic: "..."}})
     Raw(serde_json::Value),
 }
 
@@ -349,14 +349,12 @@ impl Trigger {
         }
     }
 
-    /// Check if a JSON value matches a trigger type (string or {event: "..."})
+    /// Check if a JSON value matches a trigger type
+    ///
+    /// Only checks plain strings - used for validating cron triggers in mixed arrays.
+    /// Webhook topics use extract_topic_from_trigger_value() for database indexing.
     fn value_matches(value: &serde_json::Value, trigger_type: &str) -> bool {
         value.as_str().is_some_and(|s| s == trigger_type)
-            || value
-                .as_object()
-                .and_then(|obj| obj.get("event"))
-                .and_then(|e| e.as_str())
-                .is_some_and(|e| e == trigger_type)
     }
 }
 

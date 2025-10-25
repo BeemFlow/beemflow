@@ -162,8 +162,75 @@ impl CoreAdapter {
         Ok(result)
     }
 
+    /// Extract authentication header from OpenAPI security schemes
+    ///
+    /// Only generates a header when the spec has exactly one HTTP-based auth scheme.
+    /// Returns None for API keys, OAuth, or when multiple schemes exist (conservative).
+    ///
+    /// # Examples
+    ///
+    /// - HTTP Basic: `Some("Basic $env:TWILIO_AUTH_BASIC")`
+    /// - HTTP Bearer: `Some("Bearer $env:STRIPE_API_KEY")`
+    /// - Multiple schemes: `None` (conservative - unclear which to use)
+    pub fn extract_auth_header(spec: &HashMap<String, Value>, api_name: &str) -> Option<String> {
+        // Navigate to components.securitySchemes
+        let schemes = spec
+            .get("components")?
+            .as_object()?
+            .get("securitySchemes")?
+            .as_object()?;
+
+        // Find all HTTP-based auth schemes
+        let http_schemes: Vec<_> = schemes
+            .values()
+            .filter_map(|v| v.as_object())
+            .filter(|scheme| scheme.get("type").and_then(|v| v.as_str()) == Some("http"))
+            .collect();
+
+        // Only auto-configure if exactly one HTTP scheme (unambiguous)
+        if http_schemes.len() == 1 {
+            let scheme = http_schemes[0];
+            // api_name is already clean (slugified or user-provided), just uppercase it
+            let env_name = api_name.to_uppercase();
+
+            match scheme.get("scheme").and_then(|v| v.as_str()) {
+                Some("basic") => {
+                    tracing::debug!(
+                        "Detected HTTP Basic auth for {} (env var: {}_AUTH_BASIC)",
+                        api_name,
+                        env_name
+                    );
+                    Some(format!("Basic $env:{}_AUTH_BASIC", env_name))
+                }
+                Some("bearer") => {
+                    tracing::debug!(
+                        "Detected HTTP Bearer auth for {} (env var: {}_API_KEY)",
+                        api_name,
+                        env_name
+                    );
+                    Some(format!("Bearer $env:{}_API_KEY", env_name))
+                }
+                Some(other) => {
+                    tracing::warn!("Unsupported HTTP auth scheme '{}' for {}", other, api_name);
+                    None
+                }
+                None => None,
+            }
+        } else {
+            tracing::debug!(
+                "Found {} HTTP auth schemes for {}, not auto-configuring auth header",
+                http_schemes.len(),
+                api_name
+            );
+            None
+        }
+    }
+
     /// Convert OpenAPI spec to BeemFlow tool manifests
-    fn convert_openapi_to_manifests(
+    ///
+    /// This is the single source of truth for OpenAPI conversion.
+    /// Used by both the operation (HTTP/MCP/CLI) and adapter (flow execution).
+    pub fn convert_openapi_to_manifests(
         &self,
         spec: &HashMap<String, Value>,
         api_name: &str,
@@ -221,10 +288,12 @@ impl CoreAdapter {
                     HEADER_CONTENT_TYPE.to_string(),
                     self.determine_content_type(op_obj, method),
                 );
-                headers.insert(
-                    HEADER_AUTHORIZATION.to_string(),
-                    format!("Bearer $env:{}_API_KEY", api_name.to_uppercase()),
-                );
+
+                // Auto-detect auth from OpenAPI spec
+                if let Some(auth_header) = Self::extract_auth_header(spec, api_name) {
+                    headers.insert(HEADER_AUTHORIZATION.to_string(), auth_header);
+                }
+
                 manifest.insert("headers".to_string(), serde_json::to_value(headers)?);
 
                 manifests.push(manifest);
@@ -298,82 +367,153 @@ impl CoreAdapter {
             .unwrap_or_else(|| format!("API endpoint: {}", path))
     }
 
+    /// Extract parameters from an OpenAPI operation
+    ///
+    /// Combines parameters from both:
+    /// - `parameters` array (path, query, header params)
+    /// - `requestBody.content[...].schema` (body params for POST/PUT/PATCH)
+    ///
+    /// Returns a JSON Schema object with merged properties and required fields.
     fn extract_parameters(
         &self,
         operation: &serde_json::Map<String, Value>,
         method: &str,
     ) -> Result<HashMap<String, Value>> {
-        // For POST/PUT/PATCH, look for requestBody
+        let mut all_properties = HashMap::new();
+        let mut all_required = Vec::new();
+
+        // Step 1: Extract path/query/header parameters from parameters array
+        if let Some(params) = operation.get("parameters").and_then(|v| v.as_array()) {
+            self.extract_parameter_array(params, &mut all_properties, &mut all_required)?;
+        }
+
+        // Step 2: Extract request body parameters (for POST/PUT/PATCH)
         if method.to_uppercase() != HTTP_METHOD_GET
             && let Some(request_body) = operation.get("requestBody").and_then(|v| v.as_object())
-            && let Some(content) = request_body.get("content").and_then(|v| v.as_object())
         {
-            // Try application/json first
-            if let Some(json_content) = content.get(CONTENT_TYPE_JSON).and_then(|v| v.as_object())
-                && let Some(schema) = json_content.get("schema")
-            {
-                return Ok(serde_json::from_value(schema.clone())?);
-            }
-            // Try application/x-www-form-urlencoded
-            if let Some(form_content) = content.get(CONTENT_TYPE_FORM).and_then(|v| v.as_object())
-                && let Some(schema) = form_content.get("schema")
-            {
-                return Ok(serde_json::from_value(schema.clone())?);
-            }
+            self.extract_request_body(request_body, &mut all_properties, &mut all_required)?;
         }
 
-        // For GET or if no requestBody, look for parameters
-        if let Some(params) = operation.get("parameters").and_then(|v| v.as_array()) {
-            let mut properties = HashMap::new();
-            let mut required = Vec::new();
-
-            for param in params {
-                if let Some(param_obj) = param.as_object()
-                    && let Some(name) = param_obj.get("name").and_then(|v| v.as_str())
-                {
-                    let mut prop = HashMap::new();
-                    prop.insert("type".to_string(), Value::String("string".to_string()));
-
-                    if let Some(desc) = param_obj.get("description").and_then(|v| v.as_str()) {
-                        prop.insert("description".to_string(), Value::String(desc.to_string()));
-                    }
-
-                    if let Some(schema) = param_obj.get("schema").and_then(|v| v.as_object()) {
-                        if let Some(param_type) = schema.get("type").and_then(|v| v.as_str()) {
-                            prop.insert("type".to_string(), Value::String(param_type.to_string()));
-                        }
-                        if let Some(enum_vals) = schema.get("enum") {
-                            prop.insert("enum".to_string(), enum_vals.clone());
-                        }
-                    }
-
-                    properties.insert(name.to_string(), serde_json::to_value(prop)?);
-
-                    if param_obj
-                        .get("required")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                    {
-                        required.push(Value::String(name.to_string()));
-                    }
-                }
-            }
-
-            let mut result = HashMap::new();
-            result.insert("type".to_string(), Value::String("object".to_string()));
-            result.insert("properties".to_string(), serde_json::to_value(properties)?);
-            result.insert("required".to_string(), Value::Array(required));
-            return Ok(result);
-        }
-
-        // Default empty schema
+        // Step 3: Build final schema
         let mut result = HashMap::new();
         result.insert("type".to_string(), Value::String("object".to_string()));
         result.insert(
             "properties".to_string(),
-            Value::Object(serde_json::Map::new()),
+            serde_json::to_value(all_properties)?,
         );
+        result.insert("required".to_string(), Value::Array(all_required));
+
         Ok(result)
+    }
+
+    /// Extract parameters from OpenAPI `parameters` array (path, query, header)
+    fn extract_parameter_array(
+        &self,
+        params: &[Value],
+        properties: &mut HashMap<String, Value>,
+        required: &mut Vec<Value>,
+    ) -> Result<()> {
+        for param in params {
+            let Some(param_obj) = param.as_object() else {
+                continue;
+            };
+
+            let Some(name) = param_obj.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+
+            // Build property schema
+            let mut prop = HashMap::new();
+            prop.insert("type".to_string(), Value::String("string".to_string()));
+
+            if let Some(desc) = param_obj.get("description").and_then(|v| v.as_str()) {
+                prop.insert("description".to_string(), Value::String(desc.to_string()));
+            }
+
+            // Extract type and constraints from schema
+            if let Some(schema) = param_obj.get("schema").and_then(|v| v.as_object()) {
+                if let Some(param_type) = schema.get("type").and_then(|v| v.as_str()) {
+                    prop.insert("type".to_string(), Value::String(param_type.to_string()));
+                }
+                if let Some(enum_vals) = schema.get("enum") {
+                    prop.insert("enum".to_string(), enum_vals.clone());
+                }
+                if let Some(format) = schema.get("format") {
+                    prop.insert("format".to_string(), format.clone());
+                }
+                // Copy other schema properties (pattern, minLength, maxLength, etc.)
+                for (key, value) in schema {
+                    if !prop.contains_key(key) && key != "type" {
+                        prop.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+
+            properties.insert(name.to_string(), serde_json::to_value(prop)?);
+
+            // Check if required
+            if param_obj
+                .get("required")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                required.push(Value::String(name.to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract parameters from OpenAPI requestBody
+    fn extract_request_body(
+        &self,
+        request_body: &serde_json::Map<String, Value>,
+        properties: &mut HashMap<String, Value>,
+        required: &mut Vec<Value>,
+    ) -> Result<()> {
+        let Some(content) = request_body.get("content").and_then(|v| v.as_object()) else {
+            return Ok(());
+        };
+
+        // Try application/json first, then application/x-www-form-urlencoded
+        let schema = content
+            .get(CONTENT_TYPE_JSON)
+            .or_else(|| content.get(CONTENT_TYPE_FORM))
+            .and_then(|v| v.as_object())
+            .and_then(|c| c.get("schema"));
+
+        let Some(schema) = schema else {
+            return Ok(());
+        };
+
+        // Extract properties from schema
+        if let Some(schema_props) = schema.get("properties").and_then(|v| v.as_object()) {
+            for (key, value) in schema_props {
+                // Don't overwrite path parameters with body parameters
+                if !properties.contains_key(key) {
+                    properties.insert(key.clone(), value.clone());
+                } else {
+                    tracing::warn!(
+                        "Parameter '{}' defined in both path/query and request body; using path/query definition",
+                        key
+                    );
+                }
+            }
+        }
+
+        // Extract required fields from schema
+        if let Some(schema_required) = schema.get("required").and_then(|v| v.as_array()) {
+            for req in schema_required {
+                if let Some(req_str) = req.as_str() {
+                    // Don't duplicate required fields
+                    if !required.iter().any(|v| v.as_str() == Some(req_str)) {
+                        required.push(Value::String(req_str.to_string()));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn determine_content_type(

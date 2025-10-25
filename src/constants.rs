@@ -340,6 +340,16 @@ pub const DEFAULT_MCP_ADDR: &str = "localhost:3001";
 pub const DEFAULT_MCP_PAGE_SIZE: usize = 50;
 
 // ============================================================================
+// TRIGGERS
+// ============================================================================
+
+/// Trigger type: schedule.cron (for cron-scheduled flows)
+pub const TRIGGER_SCHEDULE_CRON: &str = "schedule.cron";
+
+/// Trigger type: cli.manual (for manually-executed flows via CLI/API)
+pub const TRIGGER_CLI_MANUAL: &str = "cli.manual";
+
+// ============================================================================
 // ENGINE & EXECUTION
 // ============================================================================
 

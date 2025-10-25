@@ -228,21 +228,31 @@ pub mod tools {
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
             // Parse OpenAPI spec
-            let openapi_spec: serde_json::Value = serde_json::from_str(&input.openapi)?;
+            let spec: HashMap<String, Value> = serde_json::from_str(&input.openapi)?;
 
-            // Extract basic info
+            // Extract API name: use provided value, or generate slug from title
             let api_name = input.api_name.unwrap_or_else(|| {
-                openapi_spec
+                let title = spec
                     .get("info")
                     .and_then(|info| info.get("title"))
                     .and_then(|title| title.as_str())
-                    .unwrap_or("api")
-                    .to_string()
+                    .unwrap_or("api");
+
+                // Generate clean slug: lowercase, alphanumeric only, underscores for separators
+                title
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+                    .split('_')
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("_")
             });
 
+            // Extract base URL from spec or use provided value
             let base_url = input.base_url.unwrap_or_else(|| {
-                openapi_spec
-                    .get("servers")
+                spec.get("servers")
                     .and_then(|servers| servers.as_array())
                     .and_then(|servers| servers.first())
                     .and_then(|server| server.get("url"))
@@ -251,129 +261,9 @@ pub mod tools {
                     .to_string()
             });
 
-            // Convert to tool manifests (simplified implementation)
-            let mut manifests = Vec::new();
-
-            if let Some(paths) = openapi_spec.get("paths").and_then(|p| p.as_object()) {
-                for (path, path_item) in paths {
-                    if let Some(path_obj) = path_item.as_object() {
-                        for (method, operation) in path_obj {
-                            if method != "parameters" {
-                                // Skip parameters key
-                                if let Some(op_obj) = operation.as_object() {
-                                    // Generate tool name
-                                    let tool_name = format!(
-                                        "{}.{}_{}",
-                                        api_name,
-                                        path.trim_start_matches('/').replace('/', "_"),
-                                        method
-                                    );
-
-                                    // Extract description
-                                    let description_str = op_obj
-                                        .get("summary")
-                                        .or_else(|| op_obj.get("description"))
-                                        .and_then(|d| d.as_str())
-                                        .unwrap_or("API endpoint");
-
-                                    // Create basic manifest
-                                    let mut manifest = serde_json::Map::new();
-                                    manifest.insert(
-                                        "name".to_string(),
-                                        serde_json::Value::String(tool_name.clone()),
-                                    );
-                                    manifest.insert(
-                                        "description".to_string(),
-                                        serde_json::Value::String(description_str.to_string()),
-                                    );
-                                    manifest.insert(
-                                        "kind".to_string(),
-                                        serde_json::Value::String("task".to_string()),
-                                    );
-                                    manifest.insert(
-                                        "endpoint".to_string(),
-                                        serde_json::Value::String(format!("{}{}", base_url, path)),
-                                    );
-                                    manifest.insert(
-                                        "method".to_string(),
-                                        serde_json::Value::String(method.to_uppercase()),
-                                    );
-
-                                    // Add basic parameters schema
-                                    let mut properties = serde_json::Map::new();
-                                    let mut required = Vec::new();
-
-                                    // Add path parameters
-                                    if let Some(params) =
-                                        path_obj.get("parameters").and_then(|p| p.as_array())
-                                    {
-                                        for param in params {
-                                            if let Some(param_obj) = param.as_object()
-                                                && let Some(param_name) =
-                                                    param_obj.get("name").and_then(|n| n.as_str())
-                                            {
-                                                let mut param_schema = serde_json::Map::new();
-                                                param_schema.insert(
-                                                    "type".to_string(),
-                                                    serde_json::Value::String("string".to_string()),
-                                                );
-
-                                                if let Some(param_desc) = param_obj
-                                                    .get("description")
-                                                    .and_then(|d| d.as_str())
-                                                {
-                                                    param_schema.insert(
-                                                        "description".to_string(),
-                                                        serde_json::Value::String(
-                                                            param_desc.to_string(),
-                                                        ),
-                                                    );
-                                                }
-
-                                                if param_obj
-                                                    .get("required")
-                                                    .and_then(|r| r.as_bool())
-                                                    .unwrap_or(false)
-                                                {
-                                                    required.push(serde_json::Value::String(
-                                                        param_name.to_string(),
-                                                    ));
-                                                }
-
-                                                properties.insert(
-                                                    param_name.to_string(),
-                                                    serde_json::Value::Object(param_schema),
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    let mut parameters = serde_json::Map::new();
-                                    parameters.insert(
-                                        "type".to_string(),
-                                        serde_json::Value::String("object".to_string()),
-                                    );
-                                    parameters.insert(
-                                        "properties".to_string(),
-                                        serde_json::Value::Object(properties),
-                                    );
-                                    parameters.insert(
-                                        "required".to_string(),
-                                        serde_json::Value::Array(required),
-                                    );
-
-                                    manifest.insert(
-                                        "parameters".to_string(),
-                                        serde_json::Value::Object(parameters),
-                                    );
-
-                                    manifests.push(serde_json::Value::Object(manifest));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // Delegate to CoreAdapter for conversion (single source of truth)
+            let adapter = crate::adapter::core::CoreAdapter::new();
+            let manifests = adapter.convert_openapi_to_manifests(&spec, &api_name, &base_url)?;
 
             Ok(serde_json::json!({
                 "status": "converted",

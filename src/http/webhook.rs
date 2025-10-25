@@ -83,12 +83,46 @@ async fn handle_webhook(
         }
     }
 
-    // Parse webhook payload
-    let payload: Value = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("Failed to parse webhook payload: {}", e);
-            return (StatusCode::BAD_REQUEST, "Invalid JSON payload").into_response();
+    // Parse webhook payload - support both JSON and form-encoded
+    let payload: Value = if let Some(content_type) = headers.get("content-type") {
+        if let Ok(ct_str) = content_type.to_str() {
+            if ct_str.contains("application/x-www-form-urlencoded") {
+                // Parse form-encoded data (Twilio, etc.)
+                match parse_form_encoded(&body) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!("Failed to parse form-encoded payload: {}", e);
+                        return (StatusCode::BAD_REQUEST, "Invalid form payload").into_response();
+                    }
+                }
+            } else {
+                // Parse as JSON (Slack, etc.)
+                match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!("Failed to parse JSON payload: {}", e);
+                        return (StatusCode::BAD_REQUEST, "Invalid JSON payload").into_response();
+                    }
+                }
+            }
+        } else {
+            // Default to JSON if header can't be parsed
+            match serde_json::from_slice(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("Failed to parse webhook payload: {}", e);
+                    return (StatusCode::BAD_REQUEST, "Invalid payload").into_response();
+                }
+            }
+        }
+    } else {
+        // No content-type header, try JSON
+        match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("Failed to parse webhook payload: {}", e);
+                return (StatusCode::BAD_REQUEST, "Invalid payload").into_response();
+            }
         }
     };
 
@@ -271,19 +305,39 @@ async fn resume_paused_runs_for_event(
 }
 
 /// Find webhook configuration from registry
+///
+/// Looks up providers by name and checks if they have webhook configurations.
+/// Supports both dedicated webhook providers and OAuth providers with webhooks.
 async fn find_webhook_config(
     registry: &Arc<RegistryManager>,
     provider: &str,
 ) -> Option<WebhookConfig> {
-    // Query registry for OAuth provider which includes webhook config
-    let provider_name = format!("oauth_{}", provider);
+    // Look up the entry by provider name (no prefix)
+    let entry = registry.get_server(provider).await.ok()??;
 
-    match registry.get_server(&provider_name).await {
-        Ok(Some(entry)) => {
-            // Webhook config is embedded in the registry entry
-            entry.webhook.clone()
+    // Check entry type and extract webhook config
+    match entry.entry_type.as_str() {
+        "webhook" | "oauth_provider" => {
+            if entry.webhook.is_some() {
+                tracing::debug!("Found webhook config for provider: {}", provider);
+                entry.webhook
+            } else {
+                tracing::debug!(
+                    "Provider '{}' (type: {}) has no webhook configuration",
+                    provider,
+                    entry.entry_type
+                );
+                None
+            }
         }
-        Ok(None) | Err(_) => None,
+        _ => {
+            tracing::debug!(
+                "Entry '{}' has type '{}' which does not support webhooks",
+                provider,
+                entry.entry_type
+            );
+            None
+        }
     }
 }
 
@@ -405,19 +459,15 @@ pub(crate) fn matches_event(payload: &Value, match_conditions: &HashMap<String, 
     true
 }
 
-/// Check if event matches await_event criteria (excluding token field)
+/// Check if event matches await_event criteria
 ///
-/// This is used by webhook handlers to determine if an incoming event
-/// should resume a paused workflow. The "token" field is excluded from matching
-/// as it's used for identification, not matching.
+/// Used by webhook handlers to determine if an incoming event should resume
+/// a paused workflow. All fields in match criteria must match the event.
 fn matches_criteria(payload: &Value, criteria: &HashMap<String, Value>) -> bool {
-    criteria
-        .iter()
-        .filter(|(key, _)| *key != crate::constants::MATCH_KEY_TOKEN)
-        .all(|(key, expected)| {
-            let actual = extract_json_path(payload, key);
-            actual.as_ref() == Some(expected)
-        })
+    criteria.iter().all(|(key, expected)| {
+        let actual = extract_json_path(payload, key);
+        actual.as_ref() == Some(expected)
+    })
 }
 
 /// Extract value from JSON using dot notation path
@@ -430,4 +480,40 @@ pub(crate) fn extract_json_path(data: &Value, path: &str) -> Option<Value> {
     }
 
     Some(current.clone())
+}
+
+/// Parse form-encoded data (application/x-www-form-urlencoded) to JSON
+///
+/// Converts form data like "From=%2B15551234567&To=%2B18883961768&Body=Hello"
+/// into JSON like {"From": "+15551234567", "To": "+18883961768", "Body": "Hello"}
+fn parse_form_encoded(body: &[u8]) -> Result<Value> {
+    use std::collections::HashMap;
+
+    let body_str = std::str::from_utf8(body).map_err(|e| {
+        crate::BeemFlowError::validation(format!("Invalid UTF-8 in form data: {}", e))
+    })?;
+
+    let mut map = HashMap::new();
+
+    for pair in body_str.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            // In application/x-www-form-urlencoded, + means space
+            let key_with_spaces = key.replace('+', " ");
+            let value_with_spaces = value.replace('+', " ");
+
+            let decoded_key = urlencoding::decode(&key_with_spaces).map_err(|e| {
+                crate::BeemFlowError::validation(format!("Failed to decode key: {}", e))
+            })?;
+            let decoded_value = urlencoding::decode(&value_with_spaces).map_err(|e| {
+                crate::BeemFlowError::validation(format!("Failed to decode value: {}", e))
+            })?;
+
+            map.insert(
+                decoded_key.to_string(),
+                Value::String(decoded_value.to_string()),
+            );
+        }
+    }
+
+    Ok(Value::Object(serde_json::Map::from_iter(map)))
 }

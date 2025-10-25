@@ -1,0 +1,100 @@
+# Trigger Patterns Reference
+#
+# This flow demonstrates all valid trigger combinations in BeemFlow.
+# Only ONE of these patterns should be used per flow - this file shows examples.
+
+name: trigger_patterns
+version: 1.0.0
+description: |
+  Reference guide for all supported trigger patterns. Shows how flows can be
+  triggered via webhooks, cron schedules, or manual execution (CLI/API).
+
+# ============================================================================
+# PATTERN 1: Manual Execution Only (CLI/HTTP API)
+# ============================================================================
+# on: cli.manual
+#
+# Use when:
+# - Flow is manually executed via: flow run <name> or HTTP POST /runs
+# - No automatic triggering needed
+# - Flow is invoked on-demand by users or other systems
+#
+# The trigger value is documentation-only (not indexed for routing)
+
+# ============================================================================
+# PATTERN 2: Cron Schedule Only
+# ============================================================================
+# on: schedule.cron
+# cron: "0 9 * * *"  # Daily at 9 AM
+#
+# Use when:
+# - Flow runs on a schedule (hourly, daily, weekly, etc.)
+# - Cron expression follows standard cron syntax: minute hour day month weekday
+# - BeemFlow scheduler automatically triggers the flow
+#
+# The "schedule.cron" topic is indexed for scheduler lookup
+# The cron: field contains the actual schedule expression
+
+# ============================================================================
+# PATTERN 3: Webhook Only
+# ============================================================================
+# on:
+#   webhook:
+#     topic: twilio.sms
+#
+# Use when:
+# - Flow is triggered by incoming webhooks (Twilio, Slack, Stripe, etc.)
+# - External services POST to /webhooks/<provider>
+# - Topic-based routing: webhook config maps provider → topic
+#
+# The topic is indexed for O(log N) webhook routing
+
+# ============================================================================
+# PATTERN 4: Multiple Triggers (Flexible)
+# ============================================================================
+on:
+  - schedule.cron      # Can be triggered by cron scheduler
+  - webhook:           # OR by Twilio SMS webhook
+      topic: twilio.sms
+  - cli.manual         # OR manually via CLI/API
+
+# Required when using schedule.cron trigger
+cron: "*/5 * * * *"  # Every 5 minutes
+
+# Use when:
+# - Flow should be accessible via multiple entry points
+# - Example: Daily scheduled run + manual override + webhook fallback
+# - All topics are indexed (schedule.cron, twilio.sms, cli.manual)
+#
+# Topics that get indexed:
+# - schedule.cron → queried by cron scheduler
+# - twilio.sms → queried by webhook router
+# - cli.manual → indexed but never queried (documentation only)
+
+# ============================================================================
+# Common Cron Expressions
+# ============================================================================
+# Every minute:        "* * * * *"
+# Every 5 minutes:     "*/5 * * * *"
+# Every hour:          "0 * * * *"
+# Every day at 9 AM:   "0 9 * * *"
+# Every Monday at 9:   "0 9 * * 1"
+# First of month:      "0 0 1 * *"
+# Weekdays at 6 PM:    "0 18 * * 1-5"
+
+vars:
+  example_var: "This flow demonstrates trigger patterns"
+
+steps:
+  - id: check_trigger
+    use: core.echo
+    with:
+      text: |
+        Flow executed!
+
+        This flow can be triggered:
+        1. By cron scheduler (every 5 min)
+        2. By webhook: POST /webhooks/twilio
+        3. Manually: flow run trigger_patterns
+
+        Event data: {{ event }}
