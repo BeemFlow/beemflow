@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useFlowEditorStore } from '../../stores/flowEditorStore';
 import { ParameterEditor } from './ParameterEditor';
+import { NestedStepEditor } from './NestedStepEditor';
 import type { Step, Trigger } from '../../types/beemflow';
 
 interface StepNodeData {
@@ -230,15 +231,11 @@ export function Inspector() {
                 Variable name to use for each item (accessible as {'{{ ' + (step.as || 'item') + ' }}'})
               </p>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Nested Steps ({step.do?.length || 0})
-              </label>
-              <div className="text-xs text-gray-600 bg-white p-2 rounded border border-orange-200">
-                <p className="mb-1">⚠️ Visual editing of nested loop steps is not yet supported.</p>
-                <p>Switch to YAML view to edit the nested steps in the 'do' array.</p>
-              </div>
-            </div>
+            <NestedStepEditor
+              steps={step.do || []}
+              onStepsChange={(newSteps) => handleUpdateStep({ do: newSteps })}
+              itemVariableName={step.as || 'item'}
+            />
           </div>
         )}
       </div>

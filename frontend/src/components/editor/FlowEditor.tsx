@@ -134,11 +134,7 @@ export function FlowEditor() {
   const handleNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     console.log('Node clicked:', node);
     selectNode(node);
-    // Auto-open inspector when a node is clicked
-    if (!showInspector) {
-      setShowInspector(true);
-    }
-  }, [selectNode, showInspector]);
+  }, [selectNode]);
 
   const handlePaneClick = useCallback(() => {
     // Clear selection when clicking on canvas background
@@ -151,14 +147,10 @@ export function FlowEditor() {
       const selectedNode = params.nodes[0]; // Take first selected node
       console.log('Selection changed:', selectedNode);
       selectNode(selectedNode);
-      // Auto-open inspector when a node is selected
-      if (!showInspector) {
-        setShowInspector(true);
-      }
     } else {
       selectNode(null);
     }
-  }, [selectNode, showInspector]);
+  }, [selectNode]);
 
   // Handle tool selection from palette
   const handleToolSelect = useCallback((tool: RegistryEntry) => {
