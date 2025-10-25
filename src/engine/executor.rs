@@ -677,30 +677,16 @@ impl Executor {
             .as_ref()
             .ok_or_else(|| BeemFlowError::validation("missing await_event specification"))?;
 
-        // Extract and render token
-        let token_val = await_spec
-            .match_
-            .get(crate::constants::MATCH_KEY_TOKEN)
-            .ok_or_else(|| BeemFlowError::validation("await_event missing token in match"))?;
-
-        let template_data = self.get_template_data(step_ctx);
-        let rendered_token = render_value(&self.templater, token_val, &template_data)?;
-        let token = rendered_token
-            .as_str()
-            .ok_or_else(|| BeemFlowError::validation("token must be a string"))?;
-
-        // Validate that the token is not empty
-        if token.trim().is_empty() {
-            return Err(BeemFlowError::validation(
-                "await_event token cannot be empty",
-            ));
-        }
+        // Generate resume token deterministically from run_id + step_index
+        // This makes tokens predictable and eliminates user configuration
+        let token = format!("{}-step-{}", run_id, step_idx);
 
         tracing::info!(
-            "Pausing run {} at step '{}', waiting for event from source: {}",
+            "Pausing run {} at step '{}', waiting for event from source: {} (resume token: {})",
             run_id,
             step.id,
-            await_spec.source
+            await_spec.source,
+            token
         );
 
         // Create paused run
@@ -716,7 +702,7 @@ impl Executor {
         // Store paused run in storage with source metadata for webhook queries
         let paused_value = serde_json::to_value(&paused)?;
         self.storage
-            .save_paused_run(token, &await_spec.source, paused_value)
+            .save_paused_run(&token, &await_spec.source, paused_value)
             .await?;
 
         Err(BeemFlowError::AwaitEventPause(format!(

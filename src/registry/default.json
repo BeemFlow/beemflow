@@ -1778,5 +1778,81 @@
       "Authorization": "$oauth:slack:default",
       "Content-Type": "application/json"
     }
+  },
+  {
+    "type": "tool",
+    "name": "twilio.send_sms",
+    "description": "Send an SMS message via Twilio",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["AccountSid", "From", "To", "Body"],
+      "properties": {
+        "AccountSid": {
+          "type": "string",
+          "description": "The SID of the Account creating the Message resource",
+          "pattern": "^AC[0-9a-fA-F]{32}$",
+          "minLength": 34,
+          "maxLength": 34
+        },
+        "From": {
+          "type": "string",
+          "format": "phone-number",
+          "description": "The sender's Twilio phone number in E.164 format (e.g., +15551234567)"
+        },
+        "To": {
+          "type": "string",
+          "format": "phone-number",
+          "description": "The recipient's phone number in E.164 format (e.g., +15551234567)"
+        },
+        "Body": {
+          "type": "string",
+          "description": "The text content of the message (up to 1,600 characters)"
+        },
+        "MediaUrl": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": "Optional: URLs of media to include (up to 10 images, 5MB max each)"
+        }
+      }
+    },
+    "endpoint": "https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Basic $env:TWILIO_API_AUTH_BASIC",
+      "Content-Type": "application/x-www-form-urlencoded"
+    }
+  },
+  {
+    "type": "webhook",
+    "name": "twilio",
+    "description": "Twilio SMS and voice webhooks",
+    "version": "1.0.0",
+    "registry": "default",
+    "webhook": {
+      "enabled": true,
+      "events": [
+        {
+          "type": "incoming_sms",
+          "topic": "twilio.sms",
+          "match": {},
+          "extract": {
+            "From": "From",
+            "To": "To",
+            "Body": "Body",
+            "MessageSid": "MessageSid",
+            "AccountSid": "AccountSid",
+            "NumMedia": "NumMedia"
+          }
+        }
+      ]
+    }
   }
 ]

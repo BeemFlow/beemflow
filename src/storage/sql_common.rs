@@ -10,60 +10,76 @@ use std::collections::HashMap;
 // Flow Topic Extraction (used during deployment)
 // ============================================================================
 
+/// Extract topic from any trigger value (string or webhook object)
+///
+/// Handles both:
+/// - Plain strings: "schedule.cron", "cli.manual"
+/// - Webhook objects: {webhook: {topic: "twilio.sms"}} → "twilio.sms"
+///
+/// This allows flows to have multiple triggers of different types.
+#[inline]
+fn extract_topic_from_trigger_value(value: &serde_json::Value) -> Option<String> {
+    // Plain string (cron, cli, etc.)
+    if let Some(s) = value.as_str() {
+        return Some(s.to_string());
+    }
+
+    // Webhook object: {webhook: {topic: "..."}}
+    value
+        .as_object()?
+        .get("webhook")?
+        .as_object()?
+        .get("topic")?
+        .as_str()
+        .map(String::from)
+}
+
 /// Extract webhook topics from flow YAML content for indexing
 ///
-/// Parses the flow's `on` trigger field and returns all topic strings.
-/// This is called during deployment to populate the flow_triggers table,
-/// enabling O(log N) webhook routing by topic.
+/// This function powers topic-based routing by extracting topics during deployment.
+/// Topics are stored in the flow_triggers table for O(log N) webhook routing.
+///
+/// # Topic-Based Routing (Uses this function)
+/// - **Webhooks**: `on: {webhook: {topic: "twilio.sms"}}` → indexed for routing
+/// - **Cron**: `on: {schedule: {cron: "..."}}` → extracted as "schedule.cron" topic
+///
+/// # Direct Execution (Does NOT use topics)
+/// - **CLI/HTTP API**: Flows executed by name - `on:` field is documentation only
+/// - Flows with `on: cli.manual` or `on: manual` are never looked up by topic
 ///
 /// # Performance
-/// This is a cold path operation (deployment only). YAML parsing here is acceptable.
+/// Cold path operation (deployment only). YAML parsing acceptable.
 ///
 /// # Returns
-/// - Vector of topic strings if flow has `on:` field
-/// - Empty vector if no triggers or parse error
+/// - Vector of topic strings if flow has indexed triggers
+/// - Empty vector otherwise
 pub fn extract_topics_from_flow_yaml(content: &str) -> Vec<String> {
     let flow = match crate::dsl::parse_string(content, None) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
 
-    let trigger = flow.on;
-
-    match trigger {
+    let topics = match flow.on {
+        // Single trigger: "schedule.cron", "cli.manual", etc.
         Trigger::Single(topic) => vec![topic],
+
+        // Multiple plain strings: ["schedule.cron", "cli.manual"]
         Trigger::Multiple(topics) => topics,
+
+        // Mixed triggers: ["schedule.cron", {webhook: {topic: "twilio.sms"}}]
         Trigger::Complex(values) => values
             .iter()
-            .filter_map(|v| {
-                v.as_str().map(String::from).or_else(|| {
-                    v.as_object()
-                        .and_then(|obj| obj.get("event"))
-                        .and_then(|e| e.as_str())
-                        .map(String::from)
-                })
-            })
+            .filter_map(extract_topic_from_trigger_value)
             .collect(),
-        Trigger::Raw(value) => {
-            if let Some(arr) = value.as_array() {
-                arr.iter()
-                    .filter_map(|v| {
-                        v.as_str().map(String::from).or_else(|| {
-                            v.as_object()
-                                .and_then(|obj| obj.get("event"))
-                                .and_then(|e| e.as_str())
-                                .map(String::from)
-                        })
-                    })
-                    .collect()
-            } else {
-                value
-                    .as_str()
-                    .map(|s| vec![s.to_string()])
-                    .unwrap_or_default()
-            }
-        }
-    }
+
+        // Single object: {webhook: {topic: "twilio.sms"}}
+        Trigger::Raw(value) => extract_topic_from_trigger_value(&value)
+            .map(|t| vec![t])
+            .unwrap_or_default(),
+    };
+
+    tracing::debug!("Extracted topics from flow: {:?}", topics);
+    topics
 }
 
 // ============================================================================

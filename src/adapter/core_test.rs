@@ -834,3 +834,86 @@ fn test_extract_description() {
 //    );
 //}
 //}
+
+#[tokio::test]
+async fn test_convert_openapi_path_and_body_params() {
+    // Test that path parameters and request body parameters are BOTH included
+    let adapter = CoreAdapter::new();
+    let spec_with_both = r#"{
+        "openapi": "3.0.0",
+        "info": {"title": "Test API", "version": "1.0.0"},
+        "paths": {
+            "/accounts/{AccountSid}/messages": {
+                "post": {
+                    "summary": "Send message",
+                    "parameters": [
+                        {
+                            "name": "AccountSid",
+                            "in": "path",
+                            "required": true,
+                            "schema": {"type": "string"},
+                            "description": "Account ID"
+                        }
+                    ],
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "to": {"type": "string"},
+                                        "body": {"type": "string"}
+                                    },
+                                    "required": ["to"]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }"#;
+
+    let mut inputs = HashMap::new();
+    inputs.insert(
+        PARAM_SPECIAL_USE.to_string(),
+        Value::String(CORE_CONVERT_OPENAPI.to_string()),
+    );
+    inputs.insert(
+        "openapi".to_string(),
+        Value::String(spec_with_both.to_string()),
+    );
+    inputs.insert("api_name".to_string(), Value::String("test".to_string()));
+
+    let result = adapter
+        .execute(inputs, &test_context().await)
+        .await
+        .unwrap();
+    let manifests = result.get("manifests").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(manifests.len(), 1);
+
+    let tool = &manifests[0];
+    let params = tool.get("parameters").and_then(|v| v.as_object()).unwrap();
+    let props = params
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .unwrap();
+
+    // CRITICAL: Must have BOTH path param AND body params
+    assert!(
+        props.contains_key("AccountSid"),
+        "Missing path parameter AccountSid"
+    );
+    assert!(props.contains_key("to"), "Missing body parameter to");
+    assert!(props.contains_key("body"), "Missing body parameter body");
+
+    let required = params.get("required").and_then(|v| v.as_array()).unwrap();
+    assert!(
+        required.iter().any(|v| v == "AccountSid"),
+        "AccountSid not marked as required"
+    );
+    assert!(
+        required.iter().any(|v| v == "to"),
+        "to not marked as required"
+    );
+}

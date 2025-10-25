@@ -262,10 +262,52 @@ impl RegistryManager {
         // Mark as local registry
         entry.registry = Some("local".to_string());
 
+        // Capture name for logging before moving entry
+        let tool_name = entry.name.clone();
+
         // Use the default local registry path (~/.beemflow/registry.json)
         let local_path = crate::constants::default_local_registry_path();
         let local_registry = LocalRegistry::new(local_path);
         local_registry.upsert_entry(entry).await?;
+
+        tracing::info!("Registered tool: {}", tool_name);
+        Ok(())
+    }
+
+    /// Register a webhook from a manifest in the local registry
+    pub async fn register_webhook_from_manifest(&self, manifest: serde_json::Value) -> Result<()> {
+        // Deserialize manifest to RegistryEntry
+        let mut entry: RegistryEntry = serde_json::from_value(manifest).map_err(|e| {
+            crate::error::BeemFlowError::validation(format!("Invalid webhook manifest: {}", e))
+        })?;
+
+        // Ensure it's a webhook
+        if entry.entry_type != "webhook" {
+            return Err(crate::error::BeemFlowError::validation(format!(
+                "Expected type 'webhook', got '{}'",
+                entry.entry_type
+            )));
+        }
+
+        // Validate webhook config is present
+        if entry.webhook.is_none() {
+            return Err(crate::error::BeemFlowError::validation(
+                "Webhook must have 'webhook' configuration".to_string(),
+            ));
+        }
+
+        // Mark as local registry
+        entry.registry = Some("local".to_string());
+
+        // Capture name for logging before moving entry
+        let webhook_name = entry.name.clone();
+
+        // Use the default local registry path (~/.beemflow/registry.json)
+        let local_path = crate::constants::default_local_registry_path();
+        let local_registry = LocalRegistry::new(local_path);
+        local_registry.upsert_entry(entry).await?;
+
+        tracing::info!("Registered webhook: {}", webhook_name);
         Ok(())
     }
 }
