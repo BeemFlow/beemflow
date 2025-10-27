@@ -254,7 +254,12 @@ pub mod system {
             // Count active runs (running or pending)
             let active_runs = all_runs
                 .iter()
-                .filter(|r| matches!(r.status, crate::model::RunStatus::Running | crate::model::RunStatus::Pending))
+                .filter(|r| {
+                    matches!(
+                        r.status,
+                        crate::model::RunStatus::Running | crate::model::RunStatus::Pending
+                    )
+                })
                 .count();
 
             // Count runs awaiting events

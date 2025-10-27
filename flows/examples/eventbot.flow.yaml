@@ -1,66 +1,39 @@
 # Event Bot - AI-Powered Event Assistant
 #
-# This workflow powers an SMS-based event assistant bot that:
-# - Answers guest questions about event details (parking, food, schedule, etc.)
-# - Collects RSVPs with meal preferences and dietary restrictions
-# - Logs all conversations for organizer review
-# - Stores data in Google Sheets for easy management
-#
-# Use Case: Weddings, conferences, corporate events, parties
-# Interface: SMS via Twilio
-# Data Storage: Google Drive (event details) + Google Sheets (RSVP tracking)
-# AI: Anthropic Claude for natural language understanding
+# Answers guest questions via SMS using event details from a Google Doc
+# Simply edit the Google Doc to update event information - no redeployment needed!
+# Tracks all conversations in Google Sheets for organizer review
 #
 # Setup Instructions:
-# 1. Create a Google Doc with event details (parking, food, schedule, venue)
-# 2. Create a Google Sheet with two tabs: "Responses" and "Questions"
-# 3. Get Twilio phone number and configure webhook to: POST /webhooks/twilio
-# 4. Set environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY
-# 5. Configure Google OAuth: beemflow oauth authorize google
-# 6. Update vars below with your document IDs and phone number
-# 7. Deploy: beemflow flows deploy eventbot
+# 1. Create a Google Doc with your event details (parking, venue, schedule, etc.)
+#    - Get the doc ID from URL: https://docs.google.com/document/d/[DOC_ID]/edit
+#    - Update event_doc_id variable below
+# 2. Create a Google Sheet for tracking conversations
+#    - Add headers: Phone | Timestamp | Question | Response
+#    - Get sheet ID from URL: https://docs.google.com/spreadsheets/d/[SHEET_ID]/edit
+#    - Update rsvp_sheet_id variable below
+# 3. Set environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY
+# 4. Authorize Google OAuth: beemflow oauth authorize google
+# 5. Deploy: beemflow flows deploy eventbot
+# 6. Configure Twilio webhook to: POST https://your-domain.com/webhooks/twilio
 
 name: eventbot
-description: AI-powered event assistant for SMS conversations
-version: 1.0.0
+description: AI-powered event assistant for SMS - Uses Google Docs for event details
+version: 2.1.0
 on:
   webhook:
     topic: twilio.sms
 
 vars:
   # === REQUIRED CONFIGURATION ===
-  # Replace these with your actual values
 
-  event_doc_id: "REPLACE_WITH_YOUR_GOOGLE_DOC_ID"
-  # Example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
-  # Get from URL: https://docs.google.com/document/d/[DOC_ID]/edit
+  event_doc_id: "1JlekaIKFAIXPu5UZL4XyOr5RcCT-zWY8GQZzzTuB3o8"
+  # Google Doc with event details
+  # URL: https://docs.google.com/document/d/1JlekaIKFAIXPu5UZL4XyOr5RcCT-zWY8GQZzzTuB3o8/edit
 
-  rsvp_sheet_id: "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID"
-  # Example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
-  # Get from URL: https://docs.google.com/spreadsheets/d/[SHEET_ID]/edit
-
-  twilio_phone: "+15559876543"
-  # Your Twilio phone number in E.164 format
-  #
-  # Note: TWILIO_ACCOUNT_SID is automatically available as {{ secrets.TWILIO_ACCOUNT_SID }}
-  # from the environment via the secrets provider
-
-  event_name: "Our Wedding"
-  # Name of the event (used in responses)
-
-  # === OPTIONAL CONFIGURATION ===
-
-  cache_ttl: 3600
-  # How long to cache event details (seconds)
-  # 3600 = 1 hour, 86400 = 24 hours
-
-  organizer_phone: ""
-  # Set to your phone number to get RSVP notifications
-  # Example: "+15551234567"
-
-  # === RUNTIME STATE (DO NOT MODIFY) ===
-  event_details: ""
-  cache_timestamp: 0
+  rsvp_sheet_id: "1LxQHkyV-pNwKJJEkuO04pUN8gzSbjkyOHx5-Nlw9FaQ"
+  # Google Sheet for tracking conversations
+  # URL: https://docs.google.com/spreadsheets/d/1LxQHkyV-pNwKJJEkuO04pUN8gzSbjkyOHx5-Nlw9FaQ/edit
 
 steps:
   # ============================================================================
@@ -73,173 +46,43 @@ steps:
       guest_message: "{{ event.Body }}"
       bot_number: "{{ event.To }}"
       message_sid: "{{ event.MessageSid }}"
-      timestamp: "{{ now }}"
 
   # ============================================================================
-  # STEP 2: Fetch Event Details (with caching)
+  # STEP 2: Fetch Event Details from Google Doc
   # ============================================================================
-  # Check if cached event details need refresh
-  - id: check_cache
-    use: core.echo
-    with:
-      cache_age_seconds: "{{ timestamp - vars.cache_timestamp }}"
-      needs_refresh: "{{ (timestamp - vars.cache_timestamp) > vars.cache_ttl }}"
-      has_cache: "{{ vars.event_details != '' }}"
-
-  # Fetch from Google Drive if cache is stale or empty
   - id: fetch_event_doc
-    if: "{{ steps.check_cache.needs_refresh == 'true' || steps.check_cache.has_cache == 'false' }}"
-    use: google_drive.download_file
+    use: google_docs.get
     with:
-      fileId: "{{ vars.event_doc_id }}"
-      mimeType: "text/plain"
+      documentId: "{{ vars.event_doc_id }}"
     auth:
       oauth: "google:default"
 
-  # Update cache if we fetched new data
-  - id: update_cache
-    if: "{{ steps.fetch_event_doc.status == 'completed' }}"
-    use: core.set_var
-    with:
-      event_details: "{{ steps.fetch_event_doc.content }}"
-      cache_timestamp: "{{ timestamp }}"
-
-  # Use cached details if available, otherwise use freshly fetched
-  - id: get_event_details
-    use: core.echo
-    with:
-      details: "{{ vars.event_details }}"
-
   # ============================================================================
-  # STEP 3: Detect User Intent
+  # STEP 3: Generate Response using Claude
   # ============================================================================
-  # Classify whether this is an RSVP, question, or greeting
-  - id: detect_intent
-    use: anthropic.messages
-    with:
-      model: "claude-3-5-sonnet-20241022"
-      max_tokens: 50
-      temperature: 0.1
-      system: |
-        You are an intent classifier for an event bot.
-
-        Classify the user's message into ONE of these categories:
-        - rsvp: User is confirming attendance, providing meal preferences, or RSVPing
-        - question: User is asking about parking, food, schedule, venue, or other event details
-        - greeting: User is saying hi/hello/hey
-        - thanks: User is saying thank you or expressing gratitude
-        - other: Anything else
-
-        Respond with ONLY the category name (lowercase), nothing else.
-
-        Examples:
-        "We'll be there! 2 people, chicken please" -> rsvp
-        "Where can I park?" -> question
-        "Hi!" -> greeting
-        "Thanks!" -> thanks
-        "Can't make it unfortunately" -> rsvp
-      messages:
-        - role: user
-          content: "{{ steps.parse_sms.guest_message }}"
-
-  # ============================================================================
-  # STEP 4: Process RSVP (if applicable)
-  # ============================================================================
-  # Extract structured RSVP data from natural language
-  - id: extract_rsvp
-    if: "{{ steps.detect_intent.content[0].text == 'rsvp' }}"
-    use: anthropic.messages
-    with:
-      model: "claude-3-5-sonnet-20241022"
-      max_tokens: 200
-      temperature: 0.1
-      system: |
-        Extract RSVP information from the user's message.
-
-        Return ONLY a valid JSON object with these exact fields:
-        {
-          "attending": true or false,
-          "meal_choice": "chicken" or "fish" or "vegetarian" or "unknown",
-          "guest_count": number (1 if not specified),
-          "dietary_restrictions": "string describing restrictions" or null
-        }
-
-        Rules:
-        - If they say yes/attending/will be there: attending = true
-        - If they say no/can't make it/won't attend: attending = false
-        - If unclear, assume attending = true
-        - If no meal mentioned: meal_choice = "unknown"
-        - If no guest count mentioned: guest_count = 1
-        - If no dietary restrictions mentioned: dietary_restrictions = null
-
-        Do NOT include any explanation, ONLY return the JSON object.
-      messages:
-        - role: user
-          content: "{{ steps.parse_sms.guest_message }}"
-
-  # Save RSVP to Google Sheets
-  - id: save_rsvp
-    if: "{{ steps.detect_intent.content[0].text == 'rsvp' }}"
-    use: google_sheets.append_row
-    with:
-      spreadsheetId: "{{ vars.rsvp_sheet_id }}"
-      range: "Responses!A:G"
-      values:
-        - - "{{ steps.parse_sms.guest_phone }}"
-          - "{{ steps.parse_sms.timestamp }}"
-          - "{{ steps.extract_rsvp.content[0].text | fromjson | get('attending') }}"
-          - "{{ steps.extract_rsvp.content[0].text | fromjson | get('meal_choice') }}"
-          - "{{ steps.extract_rsvp.content[0].text | fromjson | get('dietary_restrictions') }}"
-          - "{{ steps.extract_rsvp.content[0].text | fromjson | get('guest_count') }}"
-          - "confirmed"
-    auth:
-      oauth: "google:default"
-
-  # Notify organizer of new RSVP (optional)
-  - id: notify_organizer
-    if: "{{ steps.detect_intent.content[0].text == 'rsvp' && vars.organizer_phone != '' }}"
-    use: twilio.send_sms
-    with:
-      AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
-      To: "{{ vars.organizer_phone }}"
-      From: "{{ vars.twilio_phone }}"
-      Body: |
-        New RSVP for {{ vars.event_name }}!
-
-        From: {{ steps.parse_sms.guest_phone }}
-        Attending: {{ steps.extract_rsvp.content[0].text | fromjson | get('attending') }}
-        Guests: {{ steps.extract_rsvp.content[0].text | fromjson | get('guest_count') }}
-        Meal: {{ steps.extract_rsvp.content[0].text | fromjson | get('meal_choice') }}
-
-  # ============================================================================
-  # STEP 5: Generate Response
-  # ============================================================================
-  # Use Claude to generate friendly, contextual response
   - id: generate_response
-    use: anthropic.messages
+    use: anthropic.chat_completion
     with:
       model: "claude-3-5-sonnet-20241022"
       max_tokens: 500
       temperature: 0.7
       system: |
-        You are a helpful, friendly event assistant for {{ vars.event_name }}.
+        You are a helpful, friendly event assistant for Sarah & John's Wedding.
 
         Your role:
         - Answer guest questions about the event using the details below
-        - Confirm RSVPs warmly and professionally
         - Respond to greetings in a friendly way
         - Keep responses concise (under 300 characters when possible - SMS best practice)
         - Be warm, professional, and helpful
 
         If a guest:
-        - RSVPs: Thank them warmly and confirm what you recorded
         - Asks a question: Answer from event details below
         - Says thanks: Respond kindly
         - Says hi: Greet them and offer help
         - Asks something not covered: Politely say you'll have the organizer reach out
 
-        EVENT DETAILS:
-        {{ steps.get_event_details.details }}
+        EVENT DETAILS (from Google Doc):
+        {{ steps.fetch_event_doc }}
 
         Important:
         - Use emoji sparingly (only 1-2 per message)
@@ -250,96 +93,82 @@ steps:
           content: "{{ steps.parse_sms.guest_message }}"
 
   # ============================================================================
-  # STEP 6: Log Conversation
+  # STEP 4: Log Conversation to Google Sheets
   # ============================================================================
-  # Save all conversations to Google Sheets for organizer review
   - id: log_conversation
-    use: google_sheets.append_row
+    use: google_sheets.values.append
     with:
       spreadsheetId: "{{ vars.rsvp_sheet_id }}"
-      range: "Questions!A:E"
+      range: "Sheet1!A:D"
       values:
         - - "{{ steps.parse_sms.guest_phone }}"
-          - "{{ steps.parse_sms.timestamp }}"
-          - "{{ steps.detect_intent.content[0].text }}"
+          - "{{ steps.parse_sms.message_sid }}"
           - "{{ steps.parse_sms.guest_message }}"
           - "{{ steps.generate_response.content[0].text }}"
     auth:
       oauth: "google:default"
 
   # ============================================================================
-  # STEP 7: Send SMS Response
+  # STEP 5: Send SMS Response
   # ============================================================================
   - id: send_sms
     use: twilio.send_sms
     with:
       AccountSid: "{{ secrets.TWILIO_ACCOUNT_SID }}"
       To: "{{ steps.parse_sms.guest_phone }}"
-      From: "{{ vars.twilio_phone }}"
+      From: "{{ steps.parse_sms.bot_number }}"
       Body: "{{ steps.generate_response.content[0].text }}"
 
   # ============================================================================
-  # STEP 8: Return Execution Summary
+  # STEP 6: Return Success Summary
   # ============================================================================
   - id: complete
     use: core.echo
     with:
       status: "success"
       guest_phone: "{{ steps.parse_sms.guest_phone }}"
-      intent: "{{ steps.detect_intent.content[0].text }}"
-      response_length: "{{ steps.generate_response.content[0].text | length }}"
-      rsvp_recorded: "{{ steps.detect_intent.content[0].text == 'rsvp' }}"
-      message_sent: true
-      execution_time_ms: "{{ timestamp - steps.parse_sms.timestamp }}"
+      response_sent: true
+      conversation_logged: true
 
 # ============================================================================
 # EXAMPLE CONVERSATIONS
 # ============================================================================
 #
-# Conversation 1: Question
+# Conversation 1: Parking Question
 # Guest: "Where can I park?"
-# Bot: "You can park in the main venue lot at 123 Main Street (capacity 100
-#      vehicles, available from 4:00 PM). Valet service is available. Overflow
-#      parking is at City Park garage, 456 Park Avenue. See you there!"
+# Bot: "You can park on-site for free at Riverside Gardens! Valet service is
+#      also available for $10. Shuttles run between downtown hotels and the
+#      venue too. See you there!"
 #
-# Conversation 2: RSVP
-# Guest: "We'll be attending! 2 people, both prefer chicken. I'm vegetarian's friend has shellfish allergy."
-# Bot: "Wonderful! I've recorded your RSVP for 2 guests with chicken preference
-#      and noted the shellfish allergy. We're so excited to celebrate with you!"
+# Conversation 2: Hotel Question
+# Guest: "What's the hotel discount code?"
+# Bot: "The hotel block is at Riverside Inn with code SARAH-JOHN-2025 for
+#      $149/night. Book by May 15th! Let us know if you need anything else!"
 #
 # Conversation 3: Greeting
 # Guest: "Hi!"
 # Bot: "Hi! Thanks for reaching out. I'm here to help with any questions about
-#      the event - parking, food, schedule, or anything else. Feel free to ask!"
-#
-# Conversation 4: Thanks
-# Guest: "Thanks so much!"
-# Bot: "You're very welcome! Let us know if you need anything else. Can't wait
-#      to see you!"
+#      Sarah & John's wedding - parking, hotels, schedule, or anything else!"
 #
 # ============================================================================
 # GOOGLE SHEETS SETUP
 # ============================================================================
 #
-# Tab 1: "Responses" (RSVP Data)
-# Headers: Phone | Timestamp | Attending | Meal | Dietary | Guest Count | Status
+# Create a spreadsheet titled "Sarah & John Wedding Tracking"
 #
-# Tab 2: "Questions" (Conversation Log)
-# Headers: Phone | Timestamp | Intent | Question | Response
+# Tab: "Questions" (Conversation Log)
+# Headers: Phone | Timestamp | Question | Response
 #
 # ============================================================================
 # DEPLOYMENT CHECKLIST
 # ============================================================================
 #
-# [ ] Create Google Doc with event details
-# [ ] Create Google Sheet with "Responses" and "Questions" tabs
+# [ ] Create Google Sheet with "Questions" tab
 # [ ] Set up Twilio account and purchase phone number
-# [ ] Configure environment variables
-# [ ] Authorize Google OAuth: beemflow oauth authorize google
-# [ ] Update vars in this file with your IDs and phone numbers
+# [ ] Configure environment variables (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY)
+# [ ] Update vars in this file with your sheet ID
 # [ ] Deploy workflow: beemflow flows deploy eventbot
 # [ ] Configure Twilio webhook: POST https://your-domain.com/webhooks/twilio
 # [ ] Test with real SMS messages
-# [ ] Monitor logs and refine responses
 #
 # ============================================================================
