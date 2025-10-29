@@ -69,11 +69,7 @@ impl HttpAdapter {
 
         // Add body if present
         if let Some(body_val) = body {
-            if body_val.is_object() || body_val.is_array() {
-                request = request.json(&body_val);
-            } else if let Some(s) = body_val.as_str() {
-                request = request.body(s.to_string());
-            }
+            request = Self::encode_request_body(request, &headers, &body_val)?;
         }
 
         // Execute request
@@ -349,6 +345,56 @@ impl HttpAdapter {
             )));
         }
         Ok(())
+    }
+
+    /// Encode request body based on Content-Type header
+    ///
+    /// Supports:
+    /// - `application/x-www-form-urlencoded`: Form encoding for APIs like Twilio
+    /// - `application/json`: JSON encoding (default for objects/arrays)
+    /// - Plain text: Direct string body
+    fn encode_request_body(
+        request: reqwest::RequestBuilder,
+        headers: &HashMap<String, String>,
+        body: &Value,
+    ) -> Result<reqwest::RequestBuilder> {
+        // Check if Content-Type indicates form encoding
+        let is_form_encoded = headers
+            .get("Content-Type")
+            .or_else(|| headers.get("content-type"))
+            .map(|ct| {
+                ct.to_lowercase()
+                    .contains("application/x-www-form-urlencoded")
+            })
+            .unwrap_or(false);
+
+        match (is_form_encoded, body) {
+            // Form-encoded object
+            (true, Value::Object(obj)) => {
+                let form_data: Vec<(String, String)> = obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Self::json_value_to_string(v)))
+                    .collect();
+                Ok(request.form(&form_data))
+            }
+            // JSON for objects and arrays
+            (false, Value::Object(_)) | (false, Value::Array(_)) => Ok(request.json(body)),
+            // Plain string body
+            (_, Value::String(s)) => Ok(request.body(s.clone())),
+            // Everything else: attempt JSON encoding
+            _ => Ok(request.json(body)),
+        }
+    }
+
+    /// Convert a JSON value to a string representation for form encoding
+    fn json_value_to_string(value: &Value) -> String {
+        match value {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::Null => String::new(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        }
     }
 
     /// Enrich inputs with defaults from manifest parameters

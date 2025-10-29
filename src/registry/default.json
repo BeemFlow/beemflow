@@ -358,6 +358,34 @@
   },
   {
     "type": "tool",
+    "name": "google_docs.get",
+    "description": "Get content from a Google Docs document",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "documentId"
+      ],
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "description": "ID of the Google Doc (from URL: docs.google.com/document/d/DOCUMENT_ID/edit)"
+        }
+      }
+    },
+    "endpoint": "https://docs.googleapis.com/v1/documents/{documentId}",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:google:default",
+      "Content-Type": "application/json"
+    }
+  },
+  {
+    "type": "tool",
     "name": "x.post",
     "description": "Post a tweet to X (Twitter) via the API v2",
     "kind": "task",

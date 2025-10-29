@@ -482,7 +482,7 @@ steps:
         "Match should only contain From field"
     );
     assert!(
-        await_spec.match_.get("token").is_none(),
+        !await_spec.match_.contains_key("token"),
         "Token should NOT be in match criteria"
     );
 
