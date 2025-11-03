@@ -25,7 +25,7 @@ path = "src/main.rs"
 beemflow_core_macros = { path = "./core_macros" }
 
 # Async Runtime & Utilities
-tokio = { version = "1.47", features = ["full"] }
+tokio = { version = "1.48", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["full"] }
@@ -88,7 +88,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # OAuth
 oauth2 = "5.0"
-jsonwebtoken = { version = "10.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.1", default-features = false, features = ["rust_crypto"] }
 rand = "0.9"
 base64 = "0.22"
 url = "2"
