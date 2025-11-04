@@ -32,6 +32,31 @@ pub mod system {
         pub workflow: String,
     }
 
+    #[derive(Serialize, JsonSchema)]
+    #[schemars(description = "Dashboard statistics")]
+    pub struct DashboardStats {
+        #[schemars(description = "Total number of flows")]
+        pub total_flows: usize,
+        #[schemars(description = "Total number of runs")]
+        pub total_runs: usize,
+        #[schemars(description = "Number of currently active runs")]
+        pub active_runs: usize,
+        #[schemars(description = "Number of runs awaiting events")]
+        pub awaiting_events: usize,
+        #[schemars(description = "Success rate (0.0 to 1.0)")]
+        pub success_rate: f64,
+        #[schemars(description = "Recent activity")]
+        pub recent_activity: Vec<RecentActivity>,
+    }
+
+    #[derive(Serialize, JsonSchema)]
+    #[schemars(description = "Recent activity item")]
+    pub struct RecentActivity {
+        pub timestamp: String,
+        pub flow_name: String,
+        pub status: String,
+    }
+
     /// Show BeemFlow specification
     #[operation(
         name = "spec",
@@ -196,6 +221,96 @@ pub mod system {
                 "message": "Workflow cron functionality not implemented yet",
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }))
+        }
+    }
+
+    /// Get dashboard statistics
+    #[operation(
+        name = "dashboard_stats",
+        input = EmptyInput,
+        http = "GET /dashboard/stats",
+        description = "Get dashboard statistics including flows, runs, and success rates"
+    )]
+    pub struct GetDashboardStats {
+        pub deps: Arc<Dependencies>,
+    }
+
+    #[async_trait]
+    impl Operation for GetDashboardStats {
+        type Input = EmptyInput;
+        type Output = DashboardStats;
+
+        async fn execute(&self, _input: Self::Input) -> Result<Self::Output> {
+            let storage = &self.deps.storage;
+
+            // Get total flows (deployed flows)
+            let flows = storage.list_all_deployed_flows().await?;
+            let total_flows = flows.len();
+
+            // Get all runs with a reasonable limit for stats
+            let all_runs = storage.list_runs(1000, 0).await?;
+            let total_runs = all_runs.len();
+
+            // Count active runs (running or pending)
+            let active_runs = all_runs
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.status,
+                        crate::model::RunStatus::Running | crate::model::RunStatus::Pending
+                    )
+                })
+                .count();
+
+            // Count runs awaiting events
+            let awaiting_events = all_runs
+                .iter()
+                .filter(|r| matches!(r.status, crate::model::RunStatus::Waiting))
+                .count();
+
+            // Calculate success rate
+            let completed_runs = all_runs
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.status,
+                        crate::model::RunStatus::Succeeded | crate::model::RunStatus::Failed
+                    )
+                })
+                .count();
+
+            let successful_runs = all_runs
+                .iter()
+                .filter(|r| matches!(r.status, crate::model::RunStatus::Succeeded))
+                .count();
+
+            let success_rate = if completed_runs > 0 {
+                successful_runs as f64 / completed_runs as f64
+            } else {
+                0.0
+            };
+
+            // Get recent activity (last 10 runs)
+            let mut recent_runs = all_runs.clone();
+            recent_runs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+            let recent_activity: Vec<RecentActivity> = recent_runs
+                .iter()
+                .take(10)
+                .map(|r| RecentActivity {
+                    timestamp: r.started_at.to_rfc3339(),
+                    flow_name: r.flow_name.to_string(),
+                    status: format!("{:?}", r.status).to_lowercase(),
+                })
+                .collect();
+
+            Ok(DashboardStats {
+                total_flows,
+                total_runs,
+                active_runs,
+                awaiting_events,
+                success_rate,
+                recent_activity,
+            })
         }
     }
 

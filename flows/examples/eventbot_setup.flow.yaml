@@ -1,0 +1,56 @@
+# Event Bot Setup Helper
+#
+# This flow creates the Google Sheet with proper structure for tracking
+# Run this ONCE before deploying the main eventbot flow
+#
+# Usage: flow run eventbot_setup
+
+name: eventbot_setup
+description: Create Google Sheet for event bot tracking
+version: 1.0.0
+on: cli.manual
+
+steps:
+  # ============================================================================
+  # STEP 1: Create Google Sheet
+  # ============================================================================
+  - id: create_sheet
+    use: google_sheets.create
+    with:
+      properties:
+        title: "Sarah & John Wedding - Event Bot Tracking"
+
+  # ============================================================================
+  # STEP 2: Add Headers to Questions Tab
+  # ============================================================================
+  - id: add_headers
+    use: google_sheets.values.update
+    with:
+      spreadsheetId: "{{ steps.create_sheet.spreadsheetId }}"
+      range: "Sheet1!A1:D1"
+      values:
+        - - "Phone"
+          - "Timestamp"
+          - "Question"
+          - "Response"
+
+  # ============================================================================
+  # STEP 3: Output Sheet Information
+  # ============================================================================
+  - id: output_info
+    use: core.echo
+    with:
+      message: |
+        ✅ Google Sheet created successfully!
+
+        Spreadsheet ID: {{ steps.create_sheet.spreadsheetId }}
+        URL: {{ steps.create_sheet.spreadsheetUrl }}
+
+        Next steps:
+        1. Copy the Spreadsheet ID above
+        2. Open flows/examples/eventbot.flow.yaml
+        3. Replace "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID" with: {{ steps.create_sheet.spreadsheetId }}
+        4. Update your Twilio phone number in the flow
+        5. Deploy: flow deploy eventbot
+      spreadsheet_id: "{{ steps.create_sheet.spreadsheetId }}"
+      spreadsheet_url: "{{ steps.create_sheet.spreadsheetUrl }}"
