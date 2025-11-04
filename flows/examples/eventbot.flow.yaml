@@ -67,7 +67,7 @@ steps:
       max_tokens: 500
       temperature: 0.7
       system: |
-        You are a helpful, friendly event assistant for Sarah & John's Wedding.
+        You are a helpful, friendly event assistant for an event.
 
         Your role:
         - Answer guest questions about the event using the details below
