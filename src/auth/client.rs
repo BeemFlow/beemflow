@@ -423,6 +423,99 @@ impl OAuthClientManager {
         Ok(())
     }
 
+    /// Exchange client credentials for access token (2-legged OAuth)
+    ///
+    /// This is for machine-to-machine authentication without user interaction.
+    /// Instead of authorization code flow, directly exchanges client ID and secret
+    /// for an access token.
+    ///
+    /// # Use Cases
+    /// - Automated workflows (e.g., scheduled tasks)
+    /// - Server-to-server API calls
+    /// - Service accounts
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use beemflow::auth::OAuthClientManager;
+    /// # use std::sync::Arc;
+    /// # async fn example(client: Arc<OAuthClientManager>) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Get token using client credentials (no user interaction)
+    /// let token = client.get_client_credentials_token("digikey", "default", &[]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_client_credentials_token(
+        &self,
+        provider_id: &str,
+        integration: &str,
+        scopes: &[&str],
+    ) -> Result<OAuthCredential> {
+        // Get provider configuration from registry or storage
+        let config = self.get_provider(provider_id).await?;
+
+        // Build OAuth client using oauth2 crate
+        let client = BasicClient::new(ClientId::new(config.client_id))
+            .set_client_secret(ClientSecret::new(config.client_secret))
+            .set_auth_uri(
+                AuthUrl::new(config.auth_url)
+                    .map_err(|e| BeemFlowError::auth(format!("Invalid auth URL: {}", e)))?,
+            )
+            .set_token_uri(
+                TokenUrl::new(config.token_url)
+                    .map_err(|e| BeemFlowError::auth(format!("Invalid token URL: {}", e)))?,
+            );
+
+        // Exchange client credentials for token
+        let mut request = client.exchange_client_credentials();
+
+        // Add scopes if provided
+        for scope in scopes {
+            request = request.add_scope(Scope::new(scope.to_string()));
+        }
+
+        let token_result = request
+            .request_async(&self.http_client)
+            .await
+            .map_err(|e| {
+                BeemFlowError::auth(format!("Client credentials exchange failed: {}", e))
+            })?;
+
+        // Extract token details
+        let now = Utc::now();
+        let expires_at = token_result
+            .expires_in()
+            .map(|duration| now + Duration::seconds(duration.as_secs() as i64));
+
+        let credential = OAuthCredential {
+            id: Uuid::new_v4().to_string(),
+            provider: provider_id.to_string(),
+            integration: integration.to_string(),
+            access_token: token_result.access_token().secret().clone(),
+            refresh_token: token_result.refresh_token().map(|t| t.secret().clone()),
+            expires_at,
+            scope: token_result.scopes().map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
+            created_at: now,
+            updated_at: now,
+        };
+
+        // Save credential
+        self.storage.save_oauth_credential(&credential).await?;
+
+        tracing::info!(
+            "Successfully obtained client credentials token for {}:{}",
+            provider_id,
+            integration
+        );
+
+        Ok(credential)
+    }
+
     /// Check if a credential needs token refresh
     fn needs_refresh(cred: &OAuthCredential) -> bool {
         if let Some(expires_at) = cred.expires_at {
