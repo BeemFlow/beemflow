@@ -508,6 +508,11 @@ pub fn create_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
             "/oauth/authorize/{provider}",
             get(authorize_oauth_provider_handler),
         )
+        // Add POST route for React frontend compatibility
+        .route(
+            "/oauth/providers/{provider}/connect",
+            post(connect_oauth_provider_post_handler),
+        )
         .route("/oauth/callback/api", get(oauth_api_callback_handler))
         .with_state(state)
 }
@@ -568,7 +573,10 @@ fn error_html(title: &str, heading: &str, message: Option<&str>, retry_link: boo
 // OAUTH CLIENT UI HANDLERS
 // ============================================================================
 
-async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> impl IntoResponse {
+async fn oauth_providers_handler(
+    State(state): State<Arc<OAuthClientState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     // Fetch providers from registry and storage
     let registry_providers = match state.registry_manager.list_oauth_providers().await {
         Ok(p) => p,
@@ -628,7 +636,21 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
         }));
     }
 
-    // Render template with provider data
+    // Check if client wants JSON (for API requests)
+    let wants_json = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("application/json"))
+        .unwrap_or(false);
+
+    if wants_json {
+        // Return JSON for API clients (React frontend)
+        return axum::Json(json!({
+            "providers": provider_data
+        })).into_response();
+    }
+
+    // Render template with provider data (for browser HTML requests)
     let template_data = json!({
         "providers": provider_data
     });
@@ -637,11 +659,11 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
         .template_renderer
         .render_json("providers", &template_data)
     {
-        Ok(html) => Html(html),
+        Ok(html) => Html(html).into_response(),
         Err(e) => {
             tracing::error!("Failed to render providers template: {}", e);
             let message = format!("{}", e);
-            Html(error_html("Error", "Template Error", Some(&message), false))
+            Html(error_html("Error", "Template Error", Some(&message), false)).into_response()
         }
     }
 }
@@ -650,7 +672,7 @@ async fn oauth_success_handler() -> impl IntoResponse {
     Html(include_str!("../../static/oauth/success.html"))
 }
 
-async fn oauth_callback_handler(
+pub async fn oauth_callback_handler(
     State(state): State<Arc<OAuthClientState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -1215,6 +1237,72 @@ async fn authorize_oauth_provider_handler(
     Ok(Json(json!({
         "authorization_url": auth_url,
         "expires_at": session.expires_at,
+    })))
+}
+
+/// Handle OAuth connection initiation (POST version for React frontend)
+async fn connect_oauth_provider_post_handler(
+    State(state): State<Arc<OAuthClientState>>,
+    AxumPath(provider_id): AxumPath<String>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, StatusCode> {
+    // Extract scopes from JSON body
+    let scopes: Vec<&str> = body
+        .get("scopes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["read"]);
+
+    // Get integration name (optional)
+    let integration = body.get("integration").and_then(|v| v.as_str());
+
+    // Create session first (needed for encoding session_id into state)
+    let session = state
+        .session_store
+        .create_session("oauth_flow", chrono::Duration::minutes(10));
+
+    // Generate random CSRF token for security
+    let csrf_token = oauth2::CsrfToken::new_random();
+    let csrf_secret = csrf_token.secret().clone();
+
+    // Encode session ID into state parameter for stateless callback handling
+    let combined_state = encode_oauth_state(&csrf_secret, &session.id);
+
+    // Build authorization URL with custom state
+    let (auth_url, code_verifier) = state
+        .oauth_client
+        .build_auth_url(&provider_id, &scopes, integration, Some(combined_state))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Store CSRF token in session for callback validation
+    state
+        .session_store
+        .update_session(&session.id, "oauth_state".to_string(), json!(csrf_secret));
+    state.session_store.update_session(
+        &session.id,
+        "oauth_code_verifier".to_string(),
+        json!(code_verifier),
+    );
+    state.session_store.update_session(
+        &session.id,
+        "oauth_provider_id".to_string(),
+        json!(provider_id.clone()),
+    );
+    state.session_store.update_session(
+        &session.id,
+        "oauth_integration".to_string(),
+        json!(integration.unwrap_or("default")),
+    );
+
+    // Return response matching frontend expectations
+    Ok(Json(json!({
+        "auth_url": auth_url,
+        "provider_id": provider_id,
     })))
 }
 
