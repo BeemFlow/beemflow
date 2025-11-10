@@ -86,8 +86,9 @@ async fn test_password_hashing_and_verification() {
 
 #[tokio::test]
 async fn test_password_strength_validation() {
-    // Too short
+    // Too short (< 12 chars)
     assert!(validate_password_strength("short").is_err());
+    assert!(validate_password_strength("11char-pass").is_err()); // 11 chars
 
     // Too long
     let too_long = "a".repeat(129);
@@ -95,11 +96,13 @@ async fn test_password_strength_validation() {
 
     // Common weak password
     assert!(validate_password_strength("password").is_err());
-    assert!(validate_password_strength("12345678").is_err());
+    assert!(validate_password_strength("123456789012").is_err());
+    assert!(validate_password_strength("passwordpassword").is_err());
 
-    // Valid passwords
-    assert!(validate_password_strength("MySecure123").is_ok());
-    assert!(validate_password_strength("abcdefgh").is_ok());
+    // Valid passwords (12+ chars)
+    assert!(validate_password_strength("MySecure1234").is_ok()); // 12 chars
+    assert!(validate_password_strength("abcdefghijkl").is_ok()); // 12 chars
+    assert!(validate_password_strength("correct-horse-battery-staple").is_ok()); // Long passphrase
 }
 
 // ============================================================================
