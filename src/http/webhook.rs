@@ -15,6 +15,7 @@ use axum::{
     routing::post,
 };
 use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -40,25 +41,50 @@ pub(crate) struct ParsedEvent {
     pub(crate) data: HashMap<String, Value>,
 }
 
+/// Webhook path parameters
+#[derive(Deserialize)]
+pub struct WebhookPath {
+    pub tenant_id: String,
+    pub topic: String,
+}
+
 /// Create webhook routes
 pub fn create_webhook_routes() -> Router<WebhookManagerState> {
-    Router::new().route("/{provider}", post(handle_webhook))
+    Router::new().route("/{tenant_id}/{topic}", post(handle_webhook))
 }
 
 /// Handle incoming webhook
 async fn handle_webhook(
     State(state): State<WebhookManagerState>,
-    Path(provider): Path<String>,
+    Path(path): Path<WebhookPath>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    tracing::debug!("Webhook received: provider={}", provider);
+    let tenant_id = &path.tenant_id;
+    let topic = &path.topic;
 
-    // Find webhook configuration from registry
-    let webhook_config = match find_webhook_config(&state.registry_manager, &provider).await {
+    tracing::debug!("Webhook received: tenant_id={}, topic={}", tenant_id, topic);
+
+    // Verify tenant exists before processing webhook
+    let tenant = match state.storage.get_tenant(tenant_id).await {
+        Ok(Some(tenant)) => tenant,
+        Ok(None) => {
+            tracing::warn!("Webhook rejected: tenant not found: {}", tenant_id);
+            return (StatusCode::NOT_FOUND, "Tenant not found").into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to verify tenant {}: {}", tenant_id, e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+
+    tracing::debug!("Tenant verified: {} ({})", tenant.name, tenant.id);
+
+    // Find webhook configuration from registry (topic maps to provider name)
+    let webhook_config = match find_webhook_config(&state.registry_manager, topic).await {
         Some(config) => config,
         None => {
-            tracing::warn!("Webhook not found: {}", provider);
+            tracing::warn!("Webhook not found for topic: {}", topic);
             return (StatusCode::NOT_FOUND, "Webhook not configured").into_response();
         }
     };
@@ -78,7 +104,11 @@ async fn handle_webhook(
         if !secret_value.is_empty()
             && !verify_webhook_signature(&webhook_config, &headers, &body, &secret_value)
         {
-            tracing::error!("Invalid webhook signature for {}", provider);
+            tracing::error!(
+                "Invalid webhook signature for tenant {} topic {}",
+                tenant_id,
+                topic
+            );
             return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
         }
     }
@@ -140,10 +170,14 @@ async fn handle_webhook(
     let mut resumed_count = 0;
 
     for event in &events {
-        tracing::info!("Processing webhook event: {}", event.topic);
+        tracing::info!(
+            "Processing webhook event: {} for tenant {}",
+            event.topic,
+            tenant_id
+        );
 
         // Use Case 1: Trigger new workflow executions
-        match trigger_flows_for_event(&state, event).await {
+        match trigger_flows_for_event(&state, tenant_id, event).await {
             Ok(count) => {
                 triggered_count += count;
                 tracing::info!("Event {} triggered {} new flow(s)", event.topic, count);
@@ -180,13 +214,21 @@ async fn handle_webhook(
 /// Trigger new flow executions for matching deployed flows (Use Case 1)
 async fn trigger_flows_for_event(
     state: &WebhookManagerState,
+    tenant_id: &str,
     event: &ParsedEvent,
 ) -> Result<usize> {
     // Fast O(log N) lookup: Query only flow names (not content)
-    let flow_names = state.storage.find_flow_names_by_topic(&event.topic).await?;
+    let flow_names = state
+        .storage
+        .find_flow_names_by_topic(tenant_id, &event.topic)
+        .await?;
 
     if flow_names.is_empty() {
-        tracing::debug!("No flows registered for topic: {}", event.topic);
+        tracing::debug!(
+            "No flows registered for topic: {} in tenant: {}",
+            event.topic,
+            tenant_id
+        );
         return Ok(0);
     }
 
@@ -195,14 +237,37 @@ async fn trigger_flows_for_event(
     // Use engine.start() - same code path as HTTP/CLI/MCP operations
     for flow_name in flow_names {
         tracing::info!(
-            "Triggering flow '{}' for webhook topic '{}'",
+            "Triggering flow '{}' for webhook topic '{}' in tenant '{}'",
             flow_name,
-            event.topic
+            event.topic,
+            tenant_id
         );
+
+        // Use deployer's user_id for OAuth credential resolution
+        let deployed_by = state
+            .storage
+            .get_deployed_by(tenant_id, &flow_name)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    flow = %flow_name,
+                    "No deployer found for flow, using default user"
+                );
+                crate::constants::DEFAULT_USER_ID.to_string()
+            });
 
         match state
             .engine
-            .start(&flow_name, event.data.clone(), false)
+            .start(
+                &flow_name,
+                event.data.clone(),
+                false,
+                &deployed_by,
+                tenant_id,
+            )
             .await
         {
             Ok(_) => {

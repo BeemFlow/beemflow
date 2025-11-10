@@ -88,12 +88,14 @@ impl SqliteStorage {
             event: serde_json::from_str(&row.try_get::<String, _>("event")?)?,
             vars: serde_json::from_str(&row.try_get::<String, _>("vars")?)?,
             status: parse_run_status(&row.try_get::<String, _>("status")?),
-            started_at: DateTime::from_timestamp(row.try_get("started_at")?, 0)
+            started_at: DateTime::from_timestamp_millis(row.try_get("started_at")?)
                 .unwrap_or_else(Utc::now),
             ended_at: row
                 .try_get::<Option<i64>, _>("ended_at")?
-                .map(|ts| DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now)),
+                .and_then(DateTime::from_timestamp_millis),
             steps: None,
+            tenant_id: row.try_get("tenant_id")?,
+            triggered_by_user_id: row.try_get("triggered_by_user_id")?,
         })
     }
 
@@ -103,11 +105,11 @@ impl SqliteStorage {
             run_id: Uuid::parse_str(&row.try_get::<String, _>("run_id")?)?,
             step_name: row.try_get::<String, _>("step_name")?.into(),
             status: parse_step_status(&row.try_get::<String, _>("status")?),
-            started_at: DateTime::from_timestamp(row.try_get("started_at")?, 0)
+            started_at: DateTime::from_timestamp_millis(row.try_get("started_at")?)
                 .unwrap_or_else(Utc::now),
             ended_at: row
                 .try_get::<Option<i64>, _>("ended_at")?
-                .map(|ts| DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now)),
+                .and_then(DateTime::from_timestamp_millis),
             outputs: serde_json::from_str(&row.try_get::<String, _>("outputs")?)?,
             error: row.try_get("error")?,
         })
@@ -119,35 +121,40 @@ impl RunStorage for SqliteStorage {
     // Run methods
     async fn save_run(&self, run: &Run) -> Result<()> {
         sqlx::query(
-            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 flow_name = excluded.flow_name,
                 event = excluded.event,
                 vars = excluded.vars,
                 status = excluded.status,
                 started_at = excluded.started_at,
-                ended_at = excluded.ended_at",
+                ended_at = excluded.ended_at,
+                tenant_id = excluded.tenant_id,
+                triggered_by_user_id = excluded.triggered_by_user_id",
         )
         .bind(run.id.to_string())
         .bind(run.flow_name.as_str())
         .bind(serde_json::to_string(&run.event)?)
         .bind(serde_json::to_string(&run.vars)?)
         .bind(run_status_to_str(run.status))
-        .bind(run.started_at.timestamp())
-        .bind(run.ended_at.map(|dt| dt.timestamp()))
+        .bind(run.started_at.timestamp_millis())
+        .bind(run.ended_at.map(|dt| dt.timestamp_millis()))
+        .bind(&run.tenant_id)
+        .bind(&run.triggered_by_user_id)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn get_run(&self, id: Uuid) -> Result<Option<Run>> {
+    async fn get_run(&self, id: Uuid, tenant_id: &str) -> Result<Option<Run>> {
         let row = sqlx::query(
-            "SELECT id, flow_name, event, vars, status, started_at, ended_at 
-             FROM runs WHERE id = ?",
+            "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
+             FROM runs WHERE id = ? AND tenant_id = ?",
         )
         .bind(id.to_string())
+        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -157,16 +164,18 @@ impl RunStorage for SqliteStorage {
         }
     }
 
-    async fn list_runs(&self, limit: usize, offset: usize) -> Result<Vec<Run>> {
+    async fn list_runs(&self, tenant_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>> {
         // Cap limit at 10,000 to prevent unbounded queries
         let capped_limit = limit.min(10_000);
 
         let rows = sqlx::query(
-            "SELECT id, flow_name, event, vars, status, started_at, ended_at
+            "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
              FROM runs
+             WHERE tenant_id = ?
              ORDER BY started_at DESC
              LIMIT ? OFFSET ?",
         )
+        .bind(tenant_id)
         .bind(capped_limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.pool)
@@ -183,6 +192,7 @@ impl RunStorage for SqliteStorage {
 
     async fn list_runs_by_flow_and_status(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         status: RunStatus,
         exclude_id: Option<Uuid>,
@@ -193,24 +203,26 @@ impl RunStorage for SqliteStorage {
         // Build query with optional exclude clause
         let query = if let Some(id) = exclude_id {
             sqlx::query(
-                "SELECT id, flow_name, event, vars, status, started_at, ended_at
+                "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
                  FROM runs
-                 WHERE flow_name = ? AND status = ? AND id != ?
+                 WHERE tenant_id = ? AND flow_name = ? AND status = ? AND id != ?
                  ORDER BY started_at DESC
                  LIMIT ?",
             )
+            .bind(tenant_id)
             .bind(flow_name)
             .bind(status_str)
             .bind(id.to_string())
             .bind(limit as i64)
         } else {
             sqlx::query(
-                "SELECT id, flow_name, event, vars, status, started_at, ended_at
+                "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
                  FROM runs
-                 WHERE flow_name = ? AND status = ?
+                 WHERE tenant_id = ? AND flow_name = ? AND status = ?
                  ORDER BY started_at DESC
                  LIMIT ?",
             )
+            .bind(tenant_id)
             .bind(flow_name)
             .bind(status_str)
             .bind(limit as i64)
@@ -227,14 +239,21 @@ impl RunStorage for SqliteStorage {
         Ok(runs)
     }
 
-    async fn delete_run(&self, id: Uuid) -> Result<()> {
+    async fn delete_run(&self, id: Uuid, tenant_id: &str) -> Result<()> {
+        // Verify run belongs to tenant before deleting
+        let run = self.get_run(id, tenant_id).await?;
+        if run.is_none() {
+            return Err(BeemFlowError::not_found("run", id.to_string()));
+        }
+
         sqlx::query("DELETE FROM steps WHERE run_id = ?")
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("DELETE FROM runs WHERE id = ?")
+        sqlx::query("DELETE FROM runs WHERE id = ? AND tenant_id = ?")
             .bind(id.to_string())
+            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
 
@@ -243,8 +262,8 @@ impl RunStorage for SqliteStorage {
 
     async fn try_insert_run(&self, run: &Run) -> Result<bool> {
         let result = sqlx::query(
-            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO NOTHING",
         )
         .bind(run.id.to_string())
@@ -252,8 +271,10 @@ impl RunStorage for SqliteStorage {
         .bind(serde_json::to_string(&run.event)?)
         .bind(serde_json::to_string(&run.vars)?)
         .bind(run_status_to_str(run.status))
-        .bind(run.started_at.timestamp())
-        .bind(run.ended_at.map(|dt| dt.timestamp()))
+        .bind(run.started_at.timestamp_millis())
+        .bind(run.ended_at.map(|dt| dt.timestamp_millis()))
+        .bind(&run.tenant_id)
+        .bind(&run.triggered_by_user_id)
         .execute(&self.pool)
         .await?;
 
@@ -279,8 +300,8 @@ impl RunStorage for SqliteStorage {
         .bind(step.run_id.to_string())
         .bind(step.step_name.as_str())
         .bind(step_status_to_str(step.status))
-        .bind(step.started_at.timestamp())
-        .bind(step.ended_at.map(|dt| dt.timestamp()))
+        .bind(step.started_at.timestamp_millis())
+        .bind(step.ended_at.map(|dt| dt.timestamp_millis()))
         .bind(serde_json::to_string(&step.outputs)?)
         .bind(&step.error)
         .execute(&self.pool)
@@ -340,16 +361,20 @@ impl StateStorage for SqliteStorage {
         token: &str,
         source: &str,
         data: serde_json::Value,
+        tenant_id: &str,
+        user_id: &str,
     ) -> Result<()> {
         let data_json = serde_json::to_string(&data)?;
 
         sqlx::query(
-            "INSERT INTO paused_runs (token, source, data) VALUES (?, ?, ?)
-             ON CONFLICT(token) DO UPDATE SET source = excluded.source, data = excluded.data",
+            "INSERT INTO paused_runs (token, source, data, tenant_id, user_id) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(token) DO UPDATE SET source = excluded.source, data = excluded.data, tenant_id = excluded.tenant_id, user_id = excluded.user_id",
         )
         .bind(token)
         .bind(source)
         .bind(data_json)
+        .bind(tenant_id)
+        .bind(user_id)
         .execute(&self.pool)
         .await?;
 
@@ -425,11 +450,13 @@ impl FlowStorage for SqliteStorage {
     // Flow versioning methods
     async fn deploy_flow_version(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         version: &str,
         content: &str,
+        deployed_by_user_id: &str,
     ) -> Result<()> {
-        let now = Utc::now().timestamp();
+        let now = Utc::now().timestamp_millis();
 
         // Parse flow to extract trigger topics
         let topics = extract_topics_from_flow_yaml(content);
@@ -439,7 +466,8 @@ impl FlowStorage for SqliteStorage {
 
         // Check if this version already exists (enforce version immutability)
         let exists =
-            sqlx::query("SELECT 1 FROM flow_versions WHERE flow_name = ? AND version = ? LIMIT 1")
+            sqlx::query("SELECT 1 FROM flow_versions WHERE tenant_id = ? AND flow_name = ? AND version = ? LIMIT 1")
+                .bind(tenant_id)
                 .bind(flow_name)
                 .bind(version)
                 .fetch_optional(&mut *tx)
@@ -454,24 +482,27 @@ impl FlowStorage for SqliteStorage {
 
         // Save new version snapshot
         sqlx::query(
-            "INSERT INTO flow_versions (flow_name, version, content, deployed_at)
-             VALUES (?, ?, ?, ?)",
+            "INSERT INTO flow_versions (tenant_id, flow_name, version, content, deployed_at, deployed_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(tenant_id)
         .bind(flow_name)
         .bind(version)
         .bind(content)
         .bind(now)
+        .bind(deployed_by_user_id)
         .execute(&mut *tx)
         .await?;
 
         // Update deployed version pointer
         sqlx::query(
-            "INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
-             VALUES (?, ?, ?)
-             ON CONFLICT(flow_name) DO UPDATE SET
+            "INSERT INTO deployed_flows (tenant_id, flow_name, deployed_version, deployed_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(tenant_id, flow_name) DO UPDATE SET
                 deployed_version = excluded.deployed_version,
                 deployed_at = excluded.deployed_at",
         )
+        .bind(tenant_id)
         .bind(flow_name)
         .bind(version)
         .bind(now)
@@ -482,10 +513,11 @@ impl FlowStorage for SqliteStorage {
         // Note: No need to delete - version is new (checked above)
         for topic in topics {
             sqlx::query(
-                "INSERT INTO flow_triggers (flow_name, version, topic)
-                 VALUES (?, ?, ?)
+                "INSERT INTO flow_triggers (tenant_id, flow_name, version, topic)
+                 VALUES (?, ?, ?, ?)
                  ON CONFLICT DO NOTHING",
             )
+            .bind(tenant_id)
             .bind(flow_name)
             .bind(version)
             .bind(&topic)
@@ -497,16 +529,22 @@ impl FlowStorage for SqliteStorage {
         Ok(())
     }
 
-    async fn set_deployed_version(&self, flow_name: &str, version: &str) -> Result<()> {
-        let now = Utc::now().timestamp();
+    async fn set_deployed_version(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+        version: &str,
+    ) -> Result<()> {
+        let now = Utc::now().timestamp_millis();
 
         sqlx::query(
-            "INSERT INTO deployed_flows (flow_name, deployed_version, deployed_at)
-             VALUES (?, ?, ?)
-             ON CONFLICT(flow_name) DO UPDATE SET
+            "INSERT INTO deployed_flows (tenant_id, flow_name, deployed_version, deployed_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(tenant_id, flow_name) DO UPDATE SET
                 deployed_version = excluded.deployed_version,
                 deployed_at = excluded.deployed_at",
         )
+        .bind(tenant_id)
         .bind(flow_name)
         .bind(version)
         .bind(now)
@@ -516,22 +554,31 @@ impl FlowStorage for SqliteStorage {
         Ok(())
     }
 
-    async fn get_deployed_version(&self, flow_name: &str) -> Result<Option<String>> {
-        let row = sqlx::query("SELECT deployed_version FROM deployed_flows WHERE flow_name = ?")
-            .bind(flow_name)
-            .fetch_optional(&self.pool)
-            .await?;
+    async fn get_deployed_version(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT deployed_version FROM deployed_flows WHERE tenant_id = ? AND flow_name = ?",
+        )
+        .bind(tenant_id)
+        .bind(flow_name)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.and_then(|r| r.try_get("deployed_version").ok()))
     }
 
     async fn get_flow_version_content(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         version: &str,
     ) -> Result<Option<String>> {
         let row =
-            sqlx::query("SELECT content FROM flow_versions WHERE flow_name = ? AND version = ?")
+            sqlx::query("SELECT content FROM flow_versions WHERE tenant_id = ? AND flow_name = ? AND version = ?")
+                .bind(tenant_id)
                 .bind(flow_name)
                 .bind(version)
                 .fetch_optional(&self.pool)
@@ -540,15 +587,20 @@ impl FlowStorage for SqliteStorage {
         Ok(row.and_then(|r| r.try_get("content").ok()))
     }
 
-    async fn list_flow_versions(&self, flow_name: &str) -> Result<Vec<FlowSnapshot>> {
+    async fn list_flow_versions(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+    ) -> Result<Vec<FlowSnapshot>> {
         let rows = sqlx::query(
             "SELECT v.version, v.deployed_at,
                 CASE WHEN d.deployed_version = v.version THEN 1 ELSE 0 END as is_live
              FROM flow_versions v
-             LEFT JOIN deployed_flows d ON v.flow_name = d.flow_name
-             WHERE v.flow_name = ?
+             LEFT JOIN deployed_flows d ON v.tenant_id = d.tenant_id AND v.flow_name = d.flow_name
+             WHERE v.tenant_id = ? AND v.flow_name = ?
              ORDER BY v.deployed_at DESC",
         )
+        .bind(tenant_id)
         .bind(flow_name)
         .fetch_all(&self.pool)
         .await?;
@@ -562,7 +614,8 @@ impl FlowStorage for SqliteStorage {
             snapshots.push(FlowSnapshot {
                 flow_name: flow_name.to_string(),
                 version,
-                deployed_at: DateTime::from_timestamp(deployed_at_unix, 0).unwrap_or_else(Utc::now),
+                deployed_at: DateTime::from_timestamp_millis(deployed_at_unix)
+                    .unwrap_or_else(Utc::now),
                 is_live: is_live == 1,
             });
         }
@@ -572,14 +625,16 @@ impl FlowStorage for SqliteStorage {
 
     async fn get_latest_deployed_version_from_history(
         &self,
+        tenant_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
         let row = sqlx::query(
             "SELECT version FROM flow_versions
-             WHERE flow_name = ?
+             WHERE tenant_id = ? AND flow_name = ?
              ORDER BY deployed_at DESC, version DESC
              LIMIT 1",
         )
+        .bind(tenant_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
         .await?;
@@ -587,22 +642,26 @@ impl FlowStorage for SqliteStorage {
         Ok(row.and_then(|r| r.try_get("version").ok()))
     }
 
-    async fn unset_deployed_version(&self, flow_name: &str) -> Result<()> {
-        sqlx::query("DELETE FROM deployed_flows WHERE flow_name = ?")
+    async fn unset_deployed_version(&self, tenant_id: &str, flow_name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM deployed_flows WHERE tenant_id = ? AND flow_name = ?")
+            .bind(tenant_id)
             .bind(flow_name)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    async fn list_all_deployed_flows(&self) -> Result<Vec<(String, String)>> {
+    async fn list_all_deployed_flows(&self, tenant_id: &str) -> Result<Vec<(String, String)>> {
         let rows = sqlx::query(
             "SELECT d.flow_name, v.content
              FROM deployed_flows d
              INNER JOIN flow_versions v
-               ON d.flow_name = v.flow_name
-               AND d.deployed_version = v.version",
+               ON d.tenant_id = v.tenant_id
+               AND d.flow_name = v.flow_name
+               AND d.deployed_version = v.version
+             WHERE d.tenant_id = ?",
         )
+        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -616,14 +675,15 @@ impl FlowStorage for SqliteStorage {
         Ok(result)
     }
 
-    async fn find_flow_names_by_topic(&self, topic: &str) -> Result<Vec<String>> {
+    async fn find_flow_names_by_topic(&self, tenant_id: &str, topic: &str) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT DISTINCT ft.flow_name
              FROM flow_triggers ft
-             INNER JOIN deployed_flows d ON ft.flow_name = d.flow_name AND ft.version = d.deployed_version
-             WHERE ft.topic = ?
+             INNER JOIN deployed_flows d ON ft.tenant_id = d.tenant_id AND ft.flow_name = d.flow_name AND ft.version = d.deployed_version
+             WHERE ft.tenant_id = ? AND ft.topic = ?
              ORDER BY ft.flow_name"
         )
+        .bind(tenant_id)
         .bind(topic)
         .fetch_all(&self.pool)
         .await?;
@@ -636,6 +696,7 @@ impl FlowStorage for SqliteStorage {
 
     async fn get_deployed_flows_content(
         &self,
+        tenant_id: &str,
         flow_names: &[String],
     ) -> Result<Vec<(String, String)>> {
         if flow_names.is_empty() {
@@ -652,12 +713,13 @@ impl FlowStorage for SqliteStorage {
         let query_str = format!(
             "SELECT df.flow_name, fv.content
              FROM deployed_flows df
-             INNER JOIN flow_versions fv ON df.flow_name = fv.flow_name AND df.deployed_version = fv.version
-             WHERE df.flow_name IN ({})",
+             INNER JOIN flow_versions fv ON df.tenant_id = fv.tenant_id AND df.flow_name = fv.flow_name AND df.deployed_version = fv.version
+             WHERE df.tenant_id = ? AND df.flow_name IN ({})",
             placeholders
         );
 
         let mut query = sqlx::query(&query_str);
+        query = query.bind(tenant_id);
         for name in flow_names {
             query = query.bind(name);
         }
@@ -668,28 +730,55 @@ impl FlowStorage for SqliteStorage {
             .map(|row| Ok((row.try_get("flow_name")?, row.try_get("content")?)))
             .collect()
     }
+
+    async fn get_deployed_by(&self, tenant_id: &str, flow_name: &str) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT fv.deployed_by_user_id
+             FROM deployed_flows df
+             INNER JOIN flow_versions fv
+               ON df.tenant_id = fv.tenant_id
+               AND df.flow_name = fv.flow_name
+               AND df.deployed_version = fv.version
+             WHERE df.tenant_id = ? AND df.flow_name = ?",
+        )
+        .bind(tenant_id)
+        .bind(flow_name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.try_get("deployed_by_user_id").ok()))
+    }
 }
 
 #[async_trait]
 impl OAuthStorage for SqliteStorage {
     // OAuth credential methods
     async fn save_oauth_credential(&self, credential: &OAuthCredential) -> Result<()> {
-        let now = Utc::now().timestamp();
+        let now = Utc::now().timestamp_millis();
+
+        // Encrypt tokens before storage (protects against database compromise)
+        let (encrypted_access, encrypted_refresh) =
+            crate::auth::TokenEncryption::encrypt_credential_tokens(
+                &credential.access_token,
+                &credential.refresh_token,
+            )?;
 
         sqlx::query(
             "INSERT OR REPLACE INTO oauth_credentials
-             (id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             (id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&credential.id)
         .bind(&credential.provider)
         .bind(&credential.integration)
-        .bind(&credential.access_token)
-        .bind(&credential.refresh_token)
-        .bind(credential.expires_at.map(|dt| dt.timestamp()))
+        .bind(encrypted_access.as_str())  // Store encrypted
+        .bind(encrypted_refresh.as_ref().map(|e| e.as_str()))  // Store encrypted
+        .bind(credential.expires_at.map(|dt| dt.timestamp_millis()))
         .bind(&credential.scope)
-        .bind(credential.created_at.timestamp())
+        .bind(credential.created_at.timestamp_millis())
         .bind(now)
+        .bind(&credential.user_id)
+        .bind(&credential.tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -700,19 +789,33 @@ impl OAuthStorage for SqliteStorage {
         &self,
         provider: &str,
         integration: &str,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<Option<OAuthCredential>> {
         let row = sqlx::query(
-            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at
-             FROM oauth_credentials 
-             WHERE provider = ? AND integration = ?"
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+             FROM oauth_credentials
+             WHERE provider = ? AND integration = ? AND user_id = ? AND tenant_id = ?"
         )
         .bind(provider)
         .bind(integration)
+        .bind(user_id)
+        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await?;
 
         match row {
             Some(row) => {
+                // Decrypt tokens after retrieval
+                let encrypted_access: String = row.try_get("access_token")?;
+                let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
+
+                let (access_token, refresh_token) =
+                    crate::auth::TokenEncryption::decrypt_credential_tokens(
+                        encrypted_access,
+                        encrypted_refresh,
+                    )?;
+
                 let created_at_unix: i64 = row.try_get("created_at")?;
                 let updated_at_unix: i64 = row.try_get("updated_at")?;
                 let expires_at_unix: Option<i64> = row.try_get("expires_at")?;
@@ -721,31 +824,50 @@ impl OAuthStorage for SqliteStorage {
                     id: row.try_get("id")?,
                     provider: row.try_get("provider")?,
                     integration: row.try_get("integration")?,
-                    access_token: row.try_get("access_token")?,
-                    refresh_token: row.try_get("refresh_token")?,
-                    expires_at: expires_at_unix.and_then(|ts| DateTime::from_timestamp(ts, 0)),
+                    access_token,
+                    refresh_token,
+                    expires_at: expires_at_unix.and_then(DateTime::from_timestamp_millis),
                     scope: row.try_get("scope")?,
-                    created_at: DateTime::from_timestamp(created_at_unix, 0)
+                    created_at: DateTime::from_timestamp_millis(created_at_unix)
                         .unwrap_or_else(Utc::now),
-                    updated_at: DateTime::from_timestamp(updated_at_unix, 0)
+                    updated_at: DateTime::from_timestamp_millis(updated_at_unix)
                         .unwrap_or_else(Utc::now),
+                    user_id: row.try_get("user_id")?,
+                    tenant_id: row.try_get("tenant_id")?,
                 }))
             }
             None => Ok(None),
         }
     }
 
-    async fn list_oauth_credentials(&self) -> Result<Vec<OAuthCredential>> {
+    async fn list_oauth_credentials(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+    ) -> Result<Vec<OAuthCredential>> {
         let rows = sqlx::query(
-            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at
-             FROM oauth_credentials 
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+             FROM oauth_credentials
+             WHERE user_id = ? AND tenant_id = ?
              ORDER BY created_at DESC"
         )
+        .bind(user_id)
+        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut creds = Vec::new();
         for row in rows {
+            // Decrypt tokens after retrieval
+            let encrypted_access: String = row.try_get("access_token")?;
+            let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
+
+            let (access_token, refresh_token) =
+                crate::auth::TokenEncryption::decrypt_credential_tokens(
+                    encrypted_access,
+                    encrypted_refresh,
+                )?;
+
             let created_at_unix: i64 = row.try_get("created_at")?;
             let updated_at_unix: i64 = row.try_get("updated_at")?;
             let expires_at_unix: Option<i64> = row.try_get("expires_at")?;
@@ -754,24 +876,78 @@ impl OAuthStorage for SqliteStorage {
                 id: row.try_get("id")?,
                 provider: row.try_get("provider")?,
                 integration: row.try_get("integration")?,
-                access_token: row.try_get("access_token")?,
-                refresh_token: row.try_get("refresh_token")?,
-                expires_at: expires_at_unix.and_then(|ts| DateTime::from_timestamp(ts, 0)),
+                access_token,
+                refresh_token,
+                expires_at: expires_at_unix.and_then(DateTime::from_timestamp_millis),
                 scope: row.try_get("scope")?,
-                created_at: DateTime::from_timestamp(created_at_unix, 0).unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp(updated_at_unix, 0).unwrap_or_else(Utc::now),
+                created_at: DateTime::from_timestamp_millis(created_at_unix)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(updated_at_unix)
+                    .unwrap_or_else(Utc::now),
+                user_id: row.try_get("user_id")?,
+                tenant_id: row.try_get("tenant_id")?,
             });
         }
 
         Ok(creds)
     }
 
-    async fn delete_oauth_credential(&self, id: &str) -> Result<()> {
-        // Idempotent delete - don't error if credential doesn't exist
-        sqlx::query("DELETE FROM oauth_credentials WHERE id = ?")
+    async fn get_oauth_credential_by_id(
+        &self,
+        id: &str,
+        tenant_id: &str,
+    ) -> Result<Option<OAuthCredential>> {
+        let row = sqlx::query(
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+             FROM oauth_credentials
+             WHERE id = ? AND tenant_id = ?"
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            // Decrypt tokens
+            let (access_token, refresh_token) =
+                crate::auth::TokenEncryption::decrypt_credential_tokens(
+                    row.try_get("access_token")?,
+                    row.try_get("refresh_token")?,
+                )?;
+
+            let expires_at: Option<i64> = row.try_get("expires_at")?;
+
+            Ok(Some(OAuthCredential {
+                id: row.try_get("id")?,
+                provider: row.try_get("provider")?,
+                integration: row.try_get("integration")?,
+                access_token,
+                refresh_token,
+                expires_at: expires_at.and_then(DateTime::from_timestamp_millis),
+                scope: row.try_get("scope")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                user_id: row.try_get("user_id")?,
+                tenant_id: row.try_get("tenant_id")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn delete_oauth_credential(&self, id: &str, tenant_id: &str) -> Result<()> {
+        // Defense in depth: Verify tenant ownership at storage layer
+        let result = sqlx::query("DELETE FROM oauth_credentials WHERE id = ? AND tenant_id = ?")
             .bind(id)
+            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(BeemFlowError::not_found("OAuth credential", id));
+        }
 
         Ok(())
     }
@@ -782,14 +958,18 @@ impl OAuthStorage for SqliteStorage {
         new_token: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        let now = Utc::now().timestamp();
+        // Encrypt new token before storage
+        let (encrypted, _) =
+            crate::auth::TokenEncryption::encrypt_credential_tokens(new_token, &None)?;
+
+        let now = Utc::now().timestamp_millis();
         let result = sqlx::query(
             "UPDATE oauth_credentials
              SET access_token = ?, expires_at = ?, updated_at = ?
              WHERE id = ?",
         )
-        .bind(new_token)
-        .bind(expires_at.map(|dt| dt.timestamp()))
+        .bind(encrypted.as_str()) // Store encrypted
+        .bind(expires_at.map(|dt| dt.timestamp_millis()))
         .bind(now)
         .bind(id)
         .execute(&self.pool)
@@ -806,21 +986,22 @@ impl OAuthStorage for SqliteStorage {
     async fn save_oauth_provider(&self, provider: &OAuthProvider) -> Result<()> {
         let scopes_json = serde_json::to_string(&provider.scopes)?;
         let auth_params_json = serde_json::to_string(&provider.auth_params)?;
-        let now = Utc::now().timestamp();
+        let now = Utc::now().timestamp_millis();
 
         sqlx::query(
             "INSERT OR REPLACE INTO oauth_providers
-             (id, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, name, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&provider.id)
+        .bind(&provider.name)
         .bind(&provider.client_id)
         .bind(&provider.client_secret)
         .bind(&provider.auth_url)
         .bind(&provider.token_url)
         .bind(scopes_json)
         .bind(auth_params_json)
-        .bind(provider.created_at.timestamp())
+        .bind(provider.created_at.timestamp_millis())
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -830,7 +1011,7 @@ impl OAuthStorage for SqliteStorage {
 
     async fn get_oauth_provider(&self, id: &str) -> Result<Option<OAuthProvider>> {
         let row = sqlx::query(
-            "SELECT id, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
+            "SELECT id, name, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
              FROM oauth_providers
              WHERE id = ?"
         )
@@ -847,16 +1028,16 @@ impl OAuthStorage for SqliteStorage {
 
                 Ok(Some(OAuthProvider {
                     id: row.try_get::<String, _>("id")?,
-                    name: row.try_get::<String, _>("id")?, // DB schema has no name column, duplicate id
+                    name: row.try_get::<String, _>("name")?,
                     client_id: row.try_get("client_id")?,
                     client_secret: row.try_get("client_secret")?,
                     auth_url: row.try_get("auth_url")?,
                     token_url: row.try_get("token_url")?,
                     scopes: serde_json::from_str(&scopes_json).ok(),
                     auth_params: serde_json::from_str(&auth_params_json).ok(),
-                    created_at: DateTime::from_timestamp(created_at_unix, 0)
+                    created_at: DateTime::from_timestamp_millis(created_at_unix)
                         .unwrap_or_else(Utc::now),
-                    updated_at: DateTime::from_timestamp(updated_at_unix, 0)
+                    updated_at: DateTime::from_timestamp_millis(updated_at_unix)
                         .unwrap_or_else(Utc::now),
                 }))
             }
@@ -866,7 +1047,7 @@ impl OAuthStorage for SqliteStorage {
 
     async fn list_oauth_providers(&self) -> Result<Vec<OAuthProvider>> {
         let rows = sqlx::query(
-            "SELECT id, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
+            "SELECT id, name, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
              FROM oauth_providers
              ORDER BY created_at DESC"
         )
@@ -882,15 +1063,17 @@ impl OAuthStorage for SqliteStorage {
 
             providers.push(OAuthProvider {
                 id: row.try_get::<String, _>("id")?,
-                name: row.try_get::<String, _>("id")?, // DB schema has no name column, duplicate id
+                name: row.try_get::<String, _>("name")?,
                 client_id: row.try_get("client_id")?,
                 client_secret: row.try_get("client_secret")?,
                 auth_url: row.try_get("auth_url")?,
                 token_url: row.try_get("token_url")?,
                 scopes: serde_json::from_str(&scopes_json).ok(),
                 auth_params: serde_json::from_str(&auth_params_json).ok(),
-                created_at: DateTime::from_timestamp(created_at_unix, 0).unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp(updated_at_unix, 0).unwrap_or_else(Utc::now),
+                created_at: DateTime::from_timestamp_millis(created_at_unix)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(updated_at_unix)
+                    .unwrap_or_else(Utc::now),
             });
         }
 
@@ -915,7 +1098,7 @@ impl OAuthStorage for SqliteStorage {
         let redirect_uris_json = serde_json::to_string(&client.redirect_uris)?;
         let grant_types_json = serde_json::to_string(&client.grant_types)?;
         let response_types_json = serde_json::to_string(&client.response_types)?;
-        let now = Utc::now().timestamp();
+        let now = Utc::now().timestamp_millis();
 
         sqlx::query(
             "INSERT OR REPLACE INTO oauth_clients
@@ -929,7 +1112,7 @@ impl OAuthStorage for SqliteStorage {
         .bind(grant_types_json)
         .bind(response_types_json)
         .bind(&client.scope)
-        .bind(client.created_at.timestamp())
+        .bind(client.created_at.timestamp_millis())
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -965,9 +1148,9 @@ impl OAuthStorage for SqliteStorage {
                     scope: row.try_get("scope")?,
                     client_uri: None,
                     logo_uri: None,
-                    created_at: DateTime::from_timestamp(created_at_unix, 0)
+                    created_at: DateTime::from_timestamp_millis(created_at_unix)
                         .unwrap_or_else(Utc::now),
-                    updated_at: DateTime::from_timestamp(updated_at_unix, 0)
+                    updated_at: DateTime::from_timestamp_millis(updated_at_unix)
                         .unwrap_or_else(Utc::now),
                 }))
             }
@@ -1007,9 +1190,9 @@ impl OAuthStorage for SqliteStorage {
                     scope: row.try_get("scope")?,
                     client_uri: None,
                     logo_uri: None,
-                    created_at: DateTime::from_timestamp(created_at_unix, 0)
+                    created_at: DateTime::from_timestamp_millis(created_at_unix)
                         .unwrap_or_else(Utc::now),
-                    updated_at: DateTime::from_timestamp(updated_at_unix, 0)
+                    updated_at: DateTime::from_timestamp_millis(updated_at_unix)
                         .unwrap_or_else(Utc::now),
                 });
             }
@@ -1033,7 +1216,7 @@ impl OAuthStorage for SqliteStorage {
 
     // OAuth token methods
     async fn save_oauth_token(&self, token: &OAuthToken) -> Result<()> {
-        let now = Utc::now().timestamp();
+        let now = Utc::now().timestamp_millis();
 
         sqlx::query(
             "INSERT OR REPLACE INTO oauth_tokens
@@ -1048,15 +1231,15 @@ impl OAuthStorage for SqliteStorage {
         .bind(&token.redirect_uri)
         .bind(&token.scope)
         .bind(&token.code)
-        .bind(token.code_create_at.map(|dt| dt.timestamp()))
+        .bind(token.code_create_at.map(|dt| dt.timestamp_millis()))
         .bind(token.code_expires_in.map(|d| d.as_secs() as i64))
         .bind(&token.code_challenge)
         .bind(&token.code_challenge_method)
         .bind(&token.access)
-        .bind(token.access_create_at.map(|dt| dt.timestamp()))
+        .bind(token.access_create_at.map(|dt| dt.timestamp_millis()))
         .bind(token.access_expires_in.map(|d| d.as_secs() as i64))
         .bind(&token.refresh)
-        .bind(token.refresh_create_at.map(|dt| dt.timestamp()))
+        .bind(token.refresh_create_at.map(|dt| dt.timestamp_millis()))
         .bind(token.refresh_expires_in.map(|d| d.as_secs() as i64))
         .bind(now)
         .bind(now)
@@ -1162,8 +1345,7 @@ impl SqliteStorage {
                     redirect_uri: row.try_get("redirect_uri")?,
                     scope: row.try_get("scope")?,
                     code: row.try_get("code")?,
-                    code_create_at: code_create_at_unix
-                        .and_then(|ts| DateTime::from_timestamp(ts, 0)),
+                    code_create_at: code_create_at_unix.and_then(DateTime::from_timestamp_millis),
                     code_expires_in: code_expires_in_secs.and_then(|s| {
                         if s >= 0 {
                             Some(std::time::Duration::from_secs(s as u64))
@@ -1175,7 +1357,7 @@ impl SqliteStorage {
                     code_challenge_method: row.try_get("code_challenge_method").ok(),
                     access: row.try_get("access")?,
                     access_create_at: access_create_at_unix
-                        .and_then(|ts| DateTime::from_timestamp(ts, 0)),
+                        .and_then(DateTime::from_timestamp_millis),
                     access_expires_in: access_expires_in_secs.and_then(|s| {
                         if s >= 0 {
                             Some(std::time::Duration::from_secs(s as u64))
@@ -1185,7 +1367,7 @@ impl SqliteStorage {
                     }),
                     refresh: row.try_get("refresh")?,
                     refresh_create_at: refresh_create_at_unix
-                        .and_then(|ts| DateTime::from_timestamp(ts, 0)),
+                        .and_then(DateTime::from_timestamp_millis),
                     refresh_expires_in: refresh_expires_in_secs.and_then(|s| {
                         if s >= 0 {
                             Some(std::time::Duration::from_secs(s as u64))
@@ -1197,5 +1379,687 @@ impl SqliteStorage {
             }
             None => Ok(None),
         }
+    }
+}
+
+// ============================================================================
+// AuthStorage Implementation
+// ============================================================================
+
+#[async_trait]
+impl crate::storage::AuthStorage for SqliteStorage {
+    // User methods
+    async fn create_user(&self, user: &crate::auth::User) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id, email, name, password_hash, email_verified, avatar_url,
+                mfa_enabled, mfa_secret, created_at, updated_at, last_login_at,
+                disabled, disabled_reason, disabled_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&user.id)
+        .bind(&user.email)
+        .bind(&user.name)
+        .bind(&user.password_hash)
+        .bind(user.email_verified as i32)
+        .bind(&user.avatar_url)
+        .bind(user.mfa_enabled as i32)
+        .bind(&user.mfa_secret)
+        .bind(user.created_at.timestamp_millis())
+        .bind(user.updated_at.timestamp_millis())
+        .bind(user.last_login_at.map(|t| t.timestamp_millis()))
+        .bind(user.disabled as i32)
+        .bind(&user.disabled_reason)
+        .bind(user.disabled_at.map(|t| t.timestamp_millis()))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_user(&self, id: &str) -> Result<Option<crate::auth::User>> {
+        let row = sqlx::query("SELECT * FROM users WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => Ok(Some(crate::auth::User {
+                id: row.try_get("id")?,
+                email: row.try_get("email")?,
+                name: row.try_get("name")?,
+                password_hash: row.try_get("password_hash")?,
+                email_verified: row.try_get::<i32, _>("email_verified")? != 0,
+                avatar_url: row.try_get("avatar_url")?,
+                mfa_enabled: row.try_get::<i32, _>("mfa_enabled")? != 0,
+                mfa_secret: row.try_get("mfa_secret")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                last_login_at: row
+                    .try_get::<Option<i64>, _>("last_login_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+                disabled_reason: row.try_get("disabled_reason")?,
+                disabled_at: row
+                    .try_get::<Option<i64>, _>("disabled_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<crate::auth::User>> {
+        let row = sqlx::query("SELECT * FROM users WHERE email = ? AND disabled = 0")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => Ok(Some(crate::auth::User {
+                id: row.try_get("id")?,
+                email: row.try_get("email")?,
+                name: row.try_get("name")?,
+                password_hash: row.try_get("password_hash")?,
+                email_verified: row.try_get::<i32, _>("email_verified")? != 0,
+                avatar_url: row.try_get("avatar_url")?,
+                mfa_enabled: row.try_get::<i32, _>("mfa_enabled")? != 0,
+                mfa_secret: row.try_get("mfa_secret")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                last_login_at: row
+                    .try_get::<Option<i64>, _>("last_login_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+                disabled_reason: row.try_get("disabled_reason")?,
+                disabled_at: row
+                    .try_get::<Option<i64>, _>("disabled_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_user(&self, user: &crate::auth::User) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE users SET
+                email = ?, name = ?, password_hash = ?, email_verified = ?,
+                avatar_url = ?, mfa_enabled = ?, mfa_secret = ?,
+                updated_at = ?, last_login_at = ?,
+                disabled = ?, disabled_reason = ?, disabled_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(&user.email)
+        .bind(&user.name)
+        .bind(&user.password_hash)
+        .bind(user.email_verified as i32)
+        .bind(&user.avatar_url)
+        .bind(user.mfa_enabled as i32)
+        .bind(&user.mfa_secret)
+        .bind(user.updated_at.timestamp_millis())
+        .bind(user.last_login_at.map(|t| t.timestamp_millis()))
+        .bind(user.disabled as i32)
+        .bind(&user.disabled_reason)
+        .bind(user.disabled_at.map(|t| t.timestamp_millis()))
+        .bind(&user.id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update_user_last_login(&self, user_id: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET last_login_at = ? WHERE id = ?")
+            .bind(Utc::now().timestamp_millis())
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // Tenant methods
+    async fn create_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO tenants (
+                id, name, slug, plan, plan_starts_at, plan_ends_at,
+                max_users, max_flows, max_runs_per_month, settings,
+                created_by_user_id, created_at, updated_at, disabled
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&tenant.id)
+        .bind(&tenant.name)
+        .bind(&tenant.slug)
+        .bind(&tenant.plan)
+        .bind(tenant.plan_starts_at.map(|t| t.timestamp_millis()))
+        .bind(tenant.plan_ends_at.map(|t| t.timestamp_millis()))
+        .bind(tenant.max_users)
+        .bind(tenant.max_flows)
+        .bind(tenant.max_runs_per_month)
+        .bind(tenant.settings.as_ref().map(|s| s.to_string()))
+        .bind(&tenant.created_by_user_id)
+        .bind(tenant.created_at.timestamp_millis())
+        .bind(tenant.updated_at.timestamp_millis())
+        .bind(tenant.disabled as i32)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_tenant(&self, id: &str) -> Result<Option<crate::auth::Tenant>> {
+        let row = sqlx::query("SELECT * FROM tenants WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => Ok(Some(crate::auth::Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                plan: row.try_get("plan")?,
+                plan_starts_at: row
+                    .try_get::<Option<i64>, _>("plan_starts_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                plan_ends_at: row
+                    .try_get::<Option<i64>, _>("plan_ends_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                max_users: row.try_get("max_users")?,
+                max_flows: row.try_get("max_flows")?,
+                max_runs_per_month: row.try_get("max_runs_per_month")?,
+                settings: row
+                    .try_get::<Option<String>, _>("settings")?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_by_user_id: row.try_get("created_by_user_id")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_tenant_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Tenant>> {
+        let row = sqlx::query("SELECT * FROM tenants WHERE slug = ?")
+            .bind(slug)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => Ok(Some(crate::auth::Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                plan: row.try_get("plan")?,
+                plan_starts_at: row
+                    .try_get::<Option<i64>, _>("plan_starts_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                plan_ends_at: row
+                    .try_get::<Option<i64>, _>("plan_ends_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                max_users: row.try_get("max_users")?,
+                max_flows: row.try_get("max_flows")?,
+                max_runs_per_month: row.try_get("max_runs_per_month")?,
+                settings: row
+                    .try_get::<Option<String>, _>("settings")?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_by_user_id: row.try_get("created_by_user_id")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE tenants SET
+                name = ?, slug = ?, plan = ?, plan_starts_at = ?, plan_ends_at = ?,
+                max_users = ?, max_flows = ?, max_runs_per_month = ?,
+                settings = ?, updated_at = ?, disabled = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(&tenant.name)
+        .bind(&tenant.slug)
+        .bind(&tenant.plan)
+        .bind(tenant.plan_starts_at.map(|t| t.timestamp_millis()))
+        .bind(tenant.plan_ends_at.map(|t| t.timestamp_millis()))
+        .bind(tenant.max_users)
+        .bind(tenant.max_flows)
+        .bind(tenant.max_runs_per_month)
+        .bind(tenant.settings.as_ref().map(|s| s.to_string()))
+        .bind(tenant.updated_at.timestamp_millis())
+        .bind(tenant.disabled as i32)
+        .bind(&tenant.id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn list_active_tenants(&self) -> Result<Vec<crate::auth::Tenant>> {
+        let rows = sqlx::query("SELECT * FROM tenants WHERE disabled = 0 ORDER BY created_at ASC")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut tenants = Vec::new();
+        for row in rows {
+            let settings_str: Option<String> = row.try_get("settings")?;
+            let settings = settings_str
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok());
+
+            tenants.push(crate::auth::Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                plan: row.try_get("plan")?,
+                plan_starts_at: row
+                    .try_get::<Option<i64>, _>("plan_starts_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                plan_ends_at: row
+                    .try_get::<Option<i64>, _>("plan_ends_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                max_users: row.try_get("max_users")?,
+                max_flows: row.try_get("max_flows")?,
+                max_runs_per_month: row.try_get("max_runs_per_month")?,
+                settings,
+                created_by_user_id: row.try_get("created_by_user_id")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+            });
+        }
+
+        Ok(tenants)
+    }
+
+    // Tenant membership methods
+    async fn create_tenant_member(&self, member: &crate::auth::TenantMember) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO tenant_members (
+                id, tenant_id, user_id, role,
+                invited_by_user_id, invited_at, joined_at, disabled
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&member.id)
+        .bind(&member.tenant_id)
+        .bind(&member.user_id)
+        .bind(member.role.as_str())
+        .bind(&member.invited_by_user_id)
+        .bind(member.invited_at.map(|t| t.timestamp_millis()))
+        .bind(member.joined_at.timestamp_millis())
+        .bind(member.disabled as i32)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_tenant_member(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> Result<Option<crate::auth::TenantMember>> {
+        let row = sqlx::query(
+            "SELECT * FROM tenant_members WHERE tenant_id = ? AND user_id = ? AND disabled = 0",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let role_str: String = row.try_get("role")?;
+                let role = role_str
+                    .parse::<crate::auth::Role>()
+                    .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
+
+                Ok(Some(crate::auth::TenantMember {
+                    id: row.try_get("id")?,
+                    tenant_id: row.try_get("tenant_id")?,
+                    user_id: row.try_get("user_id")?,
+                    role,
+                    invited_by_user_id: row.try_get("invited_by_user_id")?,
+                    invited_at: row
+                        .try_get::<Option<i64>, _>("invited_at")?
+                        .and_then(DateTime::from_timestamp_millis),
+                    joined_at: DateTime::from_timestamp_millis(row.try_get("joined_at")?)
+                        .unwrap_or_else(Utc::now),
+                    disabled: row.try_get::<i32, _>("disabled")? != 0,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_user_tenants(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(crate::auth::Tenant, crate::auth::Role)>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT t.*, tm.role
+            FROM tenants t
+            INNER JOIN tenant_members tm ON t.id = tm.tenant_id
+            WHERE tm.user_id = ? AND tm.disabled = 0 AND t.disabled = 0
+            ORDER BY tm.joined_at ASC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let role_str: String = row.try_get("role")?;
+            let role = role_str
+                .parse::<crate::auth::Role>()
+                .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
+
+            let tenant = crate::auth::Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                plan: row.try_get("plan")?,
+                plan_starts_at: row
+                    .try_get::<Option<i64>, _>("plan_starts_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                plan_ends_at: row
+                    .try_get::<Option<i64>, _>("plan_ends_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                max_users: row.try_get("max_users")?,
+                max_flows: row.try_get("max_flows")?,
+                max_runs_per_month: row.try_get("max_runs_per_month")?,
+                settings: row
+                    .try_get::<Option<String>, _>("settings")?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_by_user_id: row.try_get("created_by_user_id")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+            };
+
+            results.push((tenant, role));
+        }
+
+        Ok(results)
+    }
+
+    async fn list_tenant_members(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<(crate::auth::User, crate::auth::Role)>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT u.*, tm.role
+            FROM users u
+            INNER JOIN tenant_members tm ON u.id = tm.user_id
+            WHERE tm.tenant_id = ? AND tm.disabled = 0 AND u.disabled = 0
+            ORDER BY tm.joined_at ASC
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let role_str: String = row.try_get("role")?;
+            let role = role_str
+                .parse::<crate::auth::Role>()
+                .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
+
+            let user = crate::auth::User {
+                id: row.try_get("id")?,
+                email: row.try_get("email")?,
+                name: row.try_get("name")?,
+                password_hash: row.try_get("password_hash")?,
+                email_verified: row.try_get::<i32, _>("email_verified")? != 0,
+                avatar_url: row.try_get("avatar_url")?,
+                mfa_enabled: row.try_get::<i32, _>("mfa_enabled")? != 0,
+                mfa_secret: row.try_get("mfa_secret")?,
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
+                    .unwrap_or_else(Utc::now),
+                last_login_at: row
+                    .try_get::<Option<i64>, _>("last_login_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                disabled: row.try_get::<i32, _>("disabled")? != 0,
+                disabled_reason: row.try_get("disabled_reason")?,
+                disabled_at: row
+                    .try_get::<Option<i64>, _>("disabled_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+            };
+
+            results.push((user, role));
+        }
+
+        Ok(results)
+    }
+
+    async fn update_member_role(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        role: crate::auth::Role,
+    ) -> Result<()> {
+        sqlx::query("UPDATE tenant_members SET role = ? WHERE tenant_id = ? AND user_id = ?")
+            .bind(role.as_str())
+            .bind(tenant_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn remove_tenant_member(&self, tenant_id: &str, user_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM tenant_members WHERE tenant_id = ? AND user_id = ?")
+            .bind(tenant_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // Refresh token methods
+    async fn create_refresh_token(&self, token: &crate::auth::RefreshToken) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO refresh_tokens (
+                id, user_id, tenant_id, token_hash, expires_at,
+                revoked, revoked_at, created_at, last_used_at,
+                user_agent, client_ip
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&token.id)
+        .bind(&token.user_id)
+        .bind(&token.tenant_id)
+        .bind(&token.token_hash)
+        .bind(token.expires_at.timestamp_millis())
+        .bind(token.revoked as i32)
+        .bind(token.revoked_at.map(|t| t.timestamp_millis()))
+        .bind(token.created_at.timestamp_millis())
+        .bind(token.last_used_at.map(|t| t.timestamp_millis()))
+        .bind(&token.user_agent)
+        .bind(&token.client_ip)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_refresh_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<crate::auth::RefreshToken>> {
+        let row = sqlx::query("SELECT * FROM refresh_tokens WHERE token_hash = ? AND revoked = 0")
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => Ok(Some(crate::auth::RefreshToken {
+                id: row.try_get("id")?,
+                user_id: row.try_get("user_id")?,
+                tenant_id: row.try_get("tenant_id")?,
+                token_hash: row.try_get("token_hash")?,
+                expires_at: DateTime::from_timestamp_millis(row.try_get("expires_at")?)
+                    .unwrap_or_else(Utc::now),
+                revoked: row.try_get::<i32, _>("revoked")? != 0,
+                revoked_at: row
+                    .try_get::<Option<i64>, _>("revoked_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
+                    .unwrap_or_else(Utc::now),
+                last_used_at: row
+                    .try_get::<Option<i64>, _>("last_used_at")?
+                    .and_then(DateTime::from_timestamp_millis),
+                user_agent: row.try_get("user_agent")?,
+                client_ip: row.try_get("client_ip")?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn revoke_refresh_token(&self, token_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE token_hash = ?")
+            .bind(Utc::now().timestamp_millis())
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<()> {
+        sqlx::query("UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE user_id = ?")
+            .bind(Utc::now().timestamp_millis())
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn update_refresh_token_last_used(&self, token_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE refresh_tokens SET last_used_at = ? WHERE token_hash = ?")
+            .bind(Utc::now().timestamp_millis())
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // Audit log methods
+    async fn create_audit_log(&self, log: &crate::audit::AuditLog) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs (
+                id, timestamp, request_id, tenant_id, user_id,
+                client_ip, user_agent, action, resource_type, resource_id,
+                resource_name, http_method, http_path, http_status_code,
+                success, error_message, metadata, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&log.id)
+        .bind(log.timestamp)
+        .bind(&log.request_id)
+        .bind(&log.tenant_id)
+        .bind(&log.user_id)
+        .bind(&log.client_ip)
+        .bind(&log.user_agent)
+        .bind(&log.action)
+        .bind(&log.resource_type)
+        .bind(&log.resource_id)
+        .bind(&log.resource_name)
+        .bind(&log.http_method)
+        .bind(&log.http_path)
+        .bind(log.http_status_code)
+        .bind(log.success as i32)
+        .bind(&log.error_message)
+        .bind(&log.metadata)
+        .bind(log.created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn list_audit_logs(
+        &self,
+        tenant_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<crate::audit::AuditLog>> {
+        let rows = sqlx::query(
+            "SELECT * FROM audit_logs WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+        )
+        .bind(tenant_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut logs = Vec::new();
+        for row in rows {
+            logs.push(crate::audit::AuditLog {
+                id: row.try_get("id")?,
+                timestamp: row.try_get("timestamp")?,
+                request_id: row.try_get("request_id")?,
+                tenant_id: row.try_get("tenant_id")?,
+                user_id: row.try_get("user_id")?,
+                client_ip: row.try_get("client_ip")?,
+                user_agent: row.try_get("user_agent")?,
+                action: row.try_get("action")?,
+                resource_type: row.try_get("resource_type")?,
+                resource_id: row.try_get("resource_id")?,
+                resource_name: row.try_get("resource_name")?,
+                http_method: row.try_get("http_method")?,
+                http_path: row.try_get("http_path")?,
+                http_status_code: row.try_get("http_status_code")?,
+                success: row.try_get::<i32, _>("success")? != 0,
+                error_message: row.try_get("error_message")?,
+                metadata: row.try_get("metadata")?,
+                created_at: row.try_get("created_at")?,
+            });
+        }
+
+        Ok(logs)
     }
 }

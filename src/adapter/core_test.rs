@@ -18,7 +18,7 @@ async fn test_context() -> ExecutionContext {
     let oauth_client =
         crate::auth::create_test_oauth_client(storage.clone(), secrets_provider.clone());
 
-    ExecutionContext::new(storage, secrets_provider, oauth_client)
+    ExecutionContext::new(storage, secrets_provider, oauth_client, None, None)
 }
 
 // ========================================

@@ -7,16 +7,62 @@ use crate::config::{Config, StorageConfig};
 use crate::storage::{Storage, create_storage_from_config};
 use std::sync::Arc;
 
-/// Create test storage with in-memory SQLite
+/// Create test storage with in-memory SQLite and default tenant
 async fn create_test_storage() -> Arc<dyn Storage> {
     let config = StorageConfig {
         driver: "sqlite".to_string(),
         dsn: ":memory:".to_string(),
     };
 
-    create_storage_from_config(&config)
+    let storage = create_storage_from_config(&config)
         .await
-        .expect("Failed to create test storage")
+        .expect("Failed to create test storage");
+
+    // Create system user for tenant creation
+    let user = crate::auth::User {
+        id: "system".to_string(),
+        email: "system@beemflow.local".to_string(),
+        name: Some("System".to_string()),
+        password_hash: "".to_string(),
+        email_verified: true,
+        avatar_url: None,
+        mfa_enabled: false,
+        mfa_secret: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        last_login_at: None,
+        disabled: false,
+        disabled_reason: None,
+        disabled_at: None,
+    };
+    storage
+        .create_user(&user)
+        .await
+        .expect("Failed to create system user");
+
+    // Create default tenant for cron operations
+    let tenant = crate::auth::Tenant {
+        id: "default".to_string(),
+        name: "Default Tenant".to_string(),
+        slug: "default".to_string(),
+        plan: "free".to_string(),
+        plan_starts_at: None,
+        plan_ends_at: None,
+        max_users: 10,
+        max_flows: 100,
+        max_runs_per_month: 1000,
+        settings: None,
+        created_by_user_id: "system".to_string(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        disabled: false,
+    };
+    storage
+        .create_tenant(&tenant)
+        .await
+        .expect("Failed to create default tenant");
+
+    storage
 }
 
 /// Create minimal test engine
@@ -75,13 +121,13 @@ steps:
 "#;
 
     storage
-        .deploy_flow_version("test", "1.0.0", flow)
+        .deploy_flow_version("default", "test", "1.0.0", flow, "test_user")
         .await
         .unwrap();
 
     // Verify flow_triggers table is populated
     let names = storage
-        .find_flow_names_by_topic("schedule.cron")
+        .find_flow_names_by_topic("default", "schedule.cron")
         .await
         .unwrap();
     assert_eq!(
@@ -92,7 +138,10 @@ steps:
     assert_eq!(names[0], "test");
 
     // Verify batch content query works
-    let contents = storage.get_deployed_flows_content(&names).await.unwrap();
+    let contents = storage
+        .get_deployed_flows_content("default", &names)
+        .await
+        .unwrap();
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].0, "test");
     assert!(contents[0].1.contains("schedule.cron"));
@@ -116,7 +165,7 @@ steps:
       message: "No cron"
 "#;
     storage
-        .deploy_flow_version("no_cron_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "no_cron_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
@@ -160,11 +209,11 @@ steps:
 "#;
 
     storage
-        .deploy_flow_version("daily_flow", "1.0.0", flow1)
+        .deploy_flow_version("default", "daily_flow", "1.0.0", flow1, "test_user")
         .await
         .unwrap();
     storage
-        .deploy_flow_version("hourly_flow", "1.0.0", flow2)
+        .deploy_flow_version("default", "hourly_flow", "1.0.0", flow2, "test_user")
         .await
         .unwrap();
 
@@ -191,14 +240,14 @@ steps:
 
     // Verify both flows are in the report
     let scheduled_names: Vec<_> = report.scheduled.iter().map(|s| s.name.as_str()).collect();
-    assert!(scheduled_names.contains(&"daily_flow"));
-    assert!(scheduled_names.contains(&"hourly_flow"));
+    assert!(scheduled_names.contains(&"default/daily_flow"));
+    assert!(scheduled_names.contains(&"default/hourly_flow"));
 
     // Verify cron expressions
     let daily = report
         .scheduled
         .iter()
-        .find(|s| s.name == "daily_flow")
+        .find(|s| s.name == "default/daily_flow")
         .unwrap();
     assert_eq!(daily.cron_expression, "0 0 9 * * *");
 
@@ -224,17 +273,17 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("test_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "test_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // Add schedule should succeed
-    let result = cron.add_schedule("test_flow").await;
+    let result = cron.add_schedule("default", "test_flow").await;
     assert!(result.is_ok(), "add_schedule failed: {:?}", result.err());
 
     // Verify job is tracked
     let jobs = cron.jobs.lock().await;
-    assert!(jobs.contains_key("test_flow"));
+    assert!(jobs.contains_key(&("default".to_string(), "test_flow".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -257,16 +306,16 @@ steps:
       message: "Manual"
 "#;
     storage
-        .deploy_flow_version("manual_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "manual_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // add_schedule should succeed but not create job
-    cron.add_schedule("manual_flow").await.unwrap();
+    cron.add_schedule("default", "manual_flow").await.unwrap();
 
     // Verify no job is tracked
     let jobs = cron.jobs.lock().await;
-    assert!(!jobs.contains_key("manual_flow"));
+    assert!(!jobs.contains_key(&("default".to_string(), "manual_flow".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -278,14 +327,14 @@ async fn test_add_schedule_not_deployed() {
     let cron = CronManager::new(storage.clone(), engine).await.unwrap();
 
     // Don't deploy the flow - just try to schedule it
-    let result = cron.add_schedule("nonexistent_flow").await;
+    let result = cron.add_schedule("default", "nonexistent_flow").await;
 
     // Should succeed (no-op if not deployed)
     assert!(result.is_ok());
 
     // Verify no job is tracked
     let jobs = cron.jobs.lock().await;
-    assert!(!jobs.contains_key("nonexistent_flow"));
+    assert!(!jobs.contains_key(&("default".to_string(), "nonexistent_flow".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -309,18 +358,18 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("bad_cron", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "bad_cron", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // add_schedule should FAIL with validation error
-    let result = cron.add_schedule("bad_cron").await;
+    let result = cron.add_schedule("default", "bad_cron").await;
     assert!(result.is_err());
     assert!(format!("{:?}", result.err().unwrap()).contains("Invalid cron expression"));
 
     // Verify no job is tracked
     let jobs = cron.jobs.lock().await;
-    assert!(!jobs.contains_key("bad_cron"));
+    assert!(!jobs.contains_key(&("default".to_string(), "bad_cron".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -343,12 +392,12 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("missing_cron", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "missing_cron", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // add_schedule should FAIL with validation error
-    let result = cron.add_schedule("missing_cron").await;
+    let result = cron.add_schedule("default", "missing_cron").await;
     assert!(result.is_err());
     assert!(format!("{:?}", result.err().unwrap()).contains("missing cron field"));
 
@@ -374,24 +423,24 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("temp_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "temp_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
-    cron.add_schedule("temp_flow").await.unwrap();
+    cron.add_schedule("default", "temp_flow").await.unwrap();
 
     // Verify job exists
     {
         let jobs = cron.jobs.lock().await;
-        assert!(jobs.contains_key("temp_flow"));
+        assert!(jobs.contains_key(&("default".to_string(), "temp_flow".to_string())));
     }
 
     // Remove schedule
-    cron.remove_schedule("temp_flow").await.unwrap();
+    cron.remove_schedule("default", "temp_flow").await.unwrap();
 
     // Verify job is removed
     let jobs = cron.jobs.lock().await;
-    assert!(!jobs.contains_key("temp_flow"));
+    assert!(!jobs.contains_key(&("default".to_string(), "temp_flow".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -403,7 +452,7 @@ async fn test_remove_schedule_nonexistent() {
     let cron = CronManager::new(storage.clone(), engine).await.unwrap();
 
     // Remove schedule for flow that was never scheduled
-    let result = cron.remove_schedule("nonexistent").await;
+    let result = cron.remove_schedule("default", "nonexistent").await;
 
     // Should succeed (idempotent)
     assert!(result.is_ok());
@@ -430,16 +479,20 @@ steps:
       message: "Version 1"
 "#;
     storage
-        .deploy_flow_version("versioned_flow", "1.0.0", flow_v1)
+        .deploy_flow_version("default", "versioned_flow", "1.0.0", flow_v1, "test_user")
         .await
         .unwrap();
 
-    cron.add_schedule("versioned_flow").await.unwrap();
+    cron.add_schedule("default", "versioned_flow")
+        .await
+        .unwrap();
 
     // Get initial job ID
     let initial_job_id = {
         let jobs = cron.jobs.lock().await;
-        *jobs.get("versioned_flow").unwrap()
+        *jobs
+            .get(&("default".to_string(), "versioned_flow".to_string()))
+            .unwrap()
     };
 
     // Deploy new version with DIFFERENT cron expression
@@ -455,23 +508,27 @@ steps:
       message: "Version 2"
 "#;
     storage
-        .deploy_flow_version("versioned_flow", "2.0.0", flow_v2)
+        .deploy_flow_version("default", "versioned_flow", "2.0.0", flow_v2, "test_user")
         .await
         .unwrap();
 
     // Rollback (like real rollback operation does)
     storage
-        .set_deployed_version("versioned_flow", "2.0.0")
+        .set_deployed_version("default", "versioned_flow", "2.0.0")
         .await
         .unwrap();
 
     // Schedule again - should replace old job
-    cron.add_schedule("versioned_flow").await.unwrap();
+    cron.add_schedule("default", "versioned_flow")
+        .await
+        .unwrap();
 
     // Get new job ID
     let new_job_id = {
         let jobs = cron.jobs.lock().await;
-        *jobs.get("versioned_flow").unwrap()
+        *jobs
+            .get(&("default".to_string(), "versioned_flow".to_string()))
+            .unwrap()
     };
 
     // Job IDs should be different (old job removed, new job added)
@@ -526,22 +583,28 @@ steps:
 "#;
 
     storage
-        .deploy_flow_version("cron_flow", "1.0.0", cron_flow)
+        .deploy_flow_version("default", "cron_flow", "1.0.0", cron_flow, "test_user")
         .await
         .unwrap();
     storage
-        .deploy_flow_version("webhook_flow", "1.0.0", webhook_flow)
+        .deploy_flow_version(
+            "default",
+            "webhook_flow",
+            "1.0.0",
+            webhook_flow,
+            "test_user",
+        )
         .await
         .unwrap();
     storage
-        .deploy_flow_version("manual_flow", "1.0.0", manual_flow)
+        .deploy_flow_version("default", "manual_flow", "1.0.0", manual_flow, "test_user")
         .await
         .unwrap();
 
     // Sync should only schedule the cron flow (uses flow_triggers query)
     let report = cron.sync().await.unwrap();
     assert_eq!(report.scheduled.len(), 1);
-    assert_eq!(report.scheduled[0].name, "cron_flow");
+    assert_eq!(report.scheduled[0].name, "default/cron_flow");
 
     cron.shutdown().await.unwrap();
 }
@@ -578,24 +641,24 @@ steps:
 "#;
 
     storage
-        .deploy_flow_version("enabled_flow", "1.0.0", flow1)
+        .deploy_flow_version("default", "enabled_flow", "1.0.0", flow1, "test_user")
         .await
         .unwrap();
     storage
-        .deploy_flow_version("disabled_flow", "1.0.0", flow2)
+        .deploy_flow_version("default", "disabled_flow", "1.0.0", flow2, "test_user")
         .await
         .unwrap();
 
     // Disable one flow
     storage
-        .unset_deployed_version("disabled_flow")
+        .unset_deployed_version("default", "disabled_flow")
         .await
         .unwrap();
 
     // Sync should only schedule the enabled flow
     let report = cron.sync().await.unwrap();
     assert_eq!(report.scheduled.len(), 1);
-    assert_eq!(report.scheduled[0].name, "enabled_flow");
+    assert_eq!(report.scheduled[0].name, "default/enabled_flow");
 
     cron.shutdown().await.unwrap();
 }
@@ -620,7 +683,7 @@ steps:
 "#;
 
     storage
-        .deploy_flow_version("bad_cron_flow", "1.0.0", bad_flow)
+        .deploy_flow_version("default", "bad_cron_flow", "1.0.0", bad_flow, "test_user")
         .await
         .unwrap();
 
@@ -657,7 +720,13 @@ steps:
         );
 
         storage
-            .deploy_flow_version(&format!("flow_{}", i), "1.0.0", &flow)
+            .deploy_flow_version(
+                "default",
+                &format!("flow_{}", i),
+                "1.0.0",
+                &flow,
+                "test_user",
+            )
             .await
             .unwrap();
     }
@@ -668,7 +737,7 @@ steps:
         let cron_clone = cron.clone();
         let handle = tokio::spawn(async move {
             cron_clone
-                .add_schedule(&format!("flow_{}", i))
+                .add_schedule("default", &format!("flow_{}", i))
                 .await
                 .unwrap();
         });
@@ -706,7 +775,7 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("lifecycle_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "lifecycle_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
@@ -716,26 +785,30 @@ steps:
 
     // Disable
     storage
-        .unset_deployed_version("lifecycle_flow")
+        .unset_deployed_version("default", "lifecycle_flow")
         .await
         .unwrap();
-    cron.remove_schedule("lifecycle_flow").await.unwrap();
+    cron.remove_schedule("default", "lifecycle_flow")
+        .await
+        .unwrap();
 
     {
         let jobs = cron.jobs.lock().await;
-        assert!(!jobs.contains_key("lifecycle_flow"));
+        assert!(!jobs.contains_key(&("default".to_string(), "lifecycle_flow".to_string())));
     }
 
     // Re-enable
     storage
-        .set_deployed_version("lifecycle_flow", "1.0.0")
+        .set_deployed_version("default", "lifecycle_flow", "1.0.0")
         .await
         .unwrap();
-    cron.add_schedule("lifecycle_flow").await.unwrap();
+    cron.add_schedule("default", "lifecycle_flow")
+        .await
+        .unwrap();
 
     {
         let jobs = cron.jobs.lock().await;
-        assert!(jobs.contains_key("lifecycle_flow"));
+        assert!(jobs.contains_key(&("default".to_string(), "lifecycle_flow".to_string())));
     }
 
     cron.shutdown().await.unwrap();
@@ -760,7 +833,7 @@ steps:
       message: "Flow 1"
 "#;
     storage
-        .deploy_flow_version("flow1", "1.0.0", flow1)
+        .deploy_flow_version("default", "flow1", "1.0.0", flow1, "test_user")
         .await
         .unwrap();
 
@@ -772,7 +845,10 @@ steps:
     }
 
     // Deploy different flow and resync
-    storage.unset_deployed_version("flow1").await.unwrap();
+    storage
+        .unset_deployed_version("default", "flow1")
+        .await
+        .unwrap();
 
     let flow2 = r#"
 name: flow2
@@ -786,7 +862,7 @@ steps:
       message: "Flow 2"
 "#;
     storage
-        .deploy_flow_version("flow2", "1.0.0", flow2)
+        .deploy_flow_version("default", "flow2", "1.0.0", flow2, "test_user")
         .await
         .unwrap();
 
@@ -795,8 +871,8 @@ steps:
     // Should only have flow2, not flow1
     let jobs = cron.jobs.lock().await;
     assert_eq!(jobs.len(), 1);
-    assert!(jobs.contains_key("flow2"));
-    assert!(!jobs.contains_key("flow1"));
+    assert!(jobs.contains_key(&("default".to_string(), "flow2".to_string())));
+    assert!(!jobs.contains_key(&("default".to_string(), "flow1".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -823,15 +899,15 @@ steps:
       message: "Multi"
 "#;
     storage
-        .deploy_flow_version("multi_trigger", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "multi_trigger", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // Should schedule successfully
-    cron.add_schedule("multi_trigger").await.unwrap();
+    cron.add_schedule("default", "multi_trigger").await.unwrap();
 
     let jobs = cron.jobs.lock().await;
-    assert!(jobs.contains_key("multi_trigger"));
+    assert!(jobs.contains_key(&("default".to_string(), "multi_trigger".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -855,23 +931,23 @@ steps:
       message: "Array format"
 "#;
     storage
-        .deploy_flow_version("array_format", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "array_format", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // Verify flow_triggers table has schedule.cron topic
     let names = storage
-        .find_flow_names_by_topic("schedule.cron")
+        .find_flow_names_by_topic("default", "schedule.cron")
         .await
         .unwrap();
     assert_eq!(names.len(), 1);
     assert_eq!(names[0], "array_format");
 
     // add_schedule should work
-    cron.add_schedule("array_format").await.unwrap();
+    cron.add_schedule("default", "array_format").await.unwrap();
 
     let jobs = cron.jobs.lock().await;
-    assert!(jobs.contains_key("array_format"));
+    assert!(jobs.contains_key(&("default".to_string(), "array_format".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -895,23 +971,23 @@ steps:
       message: "Single format"
 "#;
     storage
-        .deploy_flow_version("single_format", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "single_format", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // Verify flow_triggers table has schedule.cron topic
     let names = storage
-        .find_flow_names_by_topic("schedule.cron")
+        .find_flow_names_by_topic("default", "schedule.cron")
         .await
         .unwrap();
     assert_eq!(names.len(), 1);
     assert_eq!(names[0], "single_format");
 
     // add_schedule should work
-    cron.add_schedule("single_format").await.unwrap();
+    cron.add_schedule("default", "single_format").await.unwrap();
 
     let jobs = cron.jobs.lock().await;
-    assert!(jobs.contains_key("single_format"));
+    assert!(jobs.contains_key(&("default".to_string(), "single_format".to_string())));
 
     cron.shutdown().await.unwrap();
 }
@@ -935,26 +1011,28 @@ steps:
       message: "Test"
 "#;
     storage
-        .deploy_flow_version("tracked_flow", "1.0.0", flow_yaml)
+        .deploy_flow_version("default", "tracked_flow", "1.0.0", flow_yaml, "test_user")
         .await
         .unwrap();
 
     // Schedule
-    cron.add_schedule("tracked_flow").await.unwrap();
+    cron.add_schedule("default", "tracked_flow").await.unwrap();
 
     // Verify UUID is tracked
     {
         let jobs = cron.jobs.lock().await;
-        assert!(jobs.contains_key("tracked_flow"));
+        assert!(jobs.contains_key(&("default".to_string(), "tracked_flow".to_string())));
     }
 
     // Remove
-    cron.remove_schedule("tracked_flow").await.unwrap();
+    cron.remove_schedule("default", "tracked_flow")
+        .await
+        .unwrap();
 
     // Verify UUID is removed from tracking
     {
         let jobs = cron.jobs.lock().await;
-        assert!(!jobs.contains_key("tracked_flow"));
+        assert!(!jobs.contains_key(&("default".to_string(), "tracked_flow".to_string())));
     }
 
     cron.shutdown().await.unwrap();

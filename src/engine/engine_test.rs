@@ -99,7 +99,9 @@ async fn test_execute_minimal_valid_flow() {
         catch: None,
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(
         result.is_ok(),
         "Minimal valid flow should execute successfully"
@@ -120,7 +122,9 @@ async fn test_execute_empty_steps() {
         catch: None,
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Flow with empty steps should succeed");
     assert_eq!(
         result.unwrap().outputs.len(),
@@ -158,7 +162,9 @@ async fn test_execute_with_event_data() {
     let mut event = HashMap::new();
     event.insert("name".to_string(), serde_json::json!("TestEvent"));
 
-    let result = engine.execute(&flow, event).await;
+    let result = engine
+        .execute(&flow, event, "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Flow with event data should succeed");
 }
 
@@ -193,7 +199,9 @@ async fn test_execute_with_vars() {
         catch: None,
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Flow with vars should succeed");
 
     let outputs = result.unwrap();
@@ -240,7 +248,9 @@ async fn test_execute_step_output_chaining() {
         catch: None,
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Output chaining should work");
 
     let outputs = result.unwrap();
@@ -283,7 +293,9 @@ async fn test_execute_concurrent_flows() {
         let handle = tokio::spawn(async move {
             let mut event = HashMap::new();
             event.insert("index".to_string(), serde_json::json!(i));
-            engine_clone.execute(&flow_clone, event).await
+            engine_clone
+                .execute(&flow_clone, event, "test_user", "test_tenant")
+                .await
         });
         handles.push(handle);
     }
@@ -335,14 +347,16 @@ async fn test_execute_catch_block() {
         ]),
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     // Should error (fail step) but catch blocks should run
     assert!(result.is_err(), "Should error from fail step");
 
     // Verify catch block outputs are stored in the run
     let storage = engine.storage();
     let runs = storage
-        .list_runs(1000, 0)
+        .list_runs("test_tenant", 1000, 0)
         .await
         .expect("Failed to list runs");
 
@@ -432,7 +446,9 @@ async fn test_execute_secrets_injection() {
         }),
     );
 
-    let result = engine.execute(&flow, event).await;
+    let result = engine
+        .execute(&flow, event, "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Secrets injection should work");
 
     let outputs = result.unwrap();
@@ -475,7 +491,9 @@ async fn test_execute_secrets_dot_access() {
         }),
     );
 
-    let result = engine.execute(&flow, event).await;
+    let result = engine
+        .execute(&flow, event, "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Secrets dot access should work");
 
     let outputs = result.unwrap();
@@ -530,7 +548,9 @@ async fn test_execute_array_access_in_template() {
         ]),
     );
 
-    let result = engine.execute(&flow, event).await;
+    let result = engine
+        .execute(&flow, event, "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Array access should work");
 
     let outputs = result.unwrap();
@@ -567,7 +587,9 @@ async fn test_adapter_error_propagation() {
         catch: None,
     };
 
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(result.is_ok(), "Should not error with empty with map");
 
     let outputs = result.unwrap();
@@ -693,7 +715,9 @@ async fn test_await_event_resume_roundtrip() {
     start_event.insert("input".to_string(), serde_json::json!("hello world"));
 
     // Execute should pause at await_event
-    let result = engine.execute(&flow, start_event).await;
+    let result = engine
+        .execute(&flow, start_event, "test_user", "test_tenant")
+        .await;
 
     // Should error with "waiting for event" message
     assert!(result.is_err(), "Should error/pause at await_event");

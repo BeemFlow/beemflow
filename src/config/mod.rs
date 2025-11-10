@@ -240,6 +240,12 @@ pub struct HttpConfig {
     /// If not set, defaults to http://host:port (or http://localhost:port if host is 0.0.0.0)
     #[serde(skip_serializing_if = "Option::is_none", rename = "publicUrl")]
     pub public_url: Option<String>,
+
+    /// Enable single-user mode (bypasses authentication, uses DEFAULT_TENANT_ID)
+    /// WARNING: Only use for personal/local development. Disables all authentication.
+    /// Default: false (multi-tenant mode with full authentication)
+    #[serde(default, rename = "singleUser")]
+    pub single_user: bool,
 }
 
 fn default_true() -> bool {
@@ -748,6 +754,7 @@ impl Default for Config {
                 enable_oauth_server: false,
                 oauth_issuer: None, // Auto-generated from host:port if not set
                 public_url: None,   // Auto-detected or explicitly configured
+                single_user: false, // Default to multi-tenant mode
             }),
             log: Some(LogConfig {
                 level: Some("info".to_string()),

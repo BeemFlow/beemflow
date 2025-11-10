@@ -70,7 +70,9 @@ async fn test_optional_dependencies() {
 
     // Execution should work
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, create_test_event()).await;
+    let result = engine
+        .execute(&flow, create_test_event(), "test_user", "test_tenant")
+        .await;
 
     assert!(
         result.is_ok(),
@@ -92,7 +94,9 @@ async fn test_complex_dependencies_diamond_pattern() {
 
     // Execution should work
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, create_test_event()).await;
+    let result = engine
+        .execute(&flow, create_test_event(), "test_user", "test_tenant")
+        .await;
 
     assert!(
         result.is_ok(),
@@ -118,7 +122,9 @@ async fn test_dependency_order_current_behavior() {
 
     // Execution works (but steps may run in wrong order - this is current behavior)
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, create_test_event()).await;
+    let result = engine
+        .execute(&flow, create_test_event(), "test_user", "test_tenant")
+        .await;
 
     assert!(
         result.is_ok(),
@@ -284,7 +290,9 @@ async fn test_auto_dependency_detection() {
 
     // Execute the flow - steps should run in correct order despite YAML order
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, create_test_event()).await;
+    let result = engine
+        .execute(&flow, create_test_event(), "test_user", "test_tenant")
+        .await;
 
     assert!(
         result.is_ok(),
@@ -336,7 +344,9 @@ async fn test_hybrid_dependencies() {
 
     // Execute the flow
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, create_test_event()).await;
+    let result = engine
+        .execute(&flow, create_test_event(), "test_user", "test_tenant")
+        .await;
 
     assert!(
         result.is_ok(),

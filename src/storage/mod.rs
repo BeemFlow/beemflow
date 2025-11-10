@@ -29,21 +29,33 @@ pub trait RunStorage: Send + Sync {
     async fn save_run(&self, run: &Run) -> Result<()>;
 
     /// Get a run by ID
-    async fn get_run(&self, id: Uuid) -> Result<Option<Run>>;
+    ///
+    /// # Multi-tenant isolation
+    /// Verifies the run belongs to the specified tenant. Returns None if the run
+    /// exists but belongs to a different tenant (don't leak existence).
+    async fn get_run(&self, id: Uuid, tenant_id: &str) -> Result<Option<Run>>;
 
     /// List runs with pagination
     ///
-    /// Parameters:
+    /// # Parameters
+    /// - tenant_id: Only return runs for this tenant
     /// - limit: Maximum number of runs to return (capped at 10,000)
     /// - offset: Number of runs to skip
     ///
-    /// Returns runs ordered by started_at DESC
-    async fn list_runs(&self, limit: usize, offset: usize) -> Result<Vec<Run>>;
+    /// # Multi-tenant isolation
+    /// Only returns runs belonging to the specified tenant.
+    /// Returns runs ordered by started_at DESC.
+    async fn list_runs(&self, tenant_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>>;
 
     /// List runs filtered by flow name and status, ordered by most recent first
-    /// This is optimized for finding previous successful runs without loading all data
+    ///
+    /// This is optimized for finding previous successful runs without loading all data.
+    ///
+    /// # Multi-tenant isolation
+    /// Only searches within the specified tenant's runs.
     async fn list_runs_by_flow_and_status(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         status: RunStatus,
         exclude_id: Option<Uuid>,
@@ -51,7 +63,11 @@ pub trait RunStorage: Send + Sync {
     ) -> Result<Vec<Run>>;
 
     /// Delete a run and its steps
-    async fn delete_run(&self, id: Uuid) -> Result<()>;
+    ///
+    /// # Multi-tenant isolation
+    /// Only deletes if the run belongs to the specified tenant.
+    /// Returns error if run belongs to different tenant.
+    async fn delete_run(&self, id: Uuid, tenant_id: &str) -> Result<()>;
 
     /// Try to insert a run atomically
     /// Returns true if inserted, false if run already exists (based on ID)
@@ -82,6 +98,8 @@ pub trait StateStorage: Send + Sync {
         token: &str,
         source: &str,
         data: serde_json::Value,
+        tenant_id: &str,
+        user_id: &str,
     ) -> Result<()>;
 
     /// Load all paused runs
@@ -106,86 +124,131 @@ pub trait StateStorage: Send + Sync {
 ///
 /// This trait handles production flow deployments and version history.
 /// For draft flows, use the pure functions in storage::flows instead.
+///
+/// All methods are tenant-scoped to ensure proper multi-tenant isolation.
 #[async_trait]
 pub trait FlowStorage: Send + Sync {
     /// Deploy a flow version (creates immutable snapshot)
+    ///
+    /// # Multi-tenant isolation
+    /// Creates version in tenant's namespace. Different tenants can have flows
+    /// with the same name without conflicts.
     async fn deploy_flow_version(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         version: &str,
         content: &str,
+        deployed_by_user_id: &str, // Audit trail
     ) -> Result<()>;
 
     /// Set which version is currently deployed for a flow
-    async fn set_deployed_version(&self, flow_name: &str, version: &str) -> Result<()>;
+    ///
+    /// # Multi-tenant isolation
+    /// Only affects the specified tenant's deployment.
+    async fn set_deployed_version(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+        version: &str,
+    ) -> Result<()>;
 
     /// Get the currently deployed version for a flow
-    async fn get_deployed_version(&self, flow_name: &str) -> Result<Option<String>>;
+    ///
+    /// # Multi-tenant isolation
+    /// Returns version for the specified tenant only.
+    async fn get_deployed_version(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+    ) -> Result<Option<String>>;
 
     /// Get the content of a specific deployed version
+    ///
+    /// # Multi-tenant isolation
+    /// Only returns content if version belongs to the specified tenant.
     async fn get_flow_version_content(
         &self,
+        tenant_id: &str,
         flow_name: &str,
         version: &str,
     ) -> Result<Option<String>>;
 
     /// List all deployed versions for a flow
-    async fn list_flow_versions(&self, flow_name: &str) -> Result<Vec<FlowSnapshot>>;
+    ///
+    /// # Multi-tenant isolation
+    /// Returns versions for the specified tenant only.
+    async fn list_flow_versions(
+        &self,
+        tenant_id: &str,
+        flow_name: &str,
+    ) -> Result<Vec<FlowSnapshot>>;
 
     /// Get the most recently deployed version from history (for enable)
+    ///
+    /// # Multi-tenant isolation
+    /// Returns latest version for the specified tenant only.
     async fn get_latest_deployed_version_from_history(
         &self,
+        tenant_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>>;
 
     /// Remove deployed version pointer (for disable)
-    async fn unset_deployed_version(&self, flow_name: &str) -> Result<()>;
-
-    /// List all currently deployed flows with their content
     ///
-    /// Returns (flow_name, content) tuples for all flows with active deployment.
-    /// This is efficient as it performs a single JOIN query instead of N+1 queries.
-    /// Used by webhook handlers to find flows to trigger.
-    async fn list_all_deployed_flows(&self) -> Result<Vec<(String, String)>>;
+    /// # Multi-tenant isolation
+    /// Only removes deployment pointer for the specified tenant.
+    async fn unset_deployed_version(&self, tenant_id: &str, flow_name: &str) -> Result<()>;
 
-    /// Find deployed flow names by webhook topic (efficient lookup for webhook routing)
+    /// List all currently deployed flows with their content for a tenant
     ///
-    /// Returns only flow names (not content) for flows registered to the given topic.
-    /// This is more efficient when you'll load flows individually using engine.start().
+    /// Returns (flow_name, content) tuples for all flows with active deployment
+    /// in the specified tenant.
+    ///
+    /// # Multi-tenant isolation
+    /// Only returns flows belonging to the specified tenant.
+    async fn list_all_deployed_flows(&self, tenant_id: &str) -> Result<Vec<(String, String)>>;
+
+    /// Find deployed flow names by webhook topic for a tenant
+    ///
+    /// Returns only flow names (not content) for flows in the specified tenant
+    /// that are registered to the given topic.
     ///
     /// # Performance
     /// Uses flow_triggers index for O(log N) lookup, scalable to 1000+ flows.
     ///
-    /// # Example
-    /// ```ignore
-    /// let flow_names = storage.find_flow_names_by_topic("slack.message.received").await?;
-    /// for name in flow_names {
-    ///     engine.start(&name, event, false).await?;
-    /// }
-    /// ```
-    async fn find_flow_names_by_topic(&self, topic: &str) -> Result<Vec<String>>;
+    /// # Multi-tenant isolation
+    /// Only searches within the specified tenant's flows.
+    async fn find_flow_names_by_topic(&self, tenant_id: &str, topic: &str) -> Result<Vec<String>>;
 
-    /// Get content for multiple deployed flows by name (batch query).
+    /// Get content for multiple deployed flows by name (batch query)
     ///
     /// More efficient than N individual queries. Only returns flows that
-    /// are currently deployed (have entry in deployed_flows table).
+    /// are currently deployed and belong to the specified tenant.
     ///
-    /// # Performance
-    ///
-    /// Single JOIN query instead of N queries. For 10 flows:
-    /// - N queries: 10 round trips
-    /// - Batch query: 1 round trip
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let flow_names = storage.find_flow_names_by_topic("schedule.cron").await?;
-    /// let contents = storage.get_deployed_flows_content(&flow_names).await?;
-    /// ```
+    /// # Multi-tenant isolation
+    /// Only returns flows belonging to the specified tenant.
     async fn get_deployed_flows_content(
         &self,
+        tenant_id: &str,
         flow_names: &[String],
     ) -> Result<Vec<(String, String)>>;
+
+    /// Get the user_id of who deployed the currently active version of a flow
+    ///
+    /// Returns None if:
+    /// - Flow is not deployed
+    /// - Deployed version has no deployer tracked (legacy deployments)
+    ///
+    /// This is used to determine which user's OAuth credentials to use for
+    /// automated flow executions (cron, webhooks).
+    ///
+    /// # Multi-tenant isolation
+    /// Only queries within the specified tenant.
+    ///
+    /// # Performance
+    /// Single indexed query joining deployed_flows → flow_versions
+    async fn get_deployed_by(&self, tenant_id: &str, flow_name: &str) -> Result<Option<String>>;
 }
 
 /// OAuth storage for credentials, providers, clients, and tokens
@@ -195,18 +258,37 @@ pub trait OAuthStorage: Send + Sync {
     /// Save OAuth credential
     async fn save_oauth_credential(&self, credential: &OAuthCredential) -> Result<()>;
 
-    /// Get OAuth credential
+    /// Get OAuth credential for a specific user
     async fn get_oauth_credential(
         &self,
         provider: &str,
         integration: &str,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<Option<OAuthCredential>>;
 
-    /// List OAuth credentials
-    async fn list_oauth_credentials(&self) -> Result<Vec<OAuthCredential>>;
+    /// List OAuth credentials for a specific user
+    async fn list_oauth_credentials(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+    ) -> Result<Vec<OAuthCredential>>;
+
+    /// Get OAuth credential by ID
+    ///
+    /// # Security
+    /// Only returns credential if it belongs to the specified tenant
+    async fn get_oauth_credential_by_id(
+        &self,
+        id: &str,
+        tenant_id: &str,
+    ) -> Result<Option<OAuthCredential>>;
 
     /// Delete OAuth credential by ID
-    async fn delete_oauth_credential(&self, id: &str) -> Result<()>;
+    ///
+    /// # Security
+    /// Enforces tenant isolation - only deletes if credential belongs to specified tenant
+    async fn delete_oauth_credential(&self, id: &str, tenant_id: &str) -> Result<()>;
 
     /// Refresh OAuth credential token
     async fn refresh_oauth_credential(
@@ -265,14 +347,117 @@ pub trait OAuthStorage: Send + Sync {
     async fn delete_oauth_token_by_refresh(&self, refresh: &str) -> Result<()>;
 }
 
+/// Authentication storage for users, tenants, and sessions
+///
+/// Provides multi-tenant authentication and authorization storage.
+#[async_trait]
+pub trait AuthStorage: Send + Sync {
+    // User methods
+    /// Create a new user
+    async fn create_user(&self, user: &crate::auth::User) -> Result<()>;
+
+    /// Get user by ID
+    async fn get_user(&self, id: &str) -> Result<Option<crate::auth::User>>;
+
+    /// Get user by email
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<crate::auth::User>>;
+
+    /// Update user
+    async fn update_user(&self, user: &crate::auth::User) -> Result<()>;
+
+    /// Update user's last login timestamp
+    async fn update_user_last_login(&self, user_id: &str) -> Result<()>;
+
+    // Tenant methods
+    /// Create a new tenant (organization)
+    async fn create_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()>;
+
+    /// Get tenant by ID
+    async fn get_tenant(&self, id: &str) -> Result<Option<crate::auth::Tenant>>;
+
+    /// Get tenant by slug
+    async fn get_tenant_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Tenant>>;
+
+    /// Update tenant
+    async fn update_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()>;
+
+    /// List all active (non-disabled) tenants
+    async fn list_active_tenants(&self) -> Result<Vec<crate::auth::Tenant>>;
+
+    // Tenant membership methods
+    /// Create a new tenant member (user-tenant relationship)
+    async fn create_tenant_member(&self, member: &crate::auth::TenantMember) -> Result<()>;
+
+    /// Get tenant member
+    async fn get_tenant_member(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> Result<Option<crate::auth::TenantMember>>;
+
+    /// List all tenants for a user with their roles
+    async fn list_user_tenants(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(crate::auth::Tenant, crate::auth::Role)>>;
+
+    /// List all members of a tenant with their user info
+    async fn list_tenant_members(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<(crate::auth::User, crate::auth::Role)>>;
+
+    /// Update member's role
+    async fn update_member_role(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        role: crate::auth::Role,
+    ) -> Result<()>;
+
+    /// Remove member from tenant
+    async fn remove_tenant_member(&self, tenant_id: &str, user_id: &str) -> Result<()>;
+
+    // Refresh token methods
+    /// Create a new refresh token
+    async fn create_refresh_token(&self, token: &crate::auth::RefreshToken) -> Result<()>;
+
+    /// Get refresh token by hash
+    async fn get_refresh_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<crate::auth::RefreshToken>>;
+
+    /// Revoke a specific refresh token
+    async fn revoke_refresh_token(&self, token_hash: &str) -> Result<()>;
+
+    /// Revoke all refresh tokens for a user
+    async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<()>;
+
+    /// Update refresh token's last used timestamp
+    async fn update_refresh_token_last_used(&self, token_hash: &str) -> Result<()>;
+
+    // Audit log methods
+    /// Create audit log entry
+    async fn create_audit_log(&self, log: &crate::audit::AuditLog) -> Result<()>;
+
+    /// List audit logs for a tenant
+    async fn list_audit_logs(
+        &self,
+        tenant_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<crate::audit::AuditLog>>;
+}
+
 /// Complete storage trait combining all focused storage traits
 ///
 /// This trait provides the full storage interface by composing all focused traits.
 /// Implementations can implement each focused trait separately for better modularity.
-pub trait Storage: RunStorage + StateStorage + FlowStorage + OAuthStorage {}
+pub trait Storage: RunStorage + StateStorage + FlowStorage + OAuthStorage + AuthStorage {}
 
 /// Blanket implementation: any type implementing all focused traits also implements Storage
-impl<T> Storage for T where T: RunStorage + StateStorage + FlowStorage + OAuthStorage {}
+impl<T> Storage for T where T: RunStorage + StateStorage + FlowStorage + OAuthStorage + AuthStorage {}
 
 /// Flow snapshot represents a deployed flow version
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

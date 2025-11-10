@@ -29,9 +29,9 @@
 //!     let config = Config::default();
 //!     let deps = create_dependencies(&config).await?;
 //!
-//!     // Execute a flow
+//!     // Execute a flow (with user and tenant context)
 //!     let flow = beemflow::dsl::parse_file("flow.yaml", None)?;
-//!     let outputs = deps.engine.execute(&flow, std::collections::HashMap::new()).await?;
+//!     let outputs = deps.engine.execute(&flow, std::collections::HashMap::new(), "default_user", "default").await?;
 //!     println!("{:?}", outputs);
 //!
 //!     Ok(())
@@ -53,6 +53,7 @@ pub mod dsl;
 pub mod engine;
 
 // Infrastructure
+pub mod audit;
 pub mod blob;
 pub mod config;
 pub mod cron;

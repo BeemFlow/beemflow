@@ -1,13 +1,16 @@
-//! OAuth middleware for authentication, authorization, and rate limiting
+//! Authentication middleware for both OAuth and JWT
 //!
-//! Provides type-safe extractors and middleware leveraging Rust's trait system
-//! for production-grade OAuth security.
+//! Provides two types of authentication:
+//! 1. OAuth 2.0 middleware (for OAuth client - validates OAuth tokens)
+//! 2. JWT middleware (for multi-tenant auth - validates JWTs, resolves tenants)
 
+use super::{AuthContext, JwtManager, RequestContext};
+use crate::audit::{AuditEvent, AuditLogger};
 use crate::model::OAuthToken;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
 use axum::{
-    extract::{FromRequestParts, Request},
+    extract::{FromRequestParts, Request, State},
     http::{StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -17,6 +20,11 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, SystemTime};
+use uuid::Uuid;
+
+// ============================================================================
+// OAuth 2.0 Middleware (for OAuth client)
+// ============================================================================
 
 /// Authenticated user extracted from valid Bearer token
 #[derive(Debug, Clone)]
@@ -323,4 +331,236 @@ pub fn has_any_scope(user: &AuthenticatedUser, scopes: &[&str]) -> bool {
 /// Check if user has all of the required scopes
 pub fn has_all_scopes(user: &AuthenticatedUser, scopes: &[&str]) -> bool {
     scopes.iter().all(|scope| has_scope(user, scope))
+}
+
+// ============================================================================
+// JWT Middleware (for multi-tenant auth)
+// ============================================================================
+
+/// Shared state for JWT auth middleware
+pub struct AuthMiddlewareState {
+    pub storage: Arc<dyn Storage>,
+    pub jwt_manager: Arc<JwtManager>,
+    pub audit_logger: Option<Arc<AuditLogger>>,
+}
+
+/// Authentication middleware - validates JWT and creates AuthContext
+///
+/// Extracts Bearer token, validates JWT signature and expiration,
+/// and inserts AuthContext into request extensions.
+///
+/// Returns 401 if:
+/// - No Authorization header
+/// - Invalid Bearer format
+/// - Invalid or expired JWT
+pub async fn auth_middleware(
+    State(state): State<Arc<AuthMiddlewareState>>,
+    mut req: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    // Extract Authorization header
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Extract Bearer token
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Validate JWT
+    let claims = state.jwt_manager.validate_token(token).map_err(|e| {
+        tracing::warn!("JWT validation failed: {}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    // Create auth context
+    let auth_ctx = AuthContext {
+        user_id: claims.sub,
+        tenant_id: claims.tenant,
+        role: claims.role,
+        token_exp: claims.exp,
+    };
+
+    // Insert into request extensions
+    req.extensions_mut().insert(auth_ctx);
+
+    Ok(next.run(req).await)
+}
+
+/// Tenant middleware - resolves tenant and creates RequestContext
+///
+/// Retrieves tenant information, verifies user membership,
+/// and creates full RequestContext for downstream handlers.
+///
+/// Returns:
+/// - 401 if no AuthContext (must run after auth_middleware)
+/// - 404 if tenant not found
+/// - 403 if user is not a member or tenant/membership is disabled
+pub async fn tenant_middleware(
+    State(state): State<Arc<AuthMiddlewareState>>,
+    mut req: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    // Get auth context from previous middleware
+    let auth_ctx = req
+        .extensions()
+        .get::<AuthContext>()
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .clone();
+
+    // Get tenant info
+    let tenant = state
+        .storage
+        .get_tenant(&auth_ctx.tenant_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get tenant: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!("Tenant not found: {}", auth_ctx.tenant_id);
+            StatusCode::NOT_FOUND
+        })?;
+
+    // Verify user is still a member
+    let member = state
+        .storage
+        .get_tenant_member(&auth_ctx.tenant_id, &auth_ctx.user_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get tenant member: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(
+                "User {} not a member of tenant {}",
+                auth_ctx.user_id,
+                auth_ctx.tenant_id
+            );
+            StatusCode::FORBIDDEN
+        })?;
+
+    // Check if tenant or membership is disabled
+    if tenant.disabled || member.disabled {
+        tracing::warn!(
+            "Access denied: tenant_disabled={}, member_disabled={}",
+            tenant.disabled,
+            member.disabled
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Extract client metadata
+    let client_ip = extract_client_ip(&req);
+    let user_agent = extract_user_agent(&req);
+    let request_id = Uuid::new_v4().to_string();
+
+    // Create full request context
+    let req_ctx = RequestContext {
+        user_id: auth_ctx.user_id,
+        tenant_id: tenant.id.clone(),
+        tenant_name: tenant.name.clone(),
+        role: member.role,
+        client_ip,
+        user_agent,
+        request_id,
+    };
+
+    // Insert full context into request
+    req.extensions_mut().insert(req_ctx);
+
+    Ok(next.run(req).await)
+}
+
+/// Extract client IP from request headers or connection info
+fn extract_client_ip(req: &Request) -> Option<String> {
+    // Try X-Forwarded-For header first (for reverse proxy setups)
+    req.headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap().trim().to_string())
+        .or_else(|| {
+            // Fallback to connection info
+            req.extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|info| info.0.ip().to_string())
+        })
+}
+
+/// Extract user agent from request headers
+fn extract_user_agent(req: &Request) -> Option<String> {
+    req.headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+/// Audit logging middleware - logs all authenticated API requests
+///
+/// Automatically logs:
+/// - HTTP method, path, status code
+/// - User, tenant, request ID
+/// - Client IP and user agent
+/// - Success/failure status
+///
+/// Should be applied AFTER auth_middleware and tenant_middleware
+/// so RequestContext is available.
+pub async fn audit_middleware(
+    State(state): State<Arc<AuthMiddlewareState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    // Get request context (if authenticated)
+    let req_ctx = req.extensions().get::<RequestContext>().cloned();
+
+    // Extract request details before consuming the request
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+
+    // Execute request
+    let response = next.run(req).await;
+
+    // Log the request if we have an audit logger and request context
+    if let Some(audit_logger) = &state.audit_logger
+        && let Some(ctx) = req_ctx
+    {
+        let status_code = response.status().as_u16() as i32;
+        let success = (200..400).contains(&status_code);
+
+        // Determine action from HTTP method + path
+        let action = format!(
+            "api.{}.{}",
+            method.to_lowercase(),
+            path.trim_start_matches('/').replace('/', ".")
+        );
+
+        // Log asynchronously (don't block response)
+        let logger = audit_logger.clone();
+        tokio::spawn(async move {
+            let _ = logger
+                .log(AuditEvent {
+                    request_id: ctx.request_id.clone(),
+                    tenant_id: ctx.tenant_id.clone(),
+                    user_id: Some(ctx.user_id.clone()),
+                    client_ip: ctx.client_ip.clone(),
+                    user_agent: ctx.user_agent.clone(),
+                    action,
+                    resource_type: None,
+                    resource_id: None,
+                    resource_name: None,
+                    http_method: Some(method),
+                    http_path: Some(path),
+                    http_status_code: Some(status_code),
+                    success,
+                    error_message: None,
+                    metadata: None,
+                })
+                .await;
+        });
+    }
+
+    response
 }

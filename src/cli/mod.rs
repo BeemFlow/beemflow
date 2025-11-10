@@ -41,6 +41,25 @@ fn to_static_str(s: String) -> &'static str {
 async fn create_registry() -> Result<OperationRegistry> {
     let config = Config::load_and_inject(crate::constants::CONFIG_FILE_NAME)?;
     let deps = crate::core::create_dependencies(&config).await?;
+
+    // TODO: Load CLI credentials and validate JWT
+    // For multi-tenant CLI support, add:
+    //
+    // if let Some(credentials) = load_cli_credentials()? {
+    //     // Check if token expired
+    //     if credentials.expires_at < Utc::now().timestamp() {
+    //         // Auto-refresh via HTTP call to server
+    //         let new_credentials = refresh_token_via_http(
+    //             &credentials.server,
+    //             &credentials.refresh_token
+    //         ).await?;
+    //         save_cli_credentials(&new_credentials)?;
+    //         credentials = new_credentials;
+    //     }
+    //
+    //     // Credentials will be used to scope REQUEST_CONTEXT in run()
+    // }
+
     Ok(OperationRegistry::new(deps))
 }
 
@@ -69,6 +88,27 @@ pub async fn run() -> Result<()> {
 
     // Try to dispatch to an operation (uses registry.execute() like MCP does)
     if let Some((op_name, input)) = dispatch_to_operation(&matches, &registry)? {
+        // TODO: Scope REQUEST_CONTEXT for multi-tenant CLI support
+        // For authenticated CLI operations:
+        //
+        // let credentials = load_cli_credentials()?;
+        // let ctx = RequestContext {
+        //     user_id: credentials.user_id,
+        //     tenant_id: credentials.tenant_id,
+        //     role: credentials.role,  // Stored from JWT claims
+        //     request_id: Uuid::new_v4().to_string(),
+        //     tenant_name: credentials.tenant_name,
+        //     client_ip: None,
+        //     user_agent: Some(format!("BeemFlow-CLI/{}", env!("CARGO_PKG_VERSION"))),
+        // };
+        //
+        // let result = REQUEST_CONTEXT.scope(ctx, async {
+        //     registry.execute(&op_name, input).await
+        // }).await?;
+        //
+        // For now, operations use get_auth_context_or_default() which returns
+        // default user/tenant (single-user mode).
+
         let result = registry.execute(&op_name, input).await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
@@ -170,7 +210,51 @@ fn build_cli(registry: &OperationRegistry) -> Command {
                         .about("Revoke OAuth client")
                         .arg(Arg::new("client-id").required(true).index(1)),
                 ),
-        );
+        )
+        // TODO: Add CLI authentication support
+        // Currently, CLI operates in single-user mode only (user_id="default", tenant_id="default").
+        // To support multi-tenant CLI:
+        //
+        // 1. Add auth subcommand:
+        //    .subcommand(
+        //        Command::new("auth")
+        //            .about("Authentication management")
+        //            .subcommand(Command::new("register").about("Register new account")
+        //                .arg(Arg::new("email").required(true))
+        //                .arg(Arg::new("password").required(true))
+        //                .arg(Arg::new("name").required(true)))
+        //            .subcommand(Command::new("login").about("Login to BeemFlow server")
+        //                .arg(Arg::new("email").required(true))
+        //                .arg(Arg::new("password").required(true))
+        //                .arg(Arg::new("server").default_value("http://localhost:3330")))
+        //            .subcommand(Command::new("logout").about("Logout and clear credentials"))
+        //            .subcommand(Command::new("whoami").about("Show current user and tenant"))
+        //    )
+        //
+        // 2. Implement credential storage in ~/.beemflow/credentials.json:
+        //    {
+        //        "server": "https://beemflow.example.com",
+        //        "access_token": "eyJ...",
+        //        "refresh_token": "rt_...",
+        //        "expires_at": 1704700800,
+        //        "user_id": "user_123",
+        //        "tenant_id": "tenant_456"
+        //    }
+        //
+        // 3. Load credentials in create_registry() and scope REQUEST_CONTEXT for each operation:
+        //    let credentials = load_cli_credentials()?;
+        //    let ctx = credentials_to_request_context(&credentials)?;
+        //    REQUEST_CONTEXT.scope(ctx, async {
+        //        registry.execute(op_name, input).await
+        //    }).await
+        //
+        // 4. Auto-refresh expired tokens before operation execution
+        //
+        // 5. Handle multiple tenants (let user switch contexts):
+        //    flow auth switch-tenant <tenant_id>
+        //
+        // For now, use HTTP API for registration/login, or run server with --single-user flag.
+;
 
     // Build operation commands from metadata
     add_operation_commands(app, registry)
@@ -503,6 +587,7 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
             enable_oauth_server: false,
             oauth_issuer,
             public_url,
+            single_user: false, // Default to multi-tenant mode
         });
     }
 

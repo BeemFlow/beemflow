@@ -193,6 +193,9 @@ pub mod flows {
         type Output = ListOutput;
 
         async fn execute(&self, _input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
             let flows = crate::storage::flows::list_flows(&flows_dir).await?;
             Ok(ListOutput { flows })
@@ -217,6 +220,9 @@ pub mod flows {
         type Output = GetOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
             let content = crate::storage::flows::get_flow(&flows_dir, &input.name)
                 .await?
@@ -251,6 +257,9 @@ pub mod flows {
         type Output = SaveOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsUpdate)?;
+
             // Get content - either from content field or read from file (CLI only)
             let content = if let Some(file_path) = input.file {
                 // CLI path: read from file
@@ -308,6 +317,9 @@ pub mod flows {
         type Output = DeleteOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDelete)?;
+
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
             crate::storage::flows::delete_flow(&flows_dir, &input.name).await?;
 
@@ -336,6 +348,9 @@ pub mod flows {
         type Output = DeployOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDeploy)?;
+
             // Acquire per-flow lock to prevent concurrent operations on the same flow
             let lock = self
                 .deps
@@ -382,16 +397,25 @@ pub mod flows {
             // Deploy the version to database (atomic transaction)
             self.deps
                 .storage
-                .deploy_flow_version(&input.name, &version, &content)
+                .deploy_flow_version(
+                    &ctx.tenant_id,
+                    &input.name,
+                    &version,
+                    &content,
+                    &ctx.user_id,
+                )
                 .await?;
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback deployment
-                if let Err(rollback_err) =
-                    self.deps.storage.unset_deployed_version(&input.name).await
+                if let Err(rollback_err) = self
+                    .deps
+                    .storage
+                    .unset_deployed_version(&ctx.tenant_id, &input.name)
+                    .await
                 {
                     tracing::error!(
                         flow = %input.name,
@@ -432,6 +456,9 @@ pub mod flows {
         type Output = RollbackOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDeploy)?;
+
             // Acquire per-flow lock to prevent concurrent operations on the same flow
             let lock = self
                 .deps
@@ -442,7 +469,11 @@ pub mod flows {
             let _guard = lock.lock().await;
 
             // Get current deployed version (for rollback if cron fails)
-            let current_version = self.deps.storage.get_deployed_version(&input.name).await?;
+            let current_version = self
+                .deps
+                .storage
+                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .await?;
 
             // Pre-validate target version's cron expression BEFORE touching storage
             if self.deps.cron_manager.is_some() {
@@ -450,7 +481,7 @@ pub mod flows {
                 let content = self
                     .deps
                     .storage
-                    .get_flow_version_content(&input.name, &input.version)
+                    .get_flow_version_content(&ctx.tenant_id, &input.name, &input.version)
                     .await?
                     .ok_or_else(|| {
                         not_found("Flow version", &format!("{}@{}", input.name, input.version))
@@ -480,21 +511,24 @@ pub mod flows {
             // Database foreign key constraint ensures version exists in flow_versions table
             self.deps
                 .storage
-                .set_deployed_version(&input.name, &input.version)
+                .set_deployed_version(&ctx.tenant_id, &input.name, &input.version)
                 .await?;
 
             // Update cron schedule (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback to previous version
                 let rollback_result = if let Some(prev_version) = &current_version {
                     self.deps
                         .storage
-                        .set_deployed_version(&input.name, prev_version)
+                        .set_deployed_version(&ctx.tenant_id, &input.name, prev_version)
                         .await
                 } else {
-                    self.deps.storage.unset_deployed_version(&input.name).await
+                    self.deps
+                        .storage
+                        .unset_deployed_version(&ctx.tenant_id, &input.name)
+                        .await
                 };
 
                 if let Err(rollback_err) = rollback_result {
@@ -538,6 +572,9 @@ pub mod flows {
         type Output = DisableOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDeploy)?;
+
             // Acquire per-flow lock to prevent concurrent operations on the same flow
             let lock = self
                 .deps
@@ -548,7 +585,11 @@ pub mod flows {
             let _guard = lock.lock().await;
 
             // Check if flow is currently deployed
-            let deployed_version = self.deps.storage.get_deployed_version(&input.name).await?;
+            let deployed_version = self
+                .deps
+                .storage
+                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .await?;
 
             let version = deployed_version.ok_or_else(|| {
                 BeemFlowError::not_found(
@@ -560,7 +601,7 @@ pub mod flows {
             // Remove from production
             self.deps
                 .storage
-                .unset_deployed_version(&input.name)
+                .unset_deployed_version(&ctx.tenant_id, &input.name)
                 .await?;
 
             // Remove from cron scheduler (warn but don't fail disable)
@@ -568,7 +609,9 @@ pub mod flows {
             // If cron removal fails, the orphaned job will fail when it tries to run.
             // Failing disable would prevent users from stopping flows, which is dangerous.
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.remove_schedule(&input.name).await
+                && let Err(e) = cron_manager
+                    .remove_schedule(&ctx.tenant_id, &input.name)
+                    .await
             {
                 tracing::warn!(
                     flow = %input.name,
@@ -609,6 +652,9 @@ pub mod flows {
         type Output = EnableOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDeploy)?;
+
             // Acquire per-flow lock to prevent concurrent operations on the same flow
             let lock = self
                 .deps
@@ -619,7 +665,12 @@ pub mod flows {
             let _guard = lock.lock().await;
 
             // Check if already enabled
-            if let Some(current) = self.deps.storage.get_deployed_version(&input.name).await? {
+            if let Some(current) = self
+                .deps
+                .storage
+                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .await?
+            {
                 return Err(BeemFlowError::validation(format!(
                     "Flow '{}' is already enabled (version {}). Use 'rollback' to change versions.",
                     input.name, current
@@ -630,7 +681,7 @@ pub mod flows {
             let latest_version = self
                 .deps
                 .storage
-                .get_latest_deployed_version_from_history(&input.name)
+                .get_latest_deployed_version_from_history(&ctx.tenant_id, &input.name)
                 .await?
                 .ok_or_else(|| {
                     BeemFlowError::not_found(
@@ -645,7 +696,7 @@ pub mod flows {
                 let content = self
                     .deps
                     .storage
-                    .get_flow_version_content(&input.name, &latest_version)
+                    .get_flow_version_content(&ctx.tenant_id, &input.name, &latest_version)
                     .await?
                     .ok_or_else(|| {
                         not_found(
@@ -677,16 +728,19 @@ pub mod flows {
             // Re-deploy it (atomic)
             self.deps
                 .storage
-                .set_deployed_version(&input.name, &latest_version)
+                .set_deployed_version(&ctx.tenant_id, &input.name, &latest_version)
                 .await?;
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback enable
-                if let Err(rollback_err) =
-                    self.deps.storage.unset_deployed_version(&input.name).await
+                if let Err(rollback_err) = self
+                    .deps
+                    .storage
+                    .unset_deployed_version(&ctx.tenant_id, &input.name)
+                    .await
                 {
                     tracing::error!(
                         flow = %input.name,
@@ -729,19 +783,27 @@ pub mod flows {
         type Output = RestoreOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             // Determine which version to restore
             let version = if let Some(v) = input.version {
                 // Specific version requested
                 v
             } else {
                 // Get currently deployed version, or fall back to latest from history
-                match self.deps.storage.get_deployed_version(&input.name).await? {
+                match self
+                    .deps
+                    .storage
+                    .get_deployed_version(&ctx.tenant_id, &input.name)
+                    .await?
+                {
                     Some(v) => v,
                     None => {
                         // If no deployed version, get latest from history (for disabled flows)
                         self.deps
                             .storage
-                            .get_latest_deployed_version_from_history(&input.name)
+                            .get_latest_deployed_version_from_history(&ctx.tenant_id, &input.name)
                             .await?
                             .ok_or_else(|| {
                                 BeemFlowError::not_found(
@@ -757,7 +819,7 @@ pub mod flows {
             let content = self
                 .deps
                 .storage
-                .get_flow_version_content(&input.name, &version)
+                .get_flow_version_content(&ctx.tenant_id, &input.name, &version)
                 .await?
                 .ok_or_else(|| {
                     not_found(
@@ -803,7 +865,14 @@ pub mod flows {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
-            let history = self.deps.storage.list_flow_versions(&input.name).await?;
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
+            let history = self
+                .deps
+                .storage
+                .list_flow_versions(&ctx.tenant_id, &input.name)
+                .await?;
 
             let result: Vec<_> = history
                 .iter()
@@ -838,6 +907,9 @@ pub mod flows {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             let flow = super::load_flow_from_config(
                 &self.deps.config,
                 Some(&input.name),
@@ -871,6 +943,9 @@ pub mod flows {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             let flow = parse_file(&input.file, None)?;
             Validator::validate(&flow)?;
 
@@ -893,6 +968,9 @@ pub mod flows {
         type Output = Value;
 
         async fn execute(&self, _input: Self::Input) -> Result<Self::Output> {
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
+
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Test functionality not implemented yet"

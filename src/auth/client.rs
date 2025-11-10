@@ -215,6 +215,8 @@ impl OAuthClientManager {
         code: &str,
         code_verifier: &str,
         integration: &str,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<OAuthCredential> {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
@@ -266,6 +268,8 @@ impl OAuthClientManager {
             }),
             created_at: now,
             updated_at: now,
+            user_id: user_id.to_string(),
+            tenant_id: tenant_id.to_string(),
         };
 
         // Save credential
@@ -302,15 +306,21 @@ impl OAuthClientManager {
     ///     "http://localhost:3000/oauth/callback".to_string()
     /// )?;
     ///
-    /// let token = client.get_token("google", "sheets").await?;
+    /// let token = client.get_token("google", "sheets", "user123", "tenant456").await?;
     /// println!("Access token: {}", token);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_token(&self, provider: &str, integration: &str) -> Result<String> {
+    pub async fn get_token(
+        &self,
+        provider: &str,
+        integration: &str,
+        user_id: &str,
+        tenant_id: &str,
+    ) -> Result<String> {
         let cred = self
             .storage
-            .get_oauth_credential(provider, integration)
+            .get_oauth_credential(provider, integration, user_id, tenant_id)
             .await
             .map_err(|e| {
                 BeemFlowError::OAuth(format!(
@@ -440,7 +450,13 @@ impl OAuthClientManager {
     /// # use std::sync::Arc;
     /// # async fn example(client: Arc<OAuthClientManager>) -> Result<(), Box<dyn std::error::Error>> {
     /// // Get token using client credentials (no user interaction)
-    /// let token = client.get_client_credentials_token("digikey", "default", &[]).await?;
+    /// let token = client.get_client_credentials_token(
+    ///     "digikey",
+    ///     "default",
+    ///     &[],
+    ///     "user123",
+    ///     "tenant456"
+    /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -449,6 +465,8 @@ impl OAuthClientManager {
         provider_id: &str,
         integration: &str,
         scopes: &[&str],
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<OAuthCredential> {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
@@ -502,6 +520,8 @@ impl OAuthClientManager {
             }),
             created_at: now,
             updated_at: now,
+            user_id: user_id.to_string(),
+            tenant_id: tenant_id.to_string(),
         };
 
         // Save credential
@@ -566,13 +586,31 @@ pub struct OAuthClientState {
 }
 
 /// Create OAuth client routes (for connecting TO external providers)
-pub fn create_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
+/// Create public OAuth client routes (callbacks - no auth required)
+///
+/// These routes must remain public because OAuth providers redirect to them.
+/// The callbacks validate CSRF tokens and retrieve user context from session.
+pub fn create_public_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
     Router::new()
-        // OAuth UI endpoints (OAuth CLIENT - for connecting TO providers)
+        .route("/oauth/callback", get(oauth_callback_handler))
+        .route("/oauth/callback/api", get(oauth_api_callback_handler))
+        .route("/oauth/success", get(oauth_success_handler))
+        .with_state(state)
+}
+
+/// Create protected OAuth client routes (requires authentication)
+///
+/// These routes initiate OAuth flows and manage credentials.
+/// MUST be protected with auth middleware to ensure per-user credential scoping.
+pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
+    Router::new()
+        // OAuth UI endpoints
         .route("/oauth/providers", get(oauth_providers_handler))
         .route("/oauth/providers/{provider}", get(oauth_provider_handler))
-        .route("/oauth/success", get(oauth_success_handler))
-        .route("/oauth/callback", get(oauth_callback_handler))
+        .route(
+            "/oauth/authorize/{provider}",
+            get(authorize_oauth_provider_handler),
+        )
         // OAuth Provider management endpoints (JSON API)
         .route("/oauth/providers/list", get(list_oauth_providers_handler))
         .route(
@@ -597,11 +635,6 @@ pub fn create_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
             "/oauth/credentials/{id}/delete",
             delete(delete_oauth_credential_handler),
         )
-        .route(
-            "/oauth/authorize/{provider}",
-            get(authorize_oauth_provider_handler),
-        )
-        .route("/oauth/callback/api", get(oauth_api_callback_handler))
         .with_state(state)
 }
 
@@ -661,7 +694,31 @@ fn error_html(title: &str, heading: &str, message: Option<&str>, retry_link: boo
 // OAUTH CLIENT UI HANDLERS
 // ============================================================================
 
-async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> impl IntoResponse {
+async fn oauth_providers_handler(
+    State(state): State<Arc<OAuthClientState>>,
+    req: axum::extract::Request,
+) -> impl IntoResponse {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = match req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+    {
+        Some(ctx) => ctx,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "Authentication Required",
+                    "You must be logged in to view OAuth providers",
+                    None,
+                    false,
+                )),
+            )
+                .into_response();
+        }
+    };
+
     // Fetch providers from registry and storage
     let registry_providers = match state.registry_manager.list_oauth_providers().await {
         Ok(p) => p,
@@ -679,8 +736,12 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
         }
     };
 
-    // Fetch all credentials and build a set of connected provider IDs for O(1) lookup
-    let connected_providers: HashSet<String> = match state.storage.list_oauth_credentials().await {
+    // Fetch user's credentials and build a set of connected provider IDs for O(1) lookup
+    let connected_providers: HashSet<String> = match state
+        .storage
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
+        .await
+    {
         Ok(credentials) => credentials.iter().map(|c| c.provider.clone()).collect(),
         Err(e) => {
             tracing::error!("Failed to list OAuth credentials: {}", e);
@@ -730,11 +791,11 @@ async fn oauth_providers_handler(State(state): State<Arc<OAuthClientState>>) -> 
         .template_renderer
         .render_json("providers", &template_data)
     {
-        Ok(html) => Html(html),
+        Ok(html) => Html(html).into_response(),
         Err(e) => {
             tracing::error!("Failed to render providers template: {}", e);
             let message = format!("{}", e);
-            Html(error_html("Error", "Template Error", Some(&message), false))
+            Html(error_html("Error", "Template Error", Some(&message), false)).into_response()
         }
     }
 }
@@ -922,10 +983,52 @@ async fn oauth_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
+    // Extract user_id and tenant_id from session (set during authorization)
+    let user_id = match session.data.get("user_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            tracing::error!("No user_id found in session");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "OAuth Error",
+                    "Authentication Required",
+                    Some("User authentication required. Please log in and try again."),
+                    true,
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    let tenant_id = match session.data.get("tenant_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            tracing::error!("No tenant_id found in session");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "OAuth Error",
+                    "Tenant Required",
+                    Some("Tenant context required. Please log in and try again."),
+                    true,
+                )),
+            )
+                .into_response();
+        }
+    };
+
     // Exchange authorization code for tokens using oauth2 crate
     match state
         .oauth_client
-        .exchange_code(provider_id, code, code_verifier, integration)
+        .exchange_code(
+            provider_id,
+            code,
+            code_verifier,
+            integration,
+            user_id,
+            tenant_id,
+        )
         .await
     {
         Ok(credential) => {
@@ -965,7 +1068,29 @@ async fn oauth_callback_handler(
 async fn oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(provider): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> impl IntoResponse {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = match req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+    {
+        Some(ctx) => ctx,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "Authentication Required",
+                    "You must be logged in to connect OAuth providers",
+                    None,
+                    false,
+                )),
+            )
+                .into_response();
+        }
+    };
+
     // Get default scopes for the provider from registry
     let scopes = match state.registry_manager.get_oauth_provider(&provider).await {
         Ok(Some(entry)) => entry
@@ -1024,6 +1149,16 @@ async fn oauth_provider_handler(
         &session.id,
         "oauth_integration".to_string(),
         json!("default"),
+    );
+
+    // Store user_id and tenant_id for callback (critical for multi-tenant security)
+    state
+        .session_store
+        .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
+    state.session_store.update_session(
+        &session.id,
+        "tenant_id".to_string(),
+        json!(req_ctx.tenant_id),
     );
 
     // Redirect to OAuth provider (session_id is embedded in state parameter)
@@ -1192,7 +1327,15 @@ async fn update_oauth_provider_handler(
 async fn delete_oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(id): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let _req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     state
         .storage
         .delete_oauth_provider(&id)
@@ -1208,10 +1351,18 @@ async fn delete_oauth_provider_handler(
 /// List all OAuth credentials
 async fn list_oauth_credentials_handler(
     State(state): State<Arc<OAuthClientState>>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     let credentials = state
         .storage
-        .list_oauth_credentials()
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1236,15 +1387,58 @@ async fn list_oauth_credentials_handler(
 }
 
 /// Delete an OAuth credential
+///
+/// # Security - RBAC
+/// - Users can delete their own credentials
+/// - Admins/Owners can delete any credential in their tenant (OAuthDisconnect permission)
 async fn delete_oauth_credential_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(id): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Efficient direct lookup with tenant isolation
+    let credential = state
+        .storage
+        .get_oauth_credential_by_id(&id, &req_ctx.tenant_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to fetch credential: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // RBAC: Check ownership
+    if credential.user_id != req_ctx.user_id
+        && !req_ctx
+            .role
+            .has_permission(crate::auth::Permission::OAuthDisconnect)
+    {
+        tracing::warn!(
+            "User {} (role: {:?}) attempted to delete credential {} owned by {}",
+            req_ctx.user_id,
+            req_ctx.role,
+            id,
+            credential.user_id
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Delete with defense-in-depth
     state
         .storage
-        .delete_oauth_credential(&id)
+        .delete_oauth_credential(&id, &req_ctx.tenant_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Failed to delete credential: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
     Ok(Json(json!({ "success": true })))
 }
 
@@ -1253,7 +1447,15 @@ async fn authorize_oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(provider_id): AxumPath<String>,
     Query(params): Query<HashMap<String, String>>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     // Get scopes from query parameters (comma-separated)
     let scopes = params
         .get("scopes")
@@ -1302,6 +1504,16 @@ async fn authorize_oauth_provider_handler(
         &session.id,
         "oauth_integration".to_string(),
         json!(integration.unwrap_or("default")),
+    );
+
+    // Store user_id and tenant_id for callback (critical for multi-tenant security)
+    state
+        .session_store
+        .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
+    state.session_store.update_session(
+        &session.id,
+        "tenant_id".to_string(),
+        json!(req_ctx.tenant_id),
     );
 
     // Return authorization URL (session_id is now embedded in the state parameter)
@@ -1372,10 +1584,30 @@ async fn oauth_api_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
+    // Extract user_id and tenant_id from session
+    let user_id = session
+        .data
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let tenant_id = session
+        .data
+        .get("tenant_id")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     // Exchange code for tokens
     let credential = state
         .oauth_client
-        .exchange_code(provider_id, code, code_verifier, stored_integration)
+        .exchange_code(
+            provider_id,
+            code,
+            code_verifier,
+            stored_integration,
+            user_id,
+            tenant_id,
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

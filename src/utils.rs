@@ -171,14 +171,14 @@ mod tests {
         // Verify storage is functional
         env.deps
             .storage
-            .deploy_flow_version("test_flow", "1.0.0", "content")
+            .deploy_flow_version("default", "test_flow", "1.0.0", "content", "test_user")
             .await
             .expect("Should be able to write to database");
 
         let content = env
             .deps
             .storage
-            .get_flow_version_content("test_flow", "1.0.0")
+            .get_flow_version_content("default", "test_flow", "1.0.0")
             .await
             .expect("Should be able to read from database");
 

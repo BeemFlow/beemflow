@@ -76,7 +76,13 @@ pub mod runs {
         type Output = StartOutput;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
-            // Delegate to engine.start() - all loading logic encapsulated there
+            // Extract RequestContext (always present via middleware)
+            let ctx = super::super::get_auth_context_or_default();
+
+            // Check RBAC permission
+            crate::auth::check_permission(&ctx, crate::auth::Permission::RunsTrigger)?;
+
+            // Delegate to engine.start() with authenticated user context
             let result = self
                 .deps
                 .engine
@@ -84,6 +90,8 @@ pub mod runs {
                     &input.flow_name,
                     input.event.unwrap_or_default(),
                     input.draft.unwrap_or(false),
+                    &ctx.user_id,
+                    &ctx.tenant_id,
                 )
                 .await?;
 
@@ -114,13 +122,17 @@ pub mod runs {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Require authentication and check RBAC permission
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::RunsRead)?;
+
             let run_id = Uuid::parse_str(&input.run_id)
                 .map_err(|_| BeemFlowError::validation("Invalid run ID"))?;
 
             let mut run = self
                 .deps
                 .storage
-                .get_run(run_id)
+                .get_run(run_id, &ctx.tenant_id)
                 .await?
                 .ok_or_else(|| not_found("Run", &input.run_id))?;
 
@@ -150,11 +162,19 @@ pub mod runs {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Require authentication and check RBAC permission
+            let ctx = super::super::get_auth_context_or_default();
+            crate::auth::check_permission(&ctx, crate::auth::Permission::RunsRead)?;
+
             // Use provided values or defaults (limit: 100, offset: 0)
             let limit = input.limit.unwrap_or(100);
             let offset = input.offset.unwrap_or(0);
 
-            let runs = self.deps.storage.list_runs(limit, offset).await?;
+            let runs = self
+                .deps
+                .storage
+                .list_runs(&ctx.tenant_id, limit, offset)
+                .await?;
             Ok(serde_json::to_value(runs)?)
         }
     }
@@ -177,9 +197,16 @@ pub mod runs {
         type Output = Value;
 
         async fn execute(&self, input: Self::Input) -> Result<Self::Output> {
+            // Extract RequestContext (always present via middleware)
+            let ctx = super::super::get_auth_context_or_default();
+
+            // Check RBAC permission
+            crate::auth::check_permission(&ctx, crate::auth::Permission::RunsTrigger)?;
+
             let event = input.event.unwrap_or_default();
 
             // Resume the run using the engine
+            // The token provides the run context, RBAC ensures user has permission
             self.deps.engine.resume(&input.token, event).await?;
 
             Ok(serde_json::json!({

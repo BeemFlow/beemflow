@@ -139,8 +139,8 @@ pub fn step_status_to_str(status: StepStatus) -> &'static str {
 // ============================================================================
 // SQLite-specific Helpers
 // ============================================================================
-// Note: Trivial wrappers removed - use serde_json::from_str, .timestamp(),
-// and DateTime::from_timestamp directly
+// Note: Trivial wrappers removed - use serde_json::from_str, .timestamp_millis(),
+// and DateTime::from_timestamp_millis directly (all timestamps stored as milliseconds)
 
 // ============================================================================
 // PostgreSQL-specific Helpers

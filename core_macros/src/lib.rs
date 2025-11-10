@@ -359,17 +359,40 @@ fn generate_http_route_method(
         (quote! {}, quote! { () })
     };
 
+    // Generate handler parameters with Extension extractor for RequestContext
+    // Extension<T> extracts per-request state inserted by middleware
+    // HTTP API routes are protected by auth middleware, so RequestContext is always present
+    let handler_params = if !matches!(extractors.to_string().as_str(), "") {
+        quote! {
+            axum::extract::Extension(req_ctx): axum::extract::Extension<crate::auth::RequestContext>,
+            #extractors
+        }
+    } else {
+        quote! {
+            axum::extract::Extension(req_ctx): axum::extract::Extension<crate::auth::RequestContext>
+        }
+    };
+
     quote! {
         /// Auto-generated HTTP route registration for this operation
         pub fn http_route(deps: std::sync::Arc<super::Dependencies>) -> axum::Router {
             axum::Router::new().route(
                 Self::HTTP_PATH.unwrap(),
                 axum::routing::#method_ident({
-                    move |#extractors| async move {
+                    move |#handler_params| async move {
                         let op = Self::new(deps.clone());
-                        let result = op.execute(#input_construction).await
-                            .map_err(|e| crate::http::AppError::from(e))?;
-                        Ok::<axum::Json<_>, crate::http::AppError>(axum::Json(result))
+
+                        // Construct input (may fail with validation errors)
+                        let input = #input_construction;
+
+                        // Execute with RequestContext in task-local storage
+                        // This makes the context available to the operation via REQUEST_CONTEXT.try_with()
+                        crate::core::REQUEST_CONTEXT.scope(req_ctx, async move {
+                            op.execute(input).await
+                        })
+                        .await
+                        .map(|output| axum::Json(output))
+                        .map_err(|e| crate::http::AppError::from(e))
                     }
                 })
             )

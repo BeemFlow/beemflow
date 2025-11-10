@@ -29,11 +29,11 @@ async fn test_webhook_route_registration() {
     // Build webhook router
     let app = create_webhook_routes().with_state(webhook_state);
 
-    // Make a POST request to /test-provider
-    // This should return 404 (webhook not configured) but proves the route is registered
+    // Make a POST request to /test-tenant/test-topic
+    // This should return 404 (tenant not found) but proves the route is registered
     let request = Request::builder()
         .method("POST")
-        .uri("/test-provider")
+        .uri("/test-tenant/test-topic")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"test":"data"}"#))
         .unwrap();
@@ -41,7 +41,7 @@ async fn test_webhook_route_registration() {
     let response = app.oneshot(request).await.unwrap();
 
     // Verify the route is accessible (not 404 NOT_FOUND for the route itself)
-    // We expect 404 "Webhook not configured" since test-provider isn't in registry
+    // We expect 404 "Tenant not found" since test-tenant doesn't exist
     // This is different from Axum returning 404 for an unregistered route
     assert_eq!(
         response.status(),
@@ -437,7 +437,11 @@ steps:
     let flow = parse_string(flow_yaml, None).expect("Failed to parse flow");
 
     // Execute flow - should pause at await_event
-    let result = env.deps.engine.execute(&flow, HashMap::new()).await;
+    let result = env
+        .deps
+        .engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await;
     assert!(result.is_err(), "Flow should pause (error) at await_event");
     let err = result.unwrap_err();
     let err_msg = err.to_string();
@@ -530,7 +534,11 @@ steps:
 "#;
 
     let flow = parse_string(flow_yaml, None).unwrap();
-    env.deps.engine.execute(&flow, HashMap::new()).await.ok();
+    env.deps
+        .engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await
+        .ok();
 
     // Get the auto-generated paused token
     let paused = env

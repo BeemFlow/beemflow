@@ -1009,9 +1009,6 @@ pub trait AuthStorage: Send + Sync {
     async fn get_tenant_secret(&self, tenant_id: &str, key: &str) -> Result<Option<TenantSecret>>;
     async fn list_tenant_secrets(&self, tenant_id: &str) -> Result<Vec<TenantSecret>>;
     async fn delete_tenant_secret(&self, tenant_id: &str, key: &str) -> Result<()>;
-
-    // PostgreSQL-specific: Set tenant context for RLS
-    async fn set_tenant_context(&self, tenant_id: &str) -> Result<()>;
 }
 ```
 
@@ -1111,15 +1108,6 @@ impl AuthStorage for PostgresStorage {
     }
 
     // ... implement remaining methods
-
-    async fn set_tenant_context(&self, tenant_id: &str) -> Result<()> {
-        sqlx::query("SET LOCAL app.current_tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 }
 
 // Helper struct for database rows
@@ -1732,12 +1720,6 @@ pub async fn tenant_middleware(
         user_agent,
         request_id,
     };
-
-    // Set PostgreSQL session variables for RLS
-    if let Err(e) = state.storage.set_tenant_context(&req_ctx.tenant_id).await {
-        tracing::error!("Failed to set tenant context: {}", e);
-        // Continue anyway - RLS will catch any issues
-    }
 
     req.extensions_mut().insert(req_ctx);
 

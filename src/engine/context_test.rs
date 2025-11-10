@@ -67,6 +67,8 @@ async fn test_runs_access_previous() {
         started_at: Utc::now(),
         ended_at: Some(Utc::now()),
         steps: None,
+        tenant_id: "test_tenant".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&prev_run).await.unwrap();
@@ -92,8 +94,13 @@ async fn test_runs_access_previous() {
 
     storage.save_step(&step).await.unwrap();
 
-    // Create RunsAccess
-    let runs_access = RunsAccess::new(storage, None, "test_flow".to_string());
+    // Create RunsAccess - use same tenant_id as the run
+    let runs_access = RunsAccess::new(
+        storage,
+        None,
+        "test_flow".to_string(),
+        "test_tenant".to_string(),
+    );
 
     // Get previous run
     let previous = runs_access.previous().await;
