@@ -80,7 +80,7 @@ thiserror = "2.0"
 # Validation
 jsonschema = "0.33"
 validator = { version = "0.20", features = ["derive"] }
-schemars = "1.0"
+schemars = "1.1"
 
 # UUID & Time
 uuid = { version = "1.8", features = ["v4", "v5", "serde"] }
@@ -88,7 +88,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # OAuth
 oauth2 = "5.0"
-jsonwebtoken = { version = "10.1", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.2", default-features = false, features = ["rust_crypto"] }
 rand = "0.9"
 base64 = "0.22"
 url = "2"
