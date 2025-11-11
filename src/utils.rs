@@ -65,7 +65,7 @@ impl TestEnvironment {
     /// Create a test environment with a custom database name
     ///
     /// Useful when you need multiple isolated environments in the same test
-    pub async fn with_db_name(db_name: &str) -> Self {
+    pub async fn with_db_name(_db_name: &str) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let beemflow_dir = temp_dir.path().join(".beemflow");
 
@@ -86,8 +86,10 @@ impl TestEnvironment {
             ..Default::default()
         });
 
+        // Use :memory: for tests to avoid migration hash conflicts
+        // (File-based databases can have cached migration state)
         let storage = Arc::new(
-            SqliteStorage::new(beemflow_dir.join(db_name).to_str().unwrap())
+            SqliteStorage::new(":memory:")
                 .await
                 .expect("Failed to create SQLite storage"),
         );
