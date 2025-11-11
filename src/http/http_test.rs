@@ -330,7 +330,11 @@ async fn test_list_runs() {
         })
         .await;
 
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "list_runs should succeed with empty input: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
