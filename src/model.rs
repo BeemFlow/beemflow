@@ -548,6 +548,12 @@ pub struct Run {
     /// Step execution records
     #[serde(skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<StepRun>>,
+
+    /// Tenant ID (organization context) - REQUIRED for multi-tenant isolation
+    pub tenant_id: String,
+
+    /// User who triggered this run - REQUIRED for audit trail and per-user OAuth
+    pub triggered_by_user_id: String,
 }
 
 /// Run execution status
@@ -656,6 +662,12 @@ pub struct OAuthCredential {
 
     /// Last update time
     pub updated_at: DateTime<Utc>,
+
+    /// User ID (owner of this credential)
+    pub user_id: String,
+
+    /// Tenant ID (organization context)
+    pub tenant_id: String,
 }
 
 // Validation macros for required fields
@@ -893,6 +905,8 @@ steps:
             scope: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            user_id: "test_user".to_string(),
+            tenant_id: "test_tenant".to_string(),
         };
 
         assert!(cred.is_expired());

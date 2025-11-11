@@ -14,6 +14,8 @@ fn create_test_credential() -> OAuthCredential {
         scope: Some("https://www.googleapis.com/auth/spreadsheets".to_string()),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        user_id: "test_user".to_string(),
+        tenant_id: "test_tenant".to_string(),
     }
 }
 
@@ -33,7 +35,7 @@ async fn test_get_token_no_credential() {
     )
     .expect("Failed to create OAuth client manager");
 
-    let result = client.get_token("google", "sheets").await;
+    let result = client.get_token("google", "sheets", "test_user", "test_tenant").await;
     assert!(result.is_err());
 }
 
@@ -56,7 +58,7 @@ async fn test_get_token_valid() {
         "http://localhost:3000/callback".to_string(),
     )
     .expect("Failed to create OAuth client manager");
-    let token = client.get_token("google", "sheets").await.unwrap();
+    let token = client.get_token("google", "sheets", "test_user", "test_tenant").await.unwrap();
 
     assert_eq!(token, "test-token");
 }

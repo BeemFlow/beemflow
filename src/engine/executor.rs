@@ -137,6 +137,19 @@ fn create_loop_vars(
     vars
 }
 
+/// Configuration for creating an Executor
+pub struct ExecutorConfig {
+    pub adapters: Arc<AdapterRegistry>,
+    pub templater: Arc<Templater>,
+    pub storage: Arc<dyn Storage>,
+    pub secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
+    pub oauth_client: Arc<crate::auth::OAuthClientManager>,
+    pub runs_data: Option<HashMap<String, Value>>,
+    pub max_concurrent_tasks: usize,
+    pub user_id: String,
+    pub tenant_id: String,
+}
+
 /// Step executor
 pub struct Executor {
     adapters: Arc<AdapterRegistry>,
@@ -146,27 +159,23 @@ pub struct Executor {
     oauth_client: Arc<crate::auth::OAuthClientManager>,
     runs_data: Option<HashMap<String, Value>>,
     max_concurrent_tasks: usize,
+    user_id: String,
+    tenant_id: String,
 }
 
 impl Executor {
-    /// Create a new executor
-    pub fn new(
-        adapters: Arc<AdapterRegistry>,
-        templater: Arc<Templater>,
-        storage: Arc<dyn Storage>,
-        secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
-        oauth_client: Arc<crate::auth::OAuthClientManager>,
-        runs_data: Option<HashMap<String, Value>>,
-        max_concurrent_tasks: usize,
-    ) -> Self {
+    /// Create a new executor from configuration
+    pub fn new(config: ExecutorConfig) -> Self {
         Self {
-            adapters,
-            templater,
-            storage,
-            secrets_provider,
-            oauth_client,
-            runs_data,
-            max_concurrent_tasks,
+            adapters: config.adapters,
+            templater: config.templater,
+            storage: config.storage,
+            secrets_provider: config.secrets_provider,
+            oauth_client: config.oauth_client,
+            runs_data: config.runs_data,
+            max_concurrent_tasks: config.max_concurrent_tasks,
+            user_id: config.user_id,
+            tenant_id: config.tenant_id,
         }
     }
 
@@ -312,6 +321,8 @@ impl Executor {
             let storage = self.storage.clone();
             let secrets_provider = self.secrets_provider.clone();
             let oauth_client = self.oauth_client.clone();
+            let user_id = Some(self.user_id.clone());
+            let tenant_id = Some(self.tenant_id.clone());
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
                 BeemFlowError::adapter(format!("Failed to acquire semaphore: {}", e))
             })?;
@@ -331,6 +342,8 @@ impl Executor {
                         storage,
                         secrets_provider.clone(),
                         oauth_client.clone(),
+                        user_id,
+                        tenant_id,
                     );
 
                     let outputs = adapter.execute(inputs, &exec_ctx).await?;
@@ -488,6 +501,8 @@ impl Executor {
             let storage = self.storage.clone();
             let secrets_provider = self.secrets_provider.clone();
             let oauth_client = self.oauth_client.clone();
+            let user_id = Some(self.user_id.clone());
+            let tenant_id = Some(self.tenant_id.clone());
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
                 BeemFlowError::adapter(format!("Failed to acquire semaphore: {}", e))
             })?;
@@ -510,6 +525,8 @@ impl Executor {
                     storage,
                     secrets_provider.clone(),
                     oauth_client.clone(),
+                    user_id,
+                    tenant_id,
                 );
 
                 // Execute steps - simple tool calls only in parallel foreach
@@ -579,6 +596,8 @@ impl Executor {
             self.storage.clone(),
             self.secrets_provider.clone(),
             self.oauth_client.clone(),
+            Some(self.user_id.clone()),
+            Some(self.tenant_id.clone()),
         );
 
         // Execute with retry if configured
@@ -697,12 +716,20 @@ impl Executor {
             outputs: step_ctx.snapshot().outputs,
             token: token.to_string(),
             run_id,
+            tenant_id: self.tenant_id.clone(),
+            user_id: self.user_id.clone(),
         };
 
         // Store paused run in storage with source metadata for webhook queries
         let paused_value = serde_json::to_value(&paused)?;
         self.storage
-            .save_paused_run(&token, &await_spec.source, paused_value)
+            .save_paused_run(
+                &token,
+                &await_spec.source,
+                paused_value,
+                &self.tenant_id,
+                &self.user_id,
+            )
             .await?;
 
         Err(BeemFlowError::AwaitEventPause(format!(

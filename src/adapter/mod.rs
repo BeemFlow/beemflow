@@ -126,20 +126,35 @@ pub struct ExecutionContext {
     /// - HttpAdapter calls: `ctx.oauth_client.get_token("github", "default")`
     /// - Token is automatically refreshed if expired and injected into request headers
     pub oauth_client: Arc<crate::auth::OAuthClientManager>,
-    // Future fields will be added here as needed without breaking changes
+
+    /// User who triggered this execution (for per-user OAuth credentials)
+    ///
+    /// When a workflow is triggered via authenticated API, this contains the user's ID.
+    /// Used to retrieve user-specific OAuth credentials during tool execution.
+    pub user_id: Option<String>,
+
+    /// Tenant context for this execution (for multi-tenant isolation)
+    ///
+    /// When a workflow is triggered via authenticated API, this contains the tenant ID.
+    /// Used with user_id to retrieve tenant-scoped OAuth credentials.
+    pub tenant_id: Option<String>,
 }
 
 impl ExecutionContext {
-    /// Create a new execution context
+    /// Create a new execution context with user/tenant information
     pub fn new(
         storage: Arc<dyn Storage>,
         secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
         oauth_client: Arc<crate::auth::OAuthClientManager>,
+        user_id: Option<String>,
+        tenant_id: Option<String>,
     ) -> Self {
         Self {
             storage,
             secrets_provider,
             oauth_client,
+            user_id,
+            tenant_id,
         }
     }
 }

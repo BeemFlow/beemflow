@@ -226,15 +226,22 @@ pub struct RunsAccess {
     storage: Arc<dyn Storage>,
     current_run_id: Option<Uuid>,
     flow_name: String,
+    tenant_id: String,
 }
 
 impl RunsAccess {
     /// Create a new runs access helper
-    pub fn new(storage: Arc<dyn Storage>, current_run_id: Option<Uuid>, flow_name: String) -> Self {
+    pub fn new(
+        storage: Arc<dyn Storage>,
+        current_run_id: Option<Uuid>,
+        flow_name: String,
+        tenant_id: String,
+    ) -> Self {
         Self {
             storage,
             current_run_id,
             flow_name,
+            tenant_id,
         }
     }
 
@@ -249,9 +256,11 @@ impl RunsAccess {
     /// Returns empty map if no previous run found.
     pub async fn previous(&self) -> HashMap<String, Value> {
         // Use optimized query to fetch only matching runs (database-level filtering)
+        // Uses tenant_id from the current execution context for tenant isolation
         let runs = match self
             .storage
             .list_runs_by_flow_and_status(
+                &self.tenant_id,
                 &self.flow_name,
                 RunStatus::Succeeded,
                 self.current_run_id,

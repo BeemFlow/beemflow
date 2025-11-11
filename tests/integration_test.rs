@@ -7,6 +7,19 @@ use beemflow::storage::{FlowStorage, RunStorage};
 use beemflow::{Engine, Flow};
 use std::collections::HashMap;
 
+/// Helper function to create a test auth context
+fn create_test_context() -> beemflow::auth::RequestContext {
+    beemflow::auth::RequestContext {
+        user_id: "test_user".to_string(),
+        tenant_id: "test_tenant".to_string(),
+        tenant_name: "test_tenant".to_string(),
+        role: beemflow::auth::Role::Admin,
+        client_ip: None,
+        user_agent: None,
+        request_id: "test".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn test_hello_world_flow() {
     // Parse the hello_world flow from examples
@@ -17,7 +30,10 @@ async fn test_hello_world_flow() {
 
     // Execute it
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, HashMap::new()).await.unwrap();
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs = result.outputs;
 
     // Verify outputs
@@ -83,7 +99,10 @@ steps:
 
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, HashMap::new()).await.unwrap();
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs = result.outputs;
 
     assert!(outputs.contains_key("echo_step"));
@@ -112,7 +131,10 @@ steps:
 
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, HashMap::new()).await.unwrap();
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs = result.outputs;
 
     assert!(outputs.contains_key("templated_echo"));
@@ -146,7 +168,10 @@ steps:
 
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
-    let result = engine.execute(&flow, HashMap::new()).await.unwrap();
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs = result.outputs;
 
     assert_eq!(outputs.len(), 3);
@@ -216,13 +241,13 @@ async fn test_storage_operations() {
     // Test flow versioning
     env.deps
         .storage
-        .deploy_flow_version("test_flow", "1.0.0", "content")
+        .deploy_flow_version("test_tenant", "test_flow", "1.0.0", "content", "test_user")
         .await
         .unwrap();
     let retrieved = env
         .deps
         .storage
-        .get_flow_version_content("test_flow", "1.0.0")
+        .get_flow_version_content("test_tenant", "test_flow", "1.0.0")
         .await
         .unwrap();
     assert_eq!(retrieved.unwrap(), "content");
@@ -237,10 +262,17 @@ async fn test_storage_operations() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        tenant_id: "test_tenant".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     env.deps.storage.save_run(&run).await.unwrap();
-    let retrieved_run = env.deps.storage.get_run(run.id).await.unwrap();
+    let retrieved_run = env
+        .deps
+        .storage
+        .get_run(run.id, "test_tenant")
+        .await
+        .unwrap();
     assert!(retrieved_run.is_some());
     assert_eq!(retrieved_run.unwrap().flow_name.as_str(), "test");
 }
@@ -257,27 +289,31 @@ async fn test_cli_operations_with_fresh_database() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Test saving a flow
-    let save_result = registry.execute("save_flow", serde_json::json!({
-        "name": "test_flow",
-        "content": "name: test_flow\non: cli.manual\nsteps:\n  - id: test\n    use: core.echo\n    with:\n      text: test"
-    })).await;
-    assert!(save_result.is_ok(), "Should be able to save flow");
+    let ctx = create_test_context();
 
-    // Test listing flows - just verify it succeeds
-    let list_result = registry.execute("list_flows", serde_json::json!({})).await;
-    assert!(list_result.is_ok(), "Should be able to list flows");
+    beemflow::core::REQUEST_CONTEXT.scope(ctx, async {
+        // Test saving a flow
+        let save_result = registry.execute("save_flow", serde_json::json!({
+            "name": "test_flow",
+            "content": "name: test_flow\non: cli.manual\nsteps:\n  - id: test\n    use: core.echo\n    with:\n      text: test"
+        })).await;
+        assert!(save_result.is_ok(), "Should be able to save flow");
 
-    // Test getting flow
-    let get_result = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "test_flow"
-            }),
-        )
-        .await;
-    assert!(get_result.is_ok(), "Should be able to get flow");
+        // Test listing flows - just verify it succeeds
+        let list_result = registry.execute("list_flows", serde_json::json!({})).await;
+        assert!(list_result.is_ok(), "Should be able to list flows");
+
+        // Test getting flow
+        let get_result = registry
+            .execute(
+                "get_flow",
+                serde_json::json!({
+                    "name": "test_flow"
+                }),
+            )
+            .await;
+        assert!(get_result.is_ok(), "Should be able to get flow");
+    }).await;
 }
 
 #[tokio::test]
@@ -293,34 +329,38 @@ async fn test_mcp_server_with_fresh_database() {
     // Create MCP server - if this succeeds, the database is functional
     let _server = McpServer::new(registry.clone());
 
-    // Verify server can perform operations through registry
-    let list_result = registry.execute("list_flows", serde_json::json!({})).await;
-    assert!(
-        list_result.is_ok(),
-        "Fresh database should support list_flows"
-    );
+    let ctx = create_test_context();
 
-    // Test saving a flow through the registry (as MCP would)
-    let save_result = registry.execute("save_flow", serde_json::json!({
-        "name": "mcp_test_flow",
-        "content": "name: mcp_test\non: cli.manual\nsteps:\n  - id: test\n    use: core.echo\n    with:\n      text: test"
-    })).await;
-    assert!(
-        save_result.is_ok(),
-        "MCP server should be able to save flows: {:?}",
-        save_result.as_ref().err()
-    );
+    beemflow::core::REQUEST_CONTEXT.scope(ctx, async {
+        // Verify server can perform operations through registry
+        let list_result = registry.execute("list_flows", serde_json::json!({})).await;
+        assert!(
+            list_result.is_ok(),
+            "Fresh database should support list_flows"
+        );
 
-    // Verify flow was saved
-    let get_result = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "mcp_test_flow"
-            }),
-        )
-        .await;
-    assert!(get_result.is_ok(), "Should be able to retrieve saved flow");
+        // Test saving a flow through the registry (as MCP would)
+        let save_result = registry.execute("save_flow", serde_json::json!({
+            "name": "mcp_test_flow",
+            "content": "name: mcp_test\non: cli.manual\nsteps:\n  - id: test\n    use: core.echo\n    with:\n      text: test"
+        })).await;
+        assert!(
+            save_result.is_ok(),
+            "MCP server should be able to save flows: {:?}",
+            save_result.as_ref().err()
+        );
+
+        // Verify flow was saved
+        let get_result = registry
+            .execute(
+                "get_flow",
+                serde_json::json!({
+                    "name": "mcp_test_flow"
+                }),
+            )
+            .await;
+        assert!(get_result.is_ok(), "Should be able to retrieve saved flow");
+    }).await;
 }
 
 #[tokio::test]
@@ -336,7 +376,13 @@ async fn test_cli_reuses_existing_database() {
     {
         let storage = SqliteStorage::new(db_path_str).await.unwrap();
         storage
-            .deploy_flow_version("persisted_flow", "1.0.0", "content")
+            .deploy_flow_version(
+                "test_tenant",
+                "persisted_flow",
+                "1.0.0",
+                "content",
+                "test_user",
+            )
             .await
             .unwrap();
     }
@@ -345,7 +391,7 @@ async fn test_cli_reuses_existing_database() {
     {
         let storage = SqliteStorage::new(db_path_str).await.unwrap();
         let version = storage
-            .get_deployed_version("persisted_flow")
+            .get_deployed_version("test_tenant", "persisted_flow")
             .await
             .unwrap();
         assert_eq!(
@@ -395,9 +441,11 @@ async fn test_cli_with_missing_parent_directory() {
         started_at: chrono::Utc::now(),
         ended_at: None,
         steps: None,
+        tenant_id: "test_tenant".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
     storage.save_run(&run).await.unwrap();
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_tenant", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 1);
 }
 
@@ -413,8 +461,12 @@ async fn test_draft_vs_production_run() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Step 1: Save a draft flow to filesystem
-    let flow_content = r#"name: draft_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Step 1: Save a draft flow to filesystem
+            let flow_content = r#"name: draft_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -423,81 +475,81 @@ steps:
     with:
       text: "Draft version""#;
 
-    let save_result = registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "draft_test",
-                "content": flow_content
-            }),
-        )
-        .await;
-    assert!(save_result.is_ok(), "Should save draft flow");
+            let save_result = registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "draft_test",
+                        "content": flow_content
+                    }),
+                )
+                .await;
+            assert!(save_result.is_ok(), "Should save draft flow");
 
-    // Step 2: Try to run WITHOUT --draft flag (should fail - not deployed)
-    let run_production = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_test",
-                "event": {},
-                "draft": false
-            }),
-        )
-        .await;
-    assert!(
-        run_production.is_err(),
-        "Should fail to run non-deployed flow without draft flag"
-    );
-    let err_msg = format!("{:?}", run_production.unwrap_err());
-    assert!(
-        err_msg.contains("use --draft") || err_msg.contains("Deployed flow"),
-        "Error should suggest using --draft flag"
-    );
+            // Step 2: Try to run WITHOUT --draft flag (should fail - not deployed)
+            let run_production = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_test",
+                        "event": {},
+                        "draft": false
+                    }),
+                )
+                .await;
+            assert!(
+                run_production.is_err(),
+                "Should fail to run non-deployed flow without draft flag"
+            );
+            let err_msg = format!("{:?}", run_production.unwrap_err());
+            assert!(
+                err_msg.contains("use --draft") || err_msg.contains("Deployed flow"),
+                "Error should suggest using --draft flag"
+            );
 
-    // Step 3: Run WITH --draft flag (should succeed from filesystem)
-    let run_draft = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_test",
-                "event": {"run": 1},
-                "draft": true
-            }),
-        )
-        .await;
-    assert!(run_draft.is_ok(), "Should run draft flow from filesystem");
+            // Step 3: Run WITH --draft flag (should succeed from filesystem)
+            let run_draft = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_test",
+                        "event": {"run": 1},
+                        "draft": true
+                    }),
+                )
+                .await;
+            assert!(run_draft.is_ok(), "Should run draft flow from filesystem");
 
-    // Step 4: Deploy the flow to database
-    let deploy_result = registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "draft_test"
-            }),
-        )
-        .await;
-    assert!(deploy_result.is_ok(), "Should deploy flow");
+            // Step 4: Deploy the flow to database
+            let deploy_result = registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "draft_test"
+                    }),
+                )
+                .await;
+            assert!(deploy_result.is_ok(), "Should deploy flow");
 
-    // Step 5: Now run WITHOUT --draft flag (should succeed from database)
-    let run_production2 = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_test",
-                "event": {"run": 2},
-                "draft": false
-            }),
-        )
-        .await;
-    assert!(
-        run_production2.is_ok(),
-        "Should run deployed flow from database: {:?}",
-        run_production2.err()
-    );
+            // Step 5: Now run WITHOUT --draft flag (should succeed from database)
+            let run_production2 = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_test",
+                        "event": {"run": 2},
+                        "draft": false
+                    }),
+                )
+                .await;
+            assert!(
+                run_production2.is_ok(),
+                "Should run deployed flow from database: {:?}",
+                run_production2.err()
+            );
 
-    // Step 6: Update draft flow with new content
-    let updated_content = r#"name: draft_test
+            // Step 6: Update draft flow with new content
+            let updated_content = r#"name: draft_test
 version: "1.1.0"
 on: cli.manual
 steps:
@@ -506,47 +558,49 @@ steps:
     with:
       text: "Updated draft version""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "draft_test",
-                "content": updated_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "draft_test",
+                        "content": updated_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Step 7: Run with --draft should use NEW version (1.1.0)
-    let run_draft2 = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_test",
-                "event": {"run": 3},
-                "draft": true
-            }),
-        )
-        .await;
-    assert!(
-        run_draft2.is_ok(),
-        "Should run updated draft from filesystem"
-    );
+            // Step 7: Run with --draft should use NEW version (1.1.0)
+            let run_draft2 = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_test",
+                        "event": {"run": 3},
+                        "draft": true
+                    }),
+                )
+                .await;
+            assert!(
+                run_draft2.is_ok(),
+                "Should run updated draft from filesystem"
+            );
 
-    // Step 8: Run without --draft should still use OLD version (1.0.0)
-    let run_production3 = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_test",
-                "event": {"run": 4}
-            }),
-        )
+            // Step 8: Run without --draft should still use OLD version (1.0.0)
+            let run_production3 = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_test",
+                        "event": {"run": 4}
+                    }),
+                )
+                .await;
+            assert!(
+                run_production3.is_ok(),
+                "Should run old deployed version from database"
+            );
+        })
         .await;
-    assert!(
-        run_production3.is_ok(),
-        "Should run old deployed version from database"
-    );
 }
 
 #[tokio::test]
@@ -557,8 +611,12 @@ async fn test_deploy_flow_without_version() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Save a flow WITHOUT version field
-    let flow_content = r#"name: no_version_flow
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save a flow WITHOUT version field
+            let flow_content = r#"name: no_version_flow
 on: cli.manual
 steps:
   - id: step1
@@ -566,36 +624,38 @@ steps:
     with:
       text: "test""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "no_version_flow",
-                "content": flow_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "no_version_flow",
+                        "content": flow_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Try to deploy - should fail
-    let deploy_result = registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "no_version_flow"
-            }),
-        )
+            // Try to deploy - should fail
+            let deploy_result = registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "no_version_flow"
+                    }),
+                )
+                .await;
+
+            assert!(
+                deploy_result.is_err(),
+                "Should fail to deploy flow without version"
+            );
+            let err_msg = format!("{:?}", deploy_result.unwrap_err());
+            assert!(
+                err_msg.contains("version"),
+                "Error should mention missing version"
+            );
+        })
         .await;
-
-    assert!(
-        deploy_result.is_err(),
-        "Should fail to deploy flow without version"
-    );
-    let err_msg = format!("{:?}", deploy_result.unwrap_err());
-    assert!(
-        err_msg.contains("version"),
-        "Error should mention missing version"
-    );
 }
 
 #[tokio::test]
@@ -607,8 +667,12 @@ async fn test_rollback_workflow() {
     let storage = env.deps.storage.clone();
     let registry = OperationRegistry::new(env.deps);
 
-    // Deploy version 1.0.0
-    let v1_content = r#"name: rollback_flow
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Deploy version 1.0.0
+            let v1_content = r#"name: rollback_flow
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -617,29 +681,29 @@ steps:
     with:
       text: "Version 1.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "rollback_flow",
-                "content": v1_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow",
+                        "content": v1_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "rollback_flow"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Deploy version 2.0.0
-    let v2_content = r#"name: rollback_flow
+            // Deploy version 2.0.0
+            let v2_content = r#"name: rollback_flow
 version: "2.0.0"
 on: cli.manual
 steps:
@@ -648,65 +712,73 @@ steps:
     with:
       text: "Version 2.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "rollback_flow",
-                "content": v2_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow",
+                        "content": v2_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "rollback_flow"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Verify version 2.0.0 is deployed
-    let version = storage.get_deployed_version("rollback_flow").await.unwrap();
-    assert_eq!(version, Some("2.0.0".to_string()));
+            // Verify version 2.0.0 is deployed
+            let version = storage
+                .get_deployed_version("test_tenant", "rollback_flow")
+                .await
+                .unwrap();
+            assert_eq!(version, Some("2.0.0".to_string()));
 
-    // Rollback to version 1.0.0
-    let rollback_result = registry
-        .execute(
-            "rollback_flow",
-            serde_json::json!({
-                "name": "rollback_flow",
-                "version": "1.0.0"
-            }),
-        )
+            // Rollback to version 1.0.0
+            let rollback_result = registry
+                .execute(
+                    "rollback_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow",
+                        "version": "1.0.0"
+                    }),
+                )
+                .await;
+            assert!(
+                rollback_result.is_ok(),
+                "Should rollback successfully: {:?}",
+                rollback_result.err()
+            );
+
+            // Verify version 1.0.0 is now deployed
+            let version_after = storage
+                .get_deployed_version("test_tenant", "rollback_flow")
+                .await
+                .unwrap();
+            assert_eq!(version_after, Some("1.0.0".to_string()));
+
+            // Try to rollback to non-existent version
+            let bad_rollback = registry
+                .execute(
+                    "rollback_flow",
+                    serde_json::json!({
+                        "name": "rollback_flow",
+                        "version": "99.99.99"
+                    }),
+                )
+                .await;
+            assert!(
+                bad_rollback.is_err(),
+                "Should fail to rollback to non-existent version"
+            );
+        })
         .await;
-    assert!(
-        rollback_result.is_ok(),
-        "Should rollback successfully: {:?}",
-        rollback_result.err()
-    );
-
-    // Verify version 1.0.0 is now deployed
-    let version_after = storage.get_deployed_version("rollback_flow").await.unwrap();
-    assert_eq!(version_after, Some("1.0.0".to_string()));
-
-    // Try to rollback to non-existent version
-    let bad_rollback = registry
-        .execute(
-            "rollback_flow",
-            serde_json::json!({
-                "name": "rollback_flow",
-                "version": "99.99.99"
-            }),
-        )
-        .await;
-    assert!(
-        bad_rollback.is_err(),
-        "Should fail to rollback to non-existent version"
-    );
 }
 
 #[tokio::test]
@@ -718,8 +790,12 @@ async fn test_disable_enable_flow() {
     let storage = env.deps.storage.clone();
     let registry = OperationRegistry::new(env.deps);
 
-    // Save and deploy a flow
-    let flow_content = r#"name: disable_enable_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save and deploy a flow
+            let flow_content = r#"name: disable_enable_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -728,101 +804,103 @@ steps:
     with:
       text: "Test""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "disable_enable_test",
-                "content": flow_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test",
+                        "content": flow_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "disable_enable_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Verify deployed
-    let version = storage
-        .get_deployed_version("disable_enable_test")
-        .await
-        .unwrap();
-    assert_eq!(version, Some("1.0.0".to_string()));
+            // Verify deployed
+            let version = storage
+                .get_deployed_version("test_tenant", "disable_enable_test")
+                .await
+                .unwrap();
+            assert_eq!(version, Some("1.0.0".to_string()));
 
-    // Disable the flow
-    let disable_result = registry
-        .execute(
-            "disable_flow",
-            serde_json::json!({
-                "name": "disable_enable_test"
-            }),
-        )
+            // Disable the flow
+            let disable_result = registry
+                .execute(
+                    "disable_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test"
+                    }),
+                )
+                .await;
+            assert!(disable_result.is_ok(), "Should disable successfully");
+
+            // Verify disabled
+            let version_after_disable = storage
+                .get_deployed_version("test_tenant", "disable_enable_test")
+                .await
+                .unwrap();
+            assert_eq!(version_after_disable, None, "Should be disabled");
+
+            // Try to disable again (should fail)
+            let disable_again = registry
+                .execute(
+                    "disable_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test"
+                    }),
+                )
+                .await;
+            assert!(
+                disable_again.is_err(),
+                "Should fail to disable already disabled flow"
+            );
+
+            // Enable the flow
+            let enable_result = registry
+                .execute(
+                    "enable_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test"
+                    }),
+                )
+                .await;
+            assert!(enable_result.is_ok(), "Should enable successfully");
+
+            // Verify re-enabled with same version
+            let version_after_enable = storage
+                .get_deployed_version("test_tenant", "disable_enable_test")
+                .await
+                .unwrap();
+            assert_eq!(
+                version_after_enable,
+                Some("1.0.0".to_string()),
+                "Should restore to v1.0.0"
+            );
+
+            // Try to enable again (should fail)
+            let enable_again = registry
+                .execute(
+                    "enable_flow",
+                    serde_json::json!({
+                        "name": "disable_enable_test"
+                    }),
+                )
+                .await;
+            assert!(
+                enable_again.is_err(),
+                "Should fail to enable already enabled flow"
+            );
+        })
         .await;
-    assert!(disable_result.is_ok(), "Should disable successfully");
-
-    // Verify disabled
-    let version_after_disable = storage
-        .get_deployed_version("disable_enable_test")
-        .await
-        .unwrap();
-    assert_eq!(version_after_disable, None, "Should be disabled");
-
-    // Try to disable again (should fail)
-    let disable_again = registry
-        .execute(
-            "disable_flow",
-            serde_json::json!({
-                "name": "disable_enable_test"
-            }),
-        )
-        .await;
-    assert!(
-        disable_again.is_err(),
-        "Should fail to disable already disabled flow"
-    );
-
-    // Enable the flow
-    let enable_result = registry
-        .execute(
-            "enable_flow",
-            serde_json::json!({
-                "name": "disable_enable_test"
-            }),
-        )
-        .await;
-    assert!(enable_result.is_ok(), "Should enable successfully");
-
-    // Verify re-enabled with same version
-    let version_after_enable = storage
-        .get_deployed_version("disable_enable_test")
-        .await
-        .unwrap();
-    assert_eq!(
-        version_after_enable,
-        Some("1.0.0".to_string()),
-        "Should restore to v1.0.0"
-    );
-
-    // Try to enable again (should fail)
-    let enable_again = registry
-        .execute(
-            "enable_flow",
-            serde_json::json!({
-                "name": "disable_enable_test"
-            }),
-        )
-        .await;
-    assert!(
-        enable_again.is_err(),
-        "Should fail to enable already enabled flow"
-    );
 }
 
 #[tokio::test]
@@ -834,8 +912,12 @@ async fn test_disable_enable_prevents_rollback() {
     let storage = env.deps.storage.clone();
     let registry = OperationRegistry::new(env.deps);
 
-    // Deploy v1.0.0
-    let v1_content = r#"name: no_rollback_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Deploy v1.0.0
+            let v1_content = r#"name: no_rollback_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -844,32 +926,32 @@ steps:
     with:
       text: "Version 1.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "no_rollback_test",
-                "content": v1_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test",
+                        "content": v1_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "no_rollback_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Small delay to ensure different timestamps
-    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            // Small delay to ensure different timestamps
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-    // Deploy v2.0.0
-    let v2_content = r#"name: no_rollback_test
+            // Deploy v2.0.0
+            let v2_content = r#"name: no_rollback_test
 version: "2.0.0"
 on: cli.manual
 steps:
@@ -878,65 +960,67 @@ steps:
     with:
       text: "Version 2.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "no_rollback_test",
-                "content": v2_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test",
+                        "content": v2_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "no_rollback_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Verify v2.0.0 is deployed
-    let version = storage
-        .get_deployed_version("no_rollback_test")
-        .await
-        .unwrap();
-    assert_eq!(version, Some("2.0.0".to_string()));
+            // Verify v2.0.0 is deployed
+            let version = storage
+                .get_deployed_version("test_tenant", "no_rollback_test")
+                .await
+                .unwrap();
+            assert_eq!(version, Some("2.0.0".to_string()));
 
-    // Disable
-    registry
-        .execute(
-            "disable_flow",
-            serde_json::json!({
-                "name": "no_rollback_test"
-            }),
-        )
-        .await
-        .unwrap();
+            // Disable
+            registry
+                .execute(
+                    "disable_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Enable should restore v2.0.0 (most recent), NOT v1.0.0
-    registry
-        .execute(
-            "enable_flow",
-            serde_json::json!({
-                "name": "no_rollback_test"
-            }),
-        )
-        .await
-        .unwrap();
+            // Enable should restore v2.0.0 (most recent), NOT v1.0.0
+            registry
+                .execute(
+                    "enable_flow",
+                    serde_json::json!({
+                        "name": "no_rollback_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    let version_after = storage
-        .get_deployed_version("no_rollback_test")
-        .await
-        .unwrap();
-    assert_eq!(
-        version_after,
-        Some("2.0.0".to_string()),
-        "Enable should restore most recent version (2.0.0), not oldest (1.0.0)"
-    );
+            let version_after = storage
+                .get_deployed_version("test_tenant", "no_rollback_test")
+                .await
+                .unwrap();
+            assert_eq!(
+                version_after,
+                Some("2.0.0".to_string()),
+                "Enable should restore most recent version (2.0.0), not oldest (1.0.0)"
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -947,8 +1031,12 @@ async fn test_disable_draft_still_works() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Save, deploy, then disable
-    let flow_content = r#"name: draft_works_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save, deploy, then disable
+            let flow_content = r#"name: draft_works_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -957,69 +1045,71 @@ steps:
     with:
       text: "Test""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "draft_works_test",
-                "content": flow_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "draft_works_test",
+                        "content": flow_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "draft_works_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "draft_works_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "disable_flow",
-            serde_json::json!({
-                "name": "draft_works_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "disable_flow",
+                    serde_json::json!({
+                        "name": "draft_works_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Production run should fail
-    let run_production = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_works_test",
-                "event": {"test": 1},
-                "draft": false
-            }),
-        )
+            // Production run should fail
+            let run_production = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_works_test",
+                        "event": {"test": 1},
+                        "draft": false
+                    }),
+                )
+                .await;
+            assert!(
+                run_production.is_err(),
+                "Production run should fail when disabled"
+            );
+
+            // Draft run should still work
+            let run_draft = registry
+                .execute(
+                    "start_run",
+                    serde_json::json!({
+                        "flow_name": "draft_works_test",
+                        "event": {"test": 2},
+                        "draft": true
+                    }),
+                )
+                .await;
+            assert!(
+                run_draft.is_ok(),
+                "Draft run should work even when disabled: {:?}",
+                run_draft.err()
+            );
+        })
         .await;
-    assert!(
-        run_production.is_err(),
-        "Production run should fail when disabled"
-    );
-
-    // Draft run should still work
-    let run_draft = registry
-        .execute(
-            "start_run",
-            serde_json::json!({
-                "flow_name": "draft_works_test",
-                "event": {"test": 2},
-                "draft": true
-            }),
-        )
-        .await;
-    assert!(
-        run_draft.is_ok(),
-        "Draft run should work even when disabled: {:?}",
-        run_draft.err()
-    );
 }
 
 // ============================================================================
@@ -1034,8 +1124,12 @@ async fn test_restore_deployed_flow() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Save and deploy a flow
-    let flow_content = r#"name: restore_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save and deploy a flow
+            let flow_content = r#"name: restore_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -1044,70 +1138,72 @@ steps:
     with:
       text: "Test""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_test",
-                "content": flow_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_test",
+                        "content": flow_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "restore_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "restore_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Delete draft from filesystem
-    registry
-        .execute(
-            "delete_flow",
-            serde_json::json!({
-                "name": "restore_test"
-            }),
-        )
-        .await
-        .unwrap();
+            // Delete draft from filesystem
+            registry
+                .execute(
+                    "delete_flow",
+                    serde_json::json!({
+                        "name": "restore_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Verify draft is gone
-    let get_result = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "restore_test"
-            }),
-        )
+            // Verify draft is gone
+            let get_result = registry
+                .execute(
+                    "get_flow",
+                    serde_json::json!({
+                        "name": "restore_test"
+                    }),
+                )
+                .await;
+            assert!(get_result.is_err(), "Draft should be deleted");
+
+            // Restore from deployed version
+            let restore_result = registry
+                .execute(
+                    "restore_flow",
+                    serde_json::json!({
+                        "name": "restore_test"
+                    }),
+                )
+                .await;
+            assert!(restore_result.is_ok(), "Should restore successfully");
+
+            // Verify flow is back on filesystem
+            let get_again = registry
+                .execute(
+                    "get_flow",
+                    serde_json::json!({
+                        "name": "restore_test"
+                    }),
+                )
+                .await;
+            assert!(get_again.is_ok(), "Should retrieve restored flow");
+        })
         .await;
-    assert!(get_result.is_err(), "Draft should be deleted");
-
-    // Restore from deployed version
-    let restore_result = registry
-        .execute(
-            "restore_flow",
-            serde_json::json!({
-                "name": "restore_test"
-            }),
-        )
-        .await;
-    assert!(restore_result.is_ok(), "Should restore successfully");
-
-    // Verify flow is back on filesystem
-    let get_again = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "restore_test"
-            }),
-        )
-        .await;
-    assert!(get_again.is_ok(), "Should retrieve restored flow");
 }
 
 #[tokio::test]
@@ -1118,8 +1214,12 @@ async fn test_restore_disabled_flow() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Save, deploy, then disable
-    let flow_content = r#"name: restore_disabled_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save, deploy, then disable
+            let flow_content = r#"name: restore_disabled_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -1128,61 +1228,63 @@ steps:
     with:
       text: "Test""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_disabled_test",
-                "content": flow_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_disabled_test",
+                        "content": flow_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "restore_disabled_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "restore_disabled_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "disable_flow",
-            serde_json::json!({
-                "name": "restore_disabled_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "disable_flow",
+                    serde_json::json!({
+                        "name": "restore_disabled_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Delete draft
-    registry
-        .execute(
-            "delete_flow",
-            serde_json::json!({
-                "name": "restore_disabled_test"
-            }),
-        )
-        .await
-        .unwrap();
+            // Delete draft
+            registry
+                .execute(
+                    "delete_flow",
+                    serde_json::json!({
+                        "name": "restore_disabled_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Restore should get latest from history
-    let restore_result = registry
-        .execute(
-            "restore_flow",
-            serde_json::json!({
-                "name": "restore_disabled_test"
-            }),
-        )
+            // Restore should get latest from history
+            let restore_result = registry
+                .execute(
+                    "restore_flow",
+                    serde_json::json!({
+                        "name": "restore_disabled_test"
+                    }),
+                )
+                .await;
+            assert!(
+                restore_result.is_ok(),
+                "Should restore from history even when disabled"
+            );
+        })
         .await;
-    assert!(
-        restore_result.is_ok(),
-        "Should restore from history even when disabled"
-    );
 }
 
 #[tokio::test]
@@ -1193,8 +1295,12 @@ async fn test_restore_specific_version() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Deploy v1.0.0
-    let v1_content = r#"name: restore_specific_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Deploy v1.0.0
+            let v1_content = r#"name: restore_specific_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -1203,32 +1309,32 @@ steps:
     with:
       text: "Version 1.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_specific_test",
-                "content": v1_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test",
+                        "content": v1_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "restore_specific_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Small delay to ensure different timestamps
-    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            // Small delay to ensure different timestamps
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-    // Deploy v2.0.0
-    let v2_content = r#"name: restore_specific_test
+            // Deploy v2.0.0
+            let v2_content = r#"name: restore_specific_test
 version: "2.0.0"
 on: cli.manual
 steps:
@@ -1237,70 +1343,72 @@ steps:
     with:
       text: "Version 2.0.0""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_specific_test",
-                "content": v2_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test",
+                        "content": v2_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "restore_specific_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Delete draft
-    registry
-        .execute(
-            "delete_flow",
-            serde_json::json!({
-                "name": "restore_specific_test"
-            }),
-        )
-        .await
-        .unwrap();
+            // Delete draft
+            registry
+                .execute(
+                    "delete_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Restore specific version 1.0.0
-    let restore_result = registry
-        .execute(
-            "restore_flow",
-            serde_json::json!({
-                "name": "restore_specific_test",
-                "version": "1.0.0"
-            }),
-        )
+            // Restore specific version 1.0.0
+            let restore_result = registry
+                .execute(
+                    "restore_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test",
+                        "version": "1.0.0"
+                    }),
+                )
+                .await;
+            assert!(
+                restore_result.is_ok(),
+                "Should restore specific version: {:?}",
+                restore_result.err()
+            );
+
+            // Verify restored content contains v1.0.0
+            let get_result = registry
+                .execute(
+                    "get_flow",
+                    serde_json::json!({
+                        "name": "restore_specific_test"
+                    }),
+                )
+                .await
+                .unwrap();
+
+            let content = get_result.get("content").unwrap().as_str().unwrap();
+            assert!(
+                content.contains("Version 1.0.0"),
+                "Restored content should be v1.0.0"
+            );
+        })
         .await;
-    assert!(
-        restore_result.is_ok(),
-        "Should restore specific version: {:?}",
-        restore_result.err()
-    );
-
-    // Verify restored content contains v1.0.0
-    let get_result = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "restore_specific_test"
-            }),
-        )
-        .await
-        .unwrap();
-
-    let content = get_result.get("content").unwrap().as_str().unwrap();
-    assert!(
-        content.contains("Version 1.0.0"),
-        "Restored content should be v1.0.0"
-    );
 }
 
 #[tokio::test]
@@ -1311,25 +1419,31 @@ async fn test_restore_nonexistent_flow() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Try to restore non-existent flow
-    let restore_result = registry
-        .execute(
-            "restore_flow",
-            serde_json::json!({
-                "name": "nonexistent_flow"
-            }),
-        )
-        .await;
+    let ctx = create_test_context();
 
-    assert!(
-        restore_result.is_err(),
-        "Should fail to restore nonexistent flow"
-    );
-    let err_msg = format!("{:?}", restore_result.unwrap_err());
-    assert!(
-        err_msg.contains("deployment") || err_msg.contains("history"),
-        "Error should mention deployment/history"
-    );
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Try to restore non-existent flow
+            let restore_result = registry
+                .execute(
+                    "restore_flow",
+                    serde_json::json!({
+                        "name": "nonexistent_flow"
+                    }),
+                )
+                .await;
+
+            assert!(
+                restore_result.is_err(),
+                "Should fail to restore nonexistent flow"
+            );
+            let err_msg = format!("{:?}", restore_result.unwrap_err());
+            assert!(
+                err_msg.contains("deployment") || err_msg.contains("history"),
+                "Error should mention deployment/history"
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -1340,8 +1454,12 @@ async fn test_restore_overwrites_draft() {
     let env = TestEnvironment::new().await;
     let registry = OperationRegistry::new(env.deps);
 
-    // Save and deploy original flow
-    let original_content = r#"name: restore_overwrite_test
+    let ctx = create_test_context();
+
+    beemflow::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save and deploy original flow
+            let original_content = r#"name: restore_overwrite_test
 version: "1.0.0"
 on: cli.manual
 steps:
@@ -1350,29 +1468,29 @@ steps:
     with:
       text: "Original""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_overwrite_test",
-                "content": original_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_overwrite_test",
+                        "content": original_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    registry
-        .execute(
-            "deploy_flow",
-            serde_json::json!({
-                "name": "restore_overwrite_test"
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "deploy_flow",
+                    serde_json::json!({
+                        "name": "restore_overwrite_test"
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Update draft with different content
-    let modified_content = r#"name: restore_overwrite_test
+            // Update draft with different content
+            let modified_content = r#"name: restore_overwrite_test
 version: "1.1.0"
 on: cli.manual
 steps:
@@ -1381,44 +1499,46 @@ steps:
     with:
       text: "Modified""#;
 
-    registry
-        .execute(
-            "save_flow",
-            serde_json::json!({
-                "name": "restore_overwrite_test",
-                "content": modified_content
-            }),
-        )
-        .await
-        .unwrap();
+            registry
+                .execute(
+                    "save_flow",
+                    serde_json::json!({
+                        "name": "restore_overwrite_test",
+                        "content": modified_content
+                    }),
+                )
+                .await
+                .unwrap();
 
-    // Restore should overwrite the modified draft
-    let restore_result = registry
-        .execute(
-            "restore_flow",
-            serde_json::json!({
-                "name": "restore_overwrite_test"
-            }),
-        )
+            // Restore should overwrite the modified draft
+            let restore_result = registry
+                .execute(
+                    "restore_flow",
+                    serde_json::json!({
+                        "name": "restore_overwrite_test"
+                    }),
+                )
+                .await;
+            assert!(restore_result.is_ok(), "Should restore and overwrite draft");
+
+            // Verify restored content is original
+            let get_result = registry
+                .execute(
+                    "get_flow",
+                    serde_json::json!({
+                        "name": "restore_overwrite_test"
+                    }),
+                )
+                .await
+                .unwrap();
+
+            let content = get_result.get("content").unwrap().as_str().unwrap();
+            assert!(
+                content.contains("Original") && !content.contains("Modified"),
+                "Restored content should be original, not modified"
+            );
+        })
         .await;
-    assert!(restore_result.is_ok(), "Should restore and overwrite draft");
-
-    // Verify restored content is original
-    let get_result = registry
-        .execute(
-            "get_flow",
-            serde_json::json!({
-                "name": "restore_overwrite_test"
-            }),
-        )
-        .await
-        .unwrap();
-
-    let content = get_result.get("content").unwrap().as_str().unwrap();
-    assert!(
-        content.contains("Original") && !content.contains("Modified"),
-        "Restored content should be original, not modified"
-    );
 }
 
 // ============================================================================
@@ -1500,7 +1620,10 @@ steps:
     // Pass unique event data to ensure different run IDs without sleep
     let mut event1 = HashMap::new();
     event1.insert("run_number".to_string(), serde_json::json!(1));
-    let result1 = engine.execute(&flow, event1).await.unwrap();
+    let result1 = engine
+        .execute(&flow, event1, "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs1 = result1.outputs;
 
     assert!(outputs1.contains_key("check_previous"));
@@ -1520,7 +1643,10 @@ steps:
     // Pass different event data to get a different run ID (no sleep needed)
     let mut event2 = HashMap::new();
     event2.insert("run_number".to_string(), serde_json::json!(2));
-    let result2 = engine.execute(&flow, event2).await.unwrap();
+    let result2 = engine
+        .execute(&flow, event2, "test_user", "test_tenant")
+        .await
+        .unwrap();
     let outputs2 = result2.outputs;
 
     let check_output2: HashMap<String, serde_json::Value> =

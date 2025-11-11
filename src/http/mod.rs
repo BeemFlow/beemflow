@@ -10,7 +10,9 @@ pub mod webhook;
 use self::webhook::{WebhookManagerState, create_webhook_routes};
 use crate::auth::{
     OAuthConfig, OAuthServerState,
-    client::{OAuthClientState, create_oauth_client_routes},
+    client::{
+        OAuthClientState, create_protected_oauth_client_routes, create_public_oauth_client_routes,
+    },
     create_oauth_routes,
 };
 use crate::config::{Config, HttpConfig};
@@ -45,6 +47,8 @@ pub struct AppState {
     oauth_client: Arc<crate::auth::OAuthClientManager>,
     storage: Arc<dyn crate::storage::Storage>,
     template_renderer: Arc<template::TemplateRenderer>,
+    jwt_manager: Arc<crate::auth::JwtManager>,
+    audit_logger: Arc<crate::audit::AuditLogger>,
 }
 
 /// Configuration for which server interfaces to enable
@@ -215,6 +219,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         enable_oauth_server: false,
         oauth_issuer: None,
         public_url: None,
+        single_user: false, // Default to multi-tenant mode
     });
 
     // Use centralized dependency creation from core module
@@ -258,12 +263,30 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     template_renderer.load_oauth_templates().await?;
     let template_renderer = Arc::new(template_renderer);
 
+    // Initialize JWT manager for authentication
+    // Validate JWT secret BEFORE starting server (fails if weak/missing)
+    let jwt_secret = crate::auth::ValidatedJwtSecret::from_env()?;
+
+    let jwt_manager = Arc::new(crate::auth::JwtManager::new(
+        &jwt_secret,
+        http_config
+            .oauth_issuer
+            .clone()
+            .unwrap_or_else(|| format!("http://{}:{}", http_config.host, http_config.port)),
+        chrono::Duration::minutes(15), // 15-minute access tokens
+    ));
+
+    // Initialize audit logger
+    let audit_logger = Arc::new(crate::audit::AuditLogger::new(dependencies.storage.clone()));
+
     let state = AppState {
         registry,
         session_store: session_store.clone(),
         oauth_client: dependencies.oauth_client.clone(),
         storage: dependencies.storage.clone(),
         template_renderer,
+        jwt_manager,
+        audit_logger,
     };
 
     // Create OAuth server state
@@ -403,7 +426,16 @@ fn build_router(
         app = app.merge(oauth_server_routes);
     }
 
-    // OAuth CLIENT routes (always enabled - core feature for workflow tools)
+    // AUTH routes (always enabled - required for multi-tenant)
+    let auth_state = Arc::new(crate::auth::AuthState {
+        storage: state.storage.clone(),
+        jwt_manager: state.jwt_manager.clone(),
+        audit_logger: state.audit_logger.clone(),
+    });
+    let auth_routes = crate::auth::create_auth_routes(auth_state);
+    app = app.merge(auth_routes);
+
+    // OAuth CLIENT routes (split into public callbacks and protected endpoints)
     let oauth_client_state = Arc::new(OAuthClientState {
         oauth_client: state.oauth_client.clone(),
         storage: state.storage.clone(),
@@ -411,10 +443,45 @@ fn build_router(
         session_store: state.session_store.clone(),
         template_renderer: state.template_renderer.clone(),
     });
-    let oauth_client_routes = create_oauth_client_routes(oauth_client_state);
-    app = app.merge(oauth_client_routes);
 
-    // MCP routes (conditionally enabled)
+    // Public OAuth routes (callbacks from OAuth providers - no auth required)
+    let public_oauth_routes = create_public_oauth_client_routes(oauth_client_state.clone());
+    app = app.merge(public_oauth_routes);
+
+    // Protected OAuth routes (initiate flows, manage credentials - auth required)
+    let auth_middleware_state = Arc::new(crate::auth::AuthMiddlewareState {
+        storage: state.storage.clone(),
+        jwt_manager: state.jwt_manager.clone(),
+        audit_logger: Some(state.audit_logger.clone()),
+    });
+    let protected_oauth_routes = create_protected_oauth_client_routes(oauth_client_state)
+        .layer(axum::middleware::from_fn_with_state(
+            auth_middleware_state.clone(),
+            crate::auth::audit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_middleware_state.clone(),
+            crate::auth::tenant_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_middleware_state.clone(),
+            crate::auth::auth_middleware,
+        ));
+    app = app.merge(protected_oauth_routes);
+
+    // Create auth middleware state (shared by both MCP and HTTP API routes)
+    let auth_middleware_state = Arc::new(crate::auth::AuthMiddlewareState {
+        storage: state.storage.clone(),
+        jwt_manager: state.jwt_manager.clone(),
+        audit_logger: Some(state.audit_logger.clone()),
+    });
+
+    // Print warning if running in single-user mode
+    if http_config.single_user {
+        eprintln!("⚠️  Running in single-user mode (no authentication required)");
+    }
+
+    // MCP routes (conditionally enabled) - PROTECTED with auth middleware
     if interfaces.mcp {
         let oauth_issuer = if interfaces.oauth_server {
             Some(
@@ -433,7 +500,28 @@ fn build_router(
             storage: deps.storage.clone(),
         });
 
-        let mcp_routes = create_mcp_routes(mcp_state);
+        // Apply middleware based on single_user flag
+        let mcp_routes = if http_config.single_user {
+            // Single-user mode: Only inject default context, no auth required
+            create_mcp_routes(mcp_state)
+                .layer(axum::middleware::from_fn(single_user_context_middleware))
+        } else {
+            // Multi-tenant mode: Full auth middleware stack
+            // MCP over HTTP requires authentication just like the HTTP API
+            create_mcp_routes(mcp_state)
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::audit_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::tenant_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::auth_middleware,
+                ))
+        };
         app = app.merge(mcp_routes);
 
         // Add MCP metadata routes if OAuth is enabled
@@ -447,9 +535,34 @@ fn build_router(
         }
     }
 
-    // HTTP API routes (conditionally enabled)
+    // HTTP API routes (conditionally enabled) - PROTECTED with auth middleware
     if interfaces.http_api {
-        let operation_routes = build_operation_routes(&state);
+        // Apply middleware based on single_user flag
+        let operation_routes = if http_config.single_user {
+            // Single-user mode: Only inject default context, no auth required
+            build_operation_routes(&state)
+                .layer(axum::middleware::from_fn(single_user_context_middleware))
+        } else {
+            // Multi-tenant mode: Full auth + tenant + audit middleware
+            // Note: Layers are applied in reverse order (last = first to execute)
+            build_operation_routes(&state)
+                // Third: Log audit events after request completion
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::audit_middleware,
+                ))
+                // Second: Resolve tenant and create full RequestContext
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::tenant_middleware,
+                ))
+                // First: Validate JWT and create AuthContext
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state,
+                    crate::auth::auth_middleware,
+                ))
+        };
+
         app = app.merge(operation_routes);
     }
 
@@ -592,6 +705,36 @@ async fn serve_static_asset(AxumPath(path): AxumPath<String>) -> impl IntoRespon
 }
 
 // ============================================================================
+// SINGLE-USER MODE MIDDLEWARE
+// ============================================================================
+
+/// Middleware that injects default RequestContext for single-user mode
+///
+/// This bypasses authentication by providing a pre-configured context with
+/// DEFAULT_TENANT_ID and full Owner permissions for all requests.
+///
+/// Use this ONLY with the `--single-user` flag for personal/local deployments.
+async fn single_user_context_middleware(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use crate::constants::{DEFAULT_TENANT_ID, SYSTEM_USER_ID};
+
+    // Inject default RequestContext for single-user mode
+    req.extensions_mut().insert(crate::auth::RequestContext {
+        user_id: SYSTEM_USER_ID.to_string(),
+        tenant_id: DEFAULT_TENANT_ID.to_string(),
+        tenant_name: "Personal".to_string(),
+        role: crate::auth::Role::Owner,
+        client_ip: None,
+        user_agent: Some("single-user-mode".to_string()),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    });
+
+    next.run(req).await
+}
+
+// ============================================================================
 // SYSTEM HANDLERS (Special cases not in operation registry)
 // ============================================================================
 
@@ -617,9 +760,9 @@ async fn health_handler() -> Json<Value> {
 async fn readiness_handler(
     State(storage): State<Arc<dyn crate::storage::Storage>>,
 ) -> std::result::Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Check database connectivity by attempting a simple query
-    // We use list_runs(1, 0) as a canary - if it succeeds, the database is accessible
-    match storage.list_runs(1, 0).await {
+    // Check database connectivity by attempting to list active tenants
+    // This verifies database accessibility without depending on specific tenant data
+    match storage.list_active_tenants().await {
         Ok(_) => {
             // Database is accessible
             Ok(Json(json!({

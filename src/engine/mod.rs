@@ -33,6 +33,8 @@ pub struct PausedRun {
     pub outputs: HashMap<String, serde_json::Value>,
     pub token: String,
     pub run_id: Uuid,
+    pub tenant_id: String,
+    pub user_id: String,
 }
 
 /// BeemFlow execution engine
@@ -172,11 +174,13 @@ impl Engine {
         }
     }
 
-    /// Execute a flow with event data
+    /// Execute a flow with event data and user context
     pub async fn execute(
         &self,
         flow: &Flow,
         event: HashMap<String, serde_json::Value>,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<ExecutionResult> {
         if flow.steps.is_empty() {
             return Ok(ExecutionResult {
@@ -186,27 +190,35 @@ impl Engine {
         }
 
         // Setup execution context (returns error if duplicate run detected)
-        let (step_ctx, run_id) = self.setup_execution_context(flow, event.clone()).await?;
+        let (step_ctx, run_id) = self
+            .setup_execution_context(flow, event.clone(), user_id, tenant_id)
+            .await?;
 
         // Fetch previous run data for template access
-        let runs_data = self.fetch_previous_run_data(&flow.name, run_id).await;
+        let runs_data = self
+            .fetch_previous_run_data(&flow.name, run_id, tenant_id)
+            .await;
 
         // Create executor
-        let executor = Executor::new(
-            self.adapters.clone(),
-            self.templater.clone(),
-            self.storage.clone(),
-            self.secrets_provider.clone(),
-            self.oauth_client.clone(),
+        let executor = Executor::new(executor::ExecutorConfig {
+            adapters: self.adapters.clone(),
+            templater: self.templater.clone(),
+            storage: self.storage.clone(),
+            secrets_provider: self.secrets_provider.clone(),
+            oauth_client: self.oauth_client.clone(),
             runs_data,
-            self.max_concurrent_tasks,
-        );
+            max_concurrent_tasks: self.max_concurrent_tasks,
+            user_id: user_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+        });
 
         // Execute steps
         let result = executor.execute_steps(flow, &step_ctx, 0, run_id).await;
 
         // Finalize execution and return result with run_id
-        let outputs = self.finalize_execution(flow, event, result, run_id).await?;
+        let outputs = self
+            .finalize_execution(flow, event, result, run_id, user_id, tenant_id)
+            .await?;
 
         Ok(ExecutionResult { run_id, outputs })
     }
@@ -222,6 +234,8 @@ impl Engine {
     /// - `flow_name`: Name of the flow to execute
     /// - `event`: Event data passed to the flow as {{ event.* }}
     /// - `is_draft`: If true, load from filesystem; if false, load from deployed_flows
+    /// - `user_id`: User who triggered this execution (for OAuth credentials)
+    /// - `tenant_id`: Tenant context for this execution (for multi-tenancy)
     ///
     /// # Returns
     /// ExecutionResult with run_id and final outputs
@@ -235,21 +249,30 @@ impl Engine {
         flow_name: &str,
         event: HashMap<String, serde_json::Value>,
         is_draft: bool,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<ExecutionResult> {
         // Load flow content
-        let content = self.load_flow_content(flow_name, is_draft).await?;
+        let content = self
+            .load_flow_content(flow_name, is_draft, tenant_id)
+            .await?;
 
         // Parse YAML
         let flow = crate::dsl::parse_string(&content, None)?;
 
-        // Execute flow (delegate to existing low-level method)
-        self.execute(&flow, event).await
+        // Execute flow with user context
+        self.execute(&flow, event, user_id, tenant_id).await
     }
 
     /// Load flow content from storage or filesystem
     ///
     /// Helper method that encapsulates the draft vs. deployed logic.
-    async fn load_flow_content(&self, flow_name: &str, is_draft: bool) -> Result<String> {
+    async fn load_flow_content(
+        &self,
+        flow_name: &str,
+        is_draft: bool,
+        tenant_id: &str,
+    ) -> Result<String> {
         if is_draft {
             // Draft mode: load from filesystem
             let flows_dir = crate::config::get_flows_dir(&self.config);
@@ -261,9 +284,10 @@ impl Engine {
                 })
         } else {
             // Production mode: load from deployed_flows
+            // Uses tenant_id parameter for tenant isolation
             let version = self
                 .storage
-                .get_deployed_version(flow_name)
+                .get_deployed_version(tenant_id, flow_name)
                 .await?
                 .ok_or_else(|| {
                     crate::BeemFlowError::not_found(
@@ -276,7 +300,7 @@ impl Engine {
                 })?;
 
             self.storage
-                .get_flow_version_content(flow_name, &version)
+                .get_flow_version_content(tenant_id, flow_name, &version)
                 .await?
                 .ok_or_else(|| {
                     crate::BeemFlowError::not_found(
@@ -323,21 +347,34 @@ impl Engine {
             updated_ctx.set_output(k, v);
         }
 
+        // Use tenant_id from paused run for tenant-scoped lookup
+        let tenant_id = paused.tenant_id.clone();
+        let user_id = paused.user_id.clone();
+
+        // Fetch original run to verify it exists and get additional context
+        let _original_run = self
+            .storage
+            .get_run(paused.run_id, &tenant_id)
+            .await?
+            .ok_or_else(|| crate::BeemFlowError::not_found("Run", paused.run_id.to_string()))?;
+
         // Fetch previous run data for template access
         let runs_data = self
-            .fetch_previous_run_data(&paused.flow.name, paused.run_id)
+            .fetch_previous_run_data(&paused.flow.name, paused.run_id, &tenant_id)
             .await;
 
-        // Create executor
-        let executor = Executor::new(
-            self.adapters.clone(),
-            self.templater.clone(),
-            self.storage.clone(),
-            self.secrets_provider.clone(),
-            self.oauth_client.clone(),
+        // Create executor with user context from original run
+        let executor = Executor::new(executor::ExecutorConfig {
+            adapters: self.adapters.clone(),
+            templater: self.templater.clone(),
+            storage: self.storage.clone(),
+            secrets_provider: self.secrets_provider.clone(),
+            oauth_client: self.oauth_client.clone(),
             runs_data,
-            self.max_concurrent_tasks,
-        );
+            max_concurrent_tasks: self.max_concurrent_tasks,
+            user_id,
+            tenant_id,
+        });
 
         // Continue execution
         let _outputs = executor
@@ -378,6 +415,8 @@ impl Engine {
         &self,
         flow: &Flow,
         event: HashMap<String, serde_json::Value>,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<(StepContext, Uuid)> {
         // Collect secrets from event and secrets provider
         let secrets = self.collect_secrets(&event).await;
@@ -392,7 +431,7 @@ impl Engine {
         // Generate deterministic run ID
         let run_id = self.generate_deterministic_run_id(&flow.name, &event);
 
-        // Create run
+        // Create run with user context
         let run = crate::model::Run {
             id: run_id,
             flow_name: flow.name.clone(),
@@ -402,6 +441,8 @@ impl Engine {
             started_at: chrono::Utc::now(),
             ended_at: None,
             steps: None,
+            tenant_id: tenant_id.to_string(),
+            triggered_by_user_id: user_id.to_string(),
         };
 
         // Try to atomically insert run - returns false if already exists
@@ -429,6 +470,8 @@ impl Engine {
         event: HashMap<String, serde_json::Value>,
         result: std::result::Result<HashMap<String, serde_json::Value>, BeemFlowError>,
         run_id: Uuid,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<HashMap<String, serde_json::Value>> {
         let (_outputs, status) = match &result {
             Ok(outputs) => (outputs.clone(), crate::model::RunStatus::Succeeded),
@@ -444,7 +487,7 @@ impl Engine {
         // Clone event before moving
         let event_clone = event.clone();
 
-        // Update run with final status
+        // Update run with final status and user context
         let run = crate::model::Run {
             id: run_id,
             flow_name: flow.name.clone(),
@@ -454,13 +497,15 @@ impl Engine {
             started_at: chrono::Utc::now(),
             ended_at: Some(chrono::Utc::now()),
             steps: None,
+            tenant_id: tenant_id.to_string(),
+            triggered_by_user_id: user_id.to_string(),
         };
 
         self.storage.save_run(&run).await?;
 
         // Handle catch blocks if there was an error
         if result.is_err() && flow.catch.is_some() {
-            self.execute_catch_blocks(flow, &event_clone, run_id)
+            self.execute_catch_blocks(flow, &event_clone, run_id, user_id, tenant_id)
                 .await?;
         }
 
@@ -473,6 +518,8 @@ impl Engine {
         flow: &Flow,
         event: &HashMap<String, serde_json::Value>,
         run_id: Uuid,
+        user_id: &str,
+        tenant_id: &str,
     ) -> Result<HashMap<String, serde_json::Value>> {
         let catch_steps = flow
             .catch
@@ -487,15 +534,17 @@ impl Engine {
         );
 
         // Catch blocks don't have access to previous runs
-        let executor = Executor::new(
-            self.adapters.clone(),
-            self.templater.clone(),
-            self.storage.clone(),
-            self.secrets_provider.clone(),
-            self.oauth_client.clone(),
-            None,
-            self.max_concurrent_tasks,
-        );
+        let executor = Executor::new(executor::ExecutorConfig {
+            adapters: self.adapters.clone(),
+            templater: self.templater.clone(),
+            storage: self.storage.clone(),
+            secrets_provider: self.secrets_provider.clone(),
+            oauth_client: self.oauth_client.clone(),
+            runs_data: None,
+            max_concurrent_tasks: self.max_concurrent_tasks,
+            user_id: user_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+        });
 
         // Execute catch steps and collect step records
         let mut catch_outputs = HashMap::new();
@@ -649,6 +698,7 @@ impl Engine {
         &self,
         flow_name: &str,
         current_run_id: Uuid,
+        tenant_id: &str,
     ) -> Option<HashMap<String, serde_json::Value>> {
         tracing::debug!(
             "Fetching previous run data for flow '{}', current run: {}",
@@ -660,6 +710,7 @@ impl Engine {
             self.storage.clone(),
             Some(current_run_id),
             flow_name.to_string(),
+            tenant_id.to_string(),
         );
 
         let prev_data = runs_access.previous().await;

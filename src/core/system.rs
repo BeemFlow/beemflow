@@ -241,14 +241,17 @@ pub mod system {
         type Output = DashboardStats;
 
         async fn execute(&self, _input: Self::Input) -> Result<Self::Output> {
+            // Extract authenticated context - dashboard shows tenant-specific stats
+            let ctx = super::super::get_auth_context_or_default();
+
             let storage = &self.deps.storage;
 
-            // Get total flows (deployed flows)
-            let flows = storage.list_all_deployed_flows().await?;
+            // Get total flows (deployed flows) for this tenant
+            let flows = storage.list_all_deployed_flows(&ctx.tenant_id).await?;
             let total_flows = flows.len();
 
-            // Get all runs with a reasonable limit for stats
-            let all_runs = storage.list_runs(1000, 0).await?;
+            // Get all runs with a reasonable limit for stats (tenant-scoped)
+            let all_runs = storage.list_runs(&ctx.tenant_id, 1000, 0).await?;
             let total_runs = all_runs.len();
 
             // Count active runs (running or pending)
