@@ -4,6 +4,8 @@ import { Layout } from './components/common/Layout';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { FlowEditor } from './components/editor/FlowEditor';
 import { ExecutionView } from './components/execution/ExecutionView';
+import { OAuthProvidersList } from './components/oauth/OAuthProvidersList';
+import { OAuthSuccessPage } from './components/oauth/OAuthSuccessPage';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -30,6 +32,10 @@ function App() {
             <Route path="runs">
               <Route index element={<Navigate to="/" replace />} />
               <Route path=":id" element={<ExecutionView />} />
+            </Route>
+            <Route path="oauth">
+              <Route index element={<OAuthProvidersList />} />
+              <Route path="success" element={<OAuthSuccessPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

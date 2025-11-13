@@ -7,10 +7,17 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
+      // Proxy API requests to backend
+      // Frontend calls /api/flows → Proxied to localhost:3000/api/flows
       '/api': {
-        target: 'http://localhost:3330',
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+      // Proxy OAuth routes to backend
+      // OAuth callbacks and API endpoints must go to backend
+      '/oauth': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
       },
     },
   },

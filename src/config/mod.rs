@@ -240,6 +240,20 @@ pub struct HttpConfig {
     /// If not set, defaults to http://host:port (or http://localhost:port if host is 0.0.0.0)
     #[serde(skip_serializing_if = "Option::is_none", rename = "publicUrl")]
     pub public_url: Option<String>,
+
+    /// Frontend URL for separate deployment (optional)
+    ///
+    /// When None (default): Backend serves React build from frontend/dist/ (integrated mode)
+    /// When Some: Backend serves API only, OAuth success redirects to this URL, CORS configured
+    ///
+    /// Environment variable: FRONTEND_URL
+    ///
+    /// Use cases:
+    /// - Development with hot reload: "http://localhost:5173" (Vite dev server)
+    /// - Production integrated: None (backend serves frontend from dist/)
+    /// - Production separate: "https://app.beemflow.com" (CDN/separate deployment)
+    #[serde(skip_serializing_if = "Option::is_none", rename = "frontendUrl")]
+    pub frontend_url: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -748,6 +762,7 @@ impl Default for Config {
                 enable_oauth_server: false,
                 oauth_issuer: None, // Auto-generated from host:port if not set
                 public_url: None,   // Auto-detected or explicitly configured
+                frontend_url: None, // Integrated mode by default
             }),
             log: Some(LogConfig {
                 level: Some("info".to_string()),
