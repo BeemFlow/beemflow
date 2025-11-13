@@ -14,18 +14,6 @@ export function useOAuthProviders() {
 }
 
 /**
- * Hook to fetch a specific OAuth provider
- */
-export function useOAuthProvider(providerId: string) {
-  return useQuery({
-    queryKey: ['oauth-providers', providerId],
-    queryFn: () => api.getOAuthProvider(providerId),
-    enabled: !!providerId,
-    staleTime: 30000,
-  });
-}
-
-/**
  * Hook to fetch all OAuth connections
  */
 export function useOAuthConnections() {
@@ -73,6 +61,13 @@ export function useConnectOAuthProvider() {
 
       // Listen for OAuth completion (if the OAuth callback communicates back)
       const handleMessage = (event: MessageEvent) => {
+        // SECURITY: Validate message origin to prevent malicious sites from spoofing OAuth events
+        const expectedOrigin = window.location.origin;
+        if (event.origin !== expectedOrigin) {
+          console.warn('Rejected postMessage from untrusted origin:', event.origin);
+          return;
+        }
+
         if (event.data?.type === 'oauth-success') {
           toast.success(`Connected to ${data.provider_id}`);
           queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
@@ -94,9 +89,10 @@ export function useConnectOAuthProvider() {
         }
       }, 500);
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
+      const apiError = error as { response?: { data?: { error?: { message?: string } } } };
       toast.error(
-        error?.response?.data?.error?.message ||
+        apiError?.response?.data?.error?.message ||
           'Failed to initiate OAuth connection'
       );
     },
@@ -116,9 +112,10 @@ export function useDisconnectOAuthProvider() {
       queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
       queryClient.invalidateQueries({ queryKey: ['oauth-connections'] });
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
+      const apiError = error as { response?: { data?: { error?: { message?: string } } } };
       toast.error(
-        error?.response?.data?.error?.message ||
+        apiError?.response?.data?.error?.message ||
           'Failed to disconnect OAuth provider'
       );
     },

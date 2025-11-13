@@ -5,7 +5,6 @@
 
 pub mod flows;
 pub mod mcp;
-pub mod oauth;
 pub mod runs;
 pub mod system;
 pub mod tools;
@@ -98,7 +97,6 @@ impl OperationRegistry {
             tools::tools::register_all,
             mcp::mcp::register_all,
             system::system::register_all,
-            oauth::oauth::register_all,
         ]
         .into_iter()
         .for_each(|register_fn| register_fn(&mut registry, deps.clone()));

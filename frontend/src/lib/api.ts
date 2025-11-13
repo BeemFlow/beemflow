@@ -242,11 +242,6 @@ class BeemFlowAPI {
     return response.data.providers;
   }
 
-  async getOAuthProvider(providerId: string): Promise<OAuthProviderInfo> {
-    const response = await this.client.get<{ provider: OAuthProviderInfo }>(`/oauth/providers/${providerId}`);
-    return response.data.provider;
-  }
-
   async connectOAuthProvider(providerId: string, scopes?: string[]): Promise<ConnectOAuthProviderResponse> {
     const response = await this.client.post<ConnectOAuthProviderResponse>(
       `/oauth/providers/${providerId}/connect`,
@@ -256,7 +251,7 @@ class BeemFlowAPI {
   }
 
   async disconnectOAuthProvider(providerId: string): Promise<void> {
-    await this.client.delete(`/oauth/providers/${providerId}`);
+    await this.client.delete(`/oauth/providers/${providerId}/disconnect`);
   }
 
   async listOAuthConnections(): Promise<OAuthConnection[]> {

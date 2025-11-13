@@ -13,8 +13,8 @@ use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse, Redirect},
-    routing::{delete, get, post},
+    response::{Html, IntoResponse},
+    routing::{delete, get, post, put},
 };
 use chrono::{Duration, Utc};
 use oauth2::{
@@ -470,51 +470,67 @@ pub struct OAuthClientState {
     pub registry_manager: Arc<RegistryManager>,
     pub session_store: Arc<SessionStore>,
     pub template_renderer: Arc<TemplateRenderer>,
+    /// Frontend URL for OAuth success redirects (None = integrated mode, Some = separate mode)
+    pub frontend_url: Option<String>,
 }
 
-/// Create OAuth client routes (for connecting TO external providers)
-pub fn create_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
+/// Create public OAuth client routes (callbacks - no auth required)
+///
+/// These routes must remain public because OAuth providers redirect to them.
+/// The callbacks validate CSRF tokens and retrieve user context from session.
+///
+/// Note: No /oauth/success route needed - success page served by frontend (React)
+pub fn create_public_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
     Router::new()
-        // OAuth UI endpoints (OAuth CLIENT - for connecting TO providers)
+        .route("/oauth/callback", get(oauth_callback_handler))
+        .route("/oauth/callback/api", get(oauth_api_callback_handler))
+        .with_state(state)
+}
+
+/// Create protected OAuth client routes (requires authentication)
+///
+/// These routes initiate OAuth flows and manage credentials.
+/// TODO: Apply auth middleware when feat/multi-tenant is merged.
+pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
+    Router::new()
+        // Provider browsing (HTML + JSON)
         .route("/oauth/providers", get(oauth_providers_handler))
         .route("/oauth/providers/{provider}", get(oauth_provider_handler))
-        .route("/oauth/success", get(oauth_success_handler))
-        .route("/oauth/callback", get(oauth_callback_handler))
-        // OAuth Provider management endpoints (JSON API)
-        .route("/oauth/providers/list", get(list_oauth_providers_handler))
-        .route(
-            "/oauth/providers/create",
-            post(create_oauth_provider_handler),
-        )
-        .route("/oauth/providers/{id}/get", get(get_oauth_provider_handler))
-        .route(
-            "/oauth/providers/{id}/update",
-            post(update_oauth_provider_handler),
-        )
-        .route(
-            "/oauth/providers/{id}/delete",
-            delete(delete_oauth_provider_handler),
-        )
-        // OAuth Credential management endpoints (JSON API)
-        .route(
-            "/oauth/credentials/list",
-            get(list_oauth_credentials_handler),
-        )
-        .route(
-            "/oauth/credentials/{id}/delete",
-            delete(delete_oauth_credential_handler),
-        )
-        .route(
-            "/oauth/authorize/{provider}",
-            get(authorize_oauth_provider_handler),
-        )
-        // Add POST route for React frontend compatibility
+        // OAuth flow initiation
         .route(
             "/oauth/providers/{provider}/connect",
             post(connect_oauth_provider_post_handler),
         )
-        .route("/oauth/callback/api", get(oauth_api_callback_handler))
+        // Credential management (RESTful)
+        .route("/oauth/credentials", get(list_oauth_credentials_handler))
+        .route(
+            "/oauth/credentials/{id}",
+            delete(delete_oauth_credential_handler),
+        )
+        .route("/oauth/connections", get(list_oauth_connections_handler))
+        .route(
+            "/oauth/providers/{provider}/disconnect",
+            delete(disconnect_oauth_provider_handler),
+        )
+        // Provider configuration (admin - TODO: add admin RBAC check)
+        .route("/oauth/providers", post(create_oauth_provider_handler))
+        .route("/oauth/providers/{id}", put(update_oauth_provider_handler))
+        .route(
+            "/oauth/providers/{id}",
+            delete(delete_oauth_provider_handler),
+        )
         .with_state(state)
+}
+
+/// Create OAuth client routes (for connecting TO external providers)
+///
+/// This is a convenience function that combines public and protected routes.
+/// In production, you should use create_public_oauth_client_routes and
+/// create_protected_oauth_client_routes separately to apply auth middleware.
+pub fn create_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
+    Router::new()
+        .merge(create_public_oauth_client_routes(state.clone()))
+        .merge(create_protected_oauth_client_routes(state))
 }
 
 // ============================================================================
@@ -595,6 +611,8 @@ async fn oauth_providers_handler(
     };
 
     // Fetch all credentials and build a set of connected provider IDs for O(1) lookup
+    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
+    //   state.storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await
     let connected_providers: HashSet<String> = match state.storage.list_oauth_credentials().await {
         Ok(credentials) => credentials.iter().map(|c| c.provider.clone()).collect(),
         Err(e) => {
@@ -647,7 +665,8 @@ async fn oauth_providers_handler(
         // Return JSON for API clients (React frontend)
         return axum::Json(json!({
             "providers": provider_data
-        })).into_response();
+        }))
+        .into_response();
     }
 
     // Render template with provider data (for browser HTML requests)
@@ -666,10 +685,6 @@ async fn oauth_providers_handler(
             Html(error_html("Error", "Template Error", Some(&message), false)).into_response()
         }
     }
-}
-
-async fn oauth_success_handler() -> impl IntoResponse {
-    Html(include_str!("../../static/oauth/success.html"))
 }
 
 pub async fn oauth_callback_handler(
@@ -867,8 +882,26 @@ pub async fn oauth_callback_handler(
             // Clean up session
             state.session_store.delete_session(&session_id);
 
-            // Redirect to success page
-            Redirect::to("/oauth/success").into_response()
+            // Redirect to success page to remove sensitive code from URL (security best practice)
+            // The redirect serves two purposes:
+            // 1. Remove authorization code from URL bar (prevents exposure in browser history)
+            // 2. Provide clean URL that can be refreshed without errors
+            //
+            // In integrated mode: Redirect to /oauth/success (same origin)
+            //   → Backend serves index.html → React Router → OAuthSuccessPage component
+            // In separate mode: Redirect to FRONTEND_URL/oauth/success (cross-origin)
+            //   → Vite/CDN serves React → React Router → OAuthSuccessPage component
+            let success_url = state
+                .frontend_url
+                .as_ref()
+                .map(|url| format!("{}/oauth/success?provider={}", url, credential.provider))
+                .unwrap_or_else(|| format!("/oauth/success?provider={}", credential.provider));
+
+            (
+                StatusCode::FOUND,
+                [(axum::http::header::LOCATION, success_url)],
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to exchange authorization code: {}", e);
@@ -967,97 +1000,6 @@ async fn oauth_provider_handler(
 // OAUTH PROVIDER API HANDLERS
 // ============================================================================
 
-/// List all OAuth providers (from both registry and storage)
-async fn list_oauth_providers_handler(
-    State(state): State<Arc<OAuthClientState>>,
-) -> std::result::Result<Json<Value>, StatusCode> {
-    // Get built-in providers from registry
-    let registry_providers = state
-        .registry_manager
-        .list_oauth_providers()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Get custom providers from storage
-    let storage_providers = state
-        .storage
-        .list_oauth_providers()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Convert registry entries to simplified provider format
-    let mut all_providers: Vec<Value> = registry_providers
-        .iter()
-        .map(|entry| {
-            json!({
-                "id": entry.name,
-                "name": entry.display_name.as_ref().unwrap_or(&entry.name),
-                "auth_url": entry.auth_url,
-                "token_url": entry.token_url,
-                "scopes": entry.scopes,
-                "source": "registry",
-                // Don't expose client_id/secret for registry providers
-            })
-        })
-        .collect();
-
-    // Add storage providers
-    for provider in storage_providers {
-        all_providers.push(json!({
-            "id": provider.id,
-            "name": provider.name,
-            "auth_url": provider.auth_url,
-            "token_url": provider.token_url,
-            "scopes": provider.scopes,
-            "source": "storage",
-        }));
-    }
-
-    Ok(Json(json!({ "providers": all_providers })))
-}
-
-/// Get a specific OAuth provider (checks registry first, then storage)
-async fn get_oauth_provider_handler(
-    State(state): State<Arc<OAuthClientState>>,
-    AxumPath(id): AxumPath<String>,
-) -> std::result::Result<Json<Value>, StatusCode> {
-    // Check registry first for built-in providers
-    if let Some(entry) = state
-        .registry_manager
-        .get_server(&id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        && entry.entry_type == "oauth_provider"
-    {
-        return Ok(Json(json!({
-            "id": entry.name,
-            "name": entry.display_name.as_ref().unwrap_or(&entry.name),
-            "auth_url": entry.auth_url,
-            "token_url": entry.token_url,
-            "scopes": entry.scopes,
-            "source": "registry",
-            // Don't expose client_id/secret for registry providers
-        })));
-    }
-
-    // Fall back to storage for custom providers
-    let provider = state
-        .storage
-        .get_oauth_provider(&id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    Ok(Json(json!({
-        "id": provider.id,
-        "name": provider.name,
-        "auth_url": provider.auth_url,
-        "token_url": provider.token_url,
-        "scopes": provider.scopes,
-        "source": "storage",
-    })))
-}
-
 /// Create a new OAuth provider
 async fn create_oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
@@ -1138,6 +1080,8 @@ async fn delete_oauth_provider_handler(
 async fn list_oauth_credentials_handler(
     State(state): State<Arc<OAuthClientState>>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
+    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
     let credentials = state
         .storage
         .list_oauth_credentials()
@@ -1164,11 +1108,15 @@ async fn list_oauth_credentials_handler(
     Ok(Json(json!({ "credentials": safe_credentials })))
 }
 
-/// Delete an OAuth credential
+/// Delete an OAuth credential by ID
 async fn delete_oauth_credential_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(id): AxumPath<String>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // TODO(multi-tenant): After feat/multi-tenant merge, this needs:
+    //   1. Extract RequestContext from middleware (user_id, tenant_id)
+    //   2. Verify credential belongs to user (or user has admin permission)
+    //   3. Call delete_oauth_credential with tenant_id for tenant isolation
     state
         .storage
         .delete_oauth_credential(&id)
@@ -1177,84 +1125,93 @@ async fn delete_oauth_credential_handler(
     Ok(Json(json!({ "success": true })))
 }
 
-/// Initiate OAuth authorization flow for a provider
-async fn authorize_oauth_provider_handler(
+/// Disconnect OAuth provider (removes all credentials for this provider)
+async fn disconnect_oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
-    AxumPath(provider_id): AxumPath<String>,
-    Query(params): Query<HashMap<String, String>>,
+    AxumPath(provider): AxumPath<String>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // Get scopes from query parameters (comma-separated)
-    let scopes = params
-        .get("scopes")
-        .map(|s| s.split(',').map(|s| s.trim()).collect::<Vec<_>>())
-        .unwrap_or_else(|| vec!["read"]);
-
-    // Get integration name (optional)
-    let integration = params.get("integration").map(|s| s.as_str());
-
-    // Create session first (needed for encoding session_id into state)
-    let session = state
-        .session_store
-        .create_session("oauth_flow", chrono::Duration::minutes(10));
-
-    // Generate random CSRF token for security
-    let csrf_token = oauth2::CsrfToken::new_random();
-    let csrf_secret = csrf_token.secret().clone();
-
-    // Encode session ID into state parameter for stateless callback handling
-    // Format: {csrf_token}:{session_id}
-    // This eliminates the need for cookies or query parameters in the callback
-    let combined_state = encode_oauth_state(&csrf_secret, &session.id);
-
-    // Build authorization URL with custom state (csrf embedded in state parameter)
-    let (auth_url, code_verifier) = state
-        .oauth_client
-        .build_auth_url(&provider_id, &scopes, integration, Some(combined_state))
+    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
+    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
+    let credentials = state
+        .storage
+        .list_oauth_credentials()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Store CSRF token (not combined state!) in session for callback validation
-    state
-        .session_store
-        .update_session(&session.id, "oauth_state".to_string(), json!(csrf_secret));
-    state.session_store.update_session(
-        &session.id,
-        "oauth_code_verifier".to_string(),
-        json!(code_verifier),
-    );
-    state.session_store.update_session(
-        &session.id,
-        "oauth_provider_id".to_string(),
-        json!(provider_id),
-    );
-    state.session_store.update_session(
-        &session.id,
-        "oauth_integration".to_string(),
-        json!(integration.unwrap_or("default")),
-    );
+    // Find credential for this provider
+    let credential = credentials
+        .into_iter()
+        .find(|c| c.provider == provider)
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Return authorization URL (session_id is now embedded in the state parameter)
+    // Delete the credential
+    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
+    //   storage.delete_oauth_credential(&credential.id, &ctx.tenant_id).await?;
+    state
+        .storage
+        .delete_oauth_credential(&credential.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     Ok(Json(json!({
-        "authorization_url": auth_url,
-        "expires_at": session.expires_at,
+        "success": true,
+        "provider_id": provider,
     })))
 }
 
-/// Handle OAuth connection initiation (POST version for React frontend)
+/// List all active OAuth connections with details
+async fn list_oauth_connections_handler(
+    State(state): State<Arc<OAuthClientState>>,
+) -> std::result::Result<Json<Value>, StatusCode> {
+    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
+    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
+    let credentials = state
+        .storage
+        .list_oauth_credentials()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut connections = Vec::new();
+    for cred in credentials {
+        // Get provider info for display name
+        let provider_entry = state
+            .registry_manager
+            .get_oauth_provider(&cred.provider)
+            .await
+            .ok()
+            .flatten();
+
+        let provider_name = provider_entry
+            .and_then(|e| e.display_name)
+            .unwrap_or_else(|| cred.provider.clone());
+
+        connections.push(json!({
+            "provider_id": cred.provider,
+            "provider_name": provider_name,
+            "connected_at": cred.created_at.to_rfc3339(),
+            "expires_at": cred.expires_at.map(|dt| dt.to_rfc3339()),
+            "scopes": cred.scope.as_ref().map(|s| {
+                s.split_whitespace()
+                    .map(String::from)
+                    .collect::<Vec<_>>()
+            }),
+        }));
+    }
+
+    Ok(Json(json!({ "connections": connections })))
+}
+
+/// Handle OAuth connection initiation
 async fn connect_oauth_provider_post_handler(
     State(state): State<Arc<OAuthClientState>>,
-    AxumPath(provider_id): AxumPath<String>,
+    AxumPath(provider): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
     // Extract scopes from JSON body
     let scopes: Vec<&str> = body
         .get("scopes")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_else(|| vec!["read"]);
 
     // Get integration name (optional)
@@ -1275,7 +1232,7 @@ async fn connect_oauth_provider_post_handler(
     // Build authorization URL with custom state
     let (auth_url, code_verifier) = state
         .oauth_client
-        .build_auth_url(&provider_id, &scopes, integration, Some(combined_state))
+        .build_auth_url(&provider, &scopes, integration, Some(combined_state))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1291,7 +1248,7 @@ async fn connect_oauth_provider_post_handler(
     state.session_store.update_session(
         &session.id,
         "oauth_provider_id".to_string(),
-        json!(provider_id.clone()),
+        json!(provider.clone()),
     );
     state.session_store.update_session(
         &session.id,
@@ -1302,7 +1259,7 @@ async fn connect_oauth_provider_post_handler(
     // Return response matching frontend expectations
     Ok(Json(json!({
         "auth_url": auth_url,
-        "provider_id": provider_id,
+        "provider_id": provider,
     })))
 }
 
