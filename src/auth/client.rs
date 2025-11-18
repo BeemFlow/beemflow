@@ -1443,10 +1443,10 @@ async fn connect_oauth_provider_post_handler(
         .cloned()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Extract JSON body
-    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+    // Extract JSON body with size limit for DoS protection
+    let body_bytes = axum::body::to_bytes(body, crate::constants::MAX_REQUEST_BODY_SIZE)
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let body: Value = serde_json::from_slice(&body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Extract scopes from request body

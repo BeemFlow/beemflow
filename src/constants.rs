@@ -206,6 +206,9 @@ pub const FORMAT_FIVE_COLUMNS: &str = "%-10s %-20s %-30s %-10s %s";
 // HTTP & API
 // ============================================================================
 
+/// Maximum request body size (5MB) - prevents DoS via large payloads
+pub const MAX_REQUEST_BODY_SIZE: usize = 5 * 1024 * 1024;
+
 /// HTTP method: GET
 pub const HTTP_METHOD_GET: &str = "GET";
 
