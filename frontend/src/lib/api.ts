@@ -13,7 +13,9 @@ import type {
   StartRunResponse,
   PublishEventRequest,
   DashboardStats,
-  OAuthProvider,
+  OAuthProviderInfo,
+  OAuthConnection,
+  ConnectOAuthProviderResponse,
   FlowGraph,
   ApiError,
   JsonValue,
@@ -235,14 +237,26 @@ class BeemFlowAPI {
   // OAuth Providers
   // ============================================================================
 
-  async listOAuthProviders(): Promise<OAuthProvider[]> {
-    const response = await this.client.get<OAuthProvider[]>('/oauth/providers');
+  async listOAuthProviders(): Promise<OAuthProviderInfo[]> {
+    const response = await this.client.get<{ providers: OAuthProviderInfo[] }>('/oauth/providers');
+    return response.data.providers;
+  }
+
+  async connectOAuthProvider(providerId: string, scopes?: string[]): Promise<ConnectOAuthProviderResponse> {
+    const response = await this.client.post<ConnectOAuthProviderResponse>(
+      `/oauth/providers/${providerId}/connect`,
+      { scopes }
+    );
     return response.data;
   }
 
-  async connectOAuthProvider(providerId: string, scopes?: string[]): Promise<{ auth_url: string }> {
-    const response = await this.client.post(`/oauth/providers/${providerId}`, { scopes });
-    return response.data;
+  async disconnectOAuthProvider(providerId: string): Promise<void> {
+    await this.client.delete(`/oauth/providers/${providerId}/disconnect`);
+  }
+
+  async listOAuthConnections(): Promise<OAuthConnection[]> {
+    const response = await this.client.get<{ connections: OAuthConnection[] }>('/oauth/connections');
+    return response.data.connections;
   }
 
   // ============================================================================

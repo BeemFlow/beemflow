@@ -587,6 +587,7 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
             enable_oauth_server: false,
             oauth_issuer,
             public_url,
+            frontend_url: None, // Integrated mode by default (env var can override)
             single_user: false, // Default to multi-tenant mode
         });
     }

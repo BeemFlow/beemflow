@@ -241,6 +241,20 @@ pub struct HttpConfig {
     #[serde(skip_serializing_if = "Option::is_none", rename = "publicUrl")]
     pub public_url: Option<String>,
 
+    /// Frontend URL for separate deployment (optional)
+    ///
+    /// When None (default): Backend serves React build from frontend/dist/ (integrated mode)
+    /// When Some: Backend serves API only, OAuth success redirects to this URL, CORS configured
+    ///
+    /// Environment variable: FRONTEND_URL
+    ///
+    /// Use cases:
+    /// - Development with hot reload: "http://localhost:5173" (Vite dev server)
+    /// - Production integrated: None (backend serves frontend from dist/)
+    /// - Production separate: "https://app.beemflow.com" (CDN/separate deployment)
+    #[serde(skip_serializing_if = "Option::is_none", rename = "frontendUrl")]
+    pub frontend_url: Option<String>,
+
     /// Enable single-user mode (bypasses authentication, uses DEFAULT_TENANT_ID)
     /// WARNING: Only use for personal/local development. Disables all authentication.
     /// Default: false (multi-tenant mode with full authentication)
@@ -754,6 +768,7 @@ impl Default for Config {
                 enable_oauth_server: false,
                 oauth_issuer: None, // Auto-generated from host:port if not set
                 public_url: None,   // Auto-detected or explicitly configured
+                frontend_url: None, // Integrated mode by default
                 single_user: false, // Default to multi-tenant mode
             }),
             log: Some(LogConfig {

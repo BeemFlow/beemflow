@@ -22,6 +22,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -32,17 +39,17 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Build frontend
+        run: make build-frontend
+
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: make fmt-check
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Check linting
+        run: make lint
 
-      - name: Run unit tests
-        run: cargo test --lib
+      - name: Run tests (unit + integration)
+        run: make test
 
-      - name: Run integration tests
-        run: make integration
-
-      - name: Run example workflows
+      - name: Run E2E tests
         run: make e2e

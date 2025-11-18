@@ -72,7 +72,7 @@ impl TemplateRenderer {
 
     /// Load all OAuth templates (embedded in binary)
     pub async fn load_oauth_templates(&mut self) -> Result<()> {
-        // Embed templates in binary for portability
+        // OAuth SERVER templates (for BeemFlow acting as OAuth provider)
         self.templates.insert(
             "consent".to_string(),
             include_str!("../../static/oauth/consent.html").to_string(),
@@ -81,13 +81,40 @@ impl TemplateRenderer {
             "provider_auth".to_string(),
             include_str!("../../static/oauth/provider_auth.html").to_string(),
         );
-        self.templates.insert(
-            "success".to_string(),
-            include_str!("../../static/oauth/success.html").to_string(),
-        );
+
+        // OAuth CLIENT providers template (legacy HTML fallback for browser requests)
+        // Note: React frontend handles OAuth UI at localhost:5173/oauth
+        // This template is only used for direct browser access to backend OAuth endpoints
         self.templates.insert(
             "providers".to_string(),
-            include_str!("../../static/oauth/providers.html").to_string(),
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Providers - BeemFlow</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            margin: 100px auto;
+            padding: 20px;
+            text-align: center;
+        }
+        a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <h1>OAuth Providers</h1>
+    <p>This page has been migrated to the React frontend.</p>
+    <p>Please visit <a href="/oauth">/oauth</a></p>
+</body>
+</html>"#
+                .to_string(),
         );
 
         Ok(())

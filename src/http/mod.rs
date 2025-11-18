@@ -3,6 +3,7 @@
 //! Provides REST API for all BeemFlow operations with complete parity
 //! with CLI and MCP interfaces.
 
+pub mod frontend;
 pub mod session;
 pub mod template;
 pub mod webhook;
@@ -160,6 +161,80 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct IsHttps(pub bool);
 
+/// Validate frontend URL for security
+///
+/// Ensures the frontend URL is safe to use in OAuth redirects to prevent open redirect attacks.
+/// This is a security-critical validation that prevents attackers from redirecting OAuth flows
+/// to malicious domains.
+///
+/// # Security Requirements
+///
+/// 1. Must be valid HTTP/HTTPS URL
+/// 2. Must use HTTPS in production (HTTP only allowed for localhost)
+/// 3. No URL fragments allowed (prevents fragment-based attacks)
+/// 4. Only http:// and https:// schemes allowed (prevents javascript:, data:, etc.)
+///
+/// # Example Valid URLs
+///
+/// - `http://localhost:5173` (development)
+/// - `http://127.0.0.1:5173` (development)
+/// - `https://app.beemflow.com` (production)
+///
+/// # Example Invalid URLs
+///
+/// - `http://app.beemflow.com` (HTTP in production - rejected)
+/// - `javascript:alert(1)` (invalid scheme)
+/// - `https://app.beemflow.com#evil` (contains fragment)
+fn validate_frontend_url(url: &str) -> Result<()> {
+    use url::Url;
+
+    // Parse URL
+    let parsed = Url::parse(url)
+        .map_err(|e| BeemFlowError::validation(format!("Invalid frontend URL format: {}", e)))?;
+
+    // Get host (fail fast if missing)
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| BeemFlowError::validation("Frontend URL must have a valid host"))?;
+
+    // Only allow HTTP and HTTPS schemes (prevent javascript:, data:, file:, etc.)
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(BeemFlowError::validation(format!(
+            "Frontend URL must use http:// or https:// scheme, not {}://",
+            parsed.scheme()
+        )));
+    }
+
+    // Reject URLs with userinfo (username:password@) - potential phishing vector
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(BeemFlowError::validation(
+            "Frontend URL must not contain username or password",
+        ));
+    }
+
+    // Require HTTPS in production (HTTP only for localhost/127.*)
+    if parsed.scheme() == "http" {
+        // Check if this is a localhost address (positive logic)
+        let is_localhost = host == "localhost" || host == "127.0.0.1" || host.starts_with("127.");
+
+        if !is_localhost {
+            return Err(BeemFlowError::validation(
+                "Frontend URL must use HTTPS for non-localhost domains. \
+                 HTTP is only allowed for localhost/127.0.0.1 (development).",
+            ));
+        }
+    }
+
+    // No fragments allowed (prevents fragment-based redirect attacks)
+    if parsed.fragment().is_some() {
+        return Err(BeemFlowError::validation(
+            "Frontend URL must not contain URL fragments (#)",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Middleware to detect HTTPS from X-Forwarded-Proto header when behind a reverse proxy
 ///
 /// This middleware checks the X-Forwarded-Proto header and sets an IsHttps marker
@@ -208,7 +283,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     crate::telemetry::init(config.tracing.as_ref())?;
 
     // Ensure HTTP config exists (use defaults if not provided)
-    let http_config = config.http.as_ref().cloned().unwrap_or_else(|| HttpConfig {
+    let mut http_config = config.http.as_ref().cloned().unwrap_or_else(|| HttpConfig {
         host: "127.0.0.1".to_string(),
         port: crate::constants::DEFAULT_HTTP_PORT,
         secure: false, // Default to false for local development
@@ -219,8 +294,27 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         enable_oauth_server: false,
         oauth_issuer: None,
         public_url: None,
+        frontend_url: None, // Integrated mode by default
         single_user: false, // Default to multi-tenant mode
     });
+
+    // Allow environment variable override for frontend URL (development convenience)
+    if http_config.frontend_url.is_none()
+        && let Ok(frontend_url) = std::env::var("FRONTEND_URL")
+    {
+        // SECURITY: Validate frontend URL before accepting to prevent open redirect attacks
+        if let Err(e) = validate_frontend_url(&frontend_url) {
+            tracing::error!(
+                "Invalid FRONTEND_URL rejected: {}. This is a security-critical configuration. \
+                 See documentation for valid formats.",
+                e
+            );
+            return Err(e);
+        }
+
+        tracing::info!("Frontend URL loaded from environment: {}", frontend_url);
+        http_config.frontend_url = Some(frontend_url);
+    }
 
     // Use centralized dependency creation from core module
     let mut dependencies = crate::core::create_dependencies(&config).await?;
@@ -442,9 +536,11 @@ fn build_router(
         registry_manager: state.registry.get_dependencies().registry_manager.clone(),
         session_store: state.session_store.clone(),
         template_renderer: state.template_renderer.clone(),
+        frontend_url: http_config.frontend_url.clone(),
     });
 
     // Public OAuth routes (callbacks from OAuth providers - no auth required)
+    // These must be public because OAuth providers redirect to them
     let public_oauth_routes = create_public_oauth_client_routes(oauth_client_state.clone());
     app = app.merge(public_oauth_routes);
 
@@ -454,27 +550,29 @@ fn build_router(
         jwt_manager: state.jwt_manager.clone(),
         audit_logger: Some(state.audit_logger.clone()),
     });
-    let protected_oauth_routes = create_protected_oauth_client_routes(oauth_client_state)
-        .layer(axum::middleware::from_fn_with_state(
-            auth_middleware_state.clone(),
-            crate::auth::audit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_middleware_state.clone(),
-            crate::auth::tenant_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_middleware_state.clone(),
-            crate::auth::auth_middleware,
-        ));
-    app = app.merge(protected_oauth_routes);
 
-    // Create auth middleware state (shared by both MCP and HTTP API routes)
-    let auth_middleware_state = Arc::new(crate::auth::AuthMiddlewareState {
-        storage: state.storage.clone(),
-        jwt_manager: state.jwt_manager.clone(),
-        audit_logger: Some(state.audit_logger.clone()),
-    });
+    // Apply auth middleware conditionally based on single_user mode
+    let protected_oauth_routes = if http_config.single_user {
+        // Single-user mode: Only inject default context, no auth required
+        create_protected_oauth_client_routes(oauth_client_state)
+            .layer(axum::middleware::from_fn(single_user_context_middleware))
+    } else {
+        // Multi-tenant mode: Full auth + tenant + audit middleware
+        create_protected_oauth_client_routes(oauth_client_state)
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::audit_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::tenant_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::auth_middleware,
+            ))
+    };
+    app = app.nest("/api", protected_oauth_routes);
 
     // Print warning if running in single-user mode
     if http_config.single_user {
@@ -536,6 +634,7 @@ fn build_router(
     }
 
     // HTTP API routes (conditionally enabled) - PROTECTED with auth middleware
+    // All operation routes are nested under /api for clean separation from frontend
     if interfaces.http_api {
         // Apply middleware based on single_user flag
         let operation_routes = if http_config.single_user {
@@ -563,7 +662,7 @@ fn build_router(
                 ))
         };
 
-        app = app.merge(operation_routes);
+        app = app.nest("/api", operation_routes);
     }
 
     // Webhooks (always enabled)
@@ -579,6 +678,29 @@ fn build_router(
         .route("/metrics", get(metrics_handler))
         .with_state(state.storage.clone());
     app = app.merge(system_routes);
+
+    // ============================================================================
+    // FRONTEND SERVING (Must be registered LAST, before middleware)
+    // ============================================================================
+    // Serve React frontend from frontend/dist/ if not using separate frontend URL
+    //
+    // This must come after all API routes to avoid shadowing them.
+    // The SPA fallback serves index.html for unmatched routes, enabling React Router.
+
+    if http_config.frontend_url.is_none() {
+        // Integrated mode: serve React build from backend
+        tracing::info!("Running in integrated mode: serving frontend from frontend/dist/");
+        app = app.merge(frontend::create_frontend_routes());
+    } else {
+        // Separate mode: API only, frontend served elsewhere
+        if let Some(url) = &http_config.frontend_url {
+            tracing::info!(
+                "Running in separate frontend mode: API only. Frontend URL: {}",
+                url
+            );
+            tracing::info!("Ensure CORS is properly configured for cross-origin requests");
+        }
+    }
 
     // Add comprehensive middleware stack
     app.layer(
@@ -608,10 +730,10 @@ fn build_router(
             .layer({
                 use axum::http::HeaderValue;
 
-                // Build allowed origins from config or defaults
+                // Build allowed origins based on deployment mode
                 let allowed_origins: Vec<HeaderValue> =
                     if let Some(origins) = &http_config.allowed_origins {
-                        // Use configured origins for production
+                        // Explicit origins configured - use those
                         origins
                             .iter()
                             .filter_map(|origin| {
@@ -621,8 +743,47 @@ fn build_router(
                                 })
                             })
                             .collect()
+                    } else if let Some(frontend_url) = &http_config.frontend_url {
+                        // Separate frontend mode - allow frontend URL + localhost
+                        let mut origins = vec![
+                            format!("http://localhost:{}", http_config.port)
+                                .parse()
+                                .expect("valid localhost origin"),
+                            format!("http://127.0.0.1:{}", http_config.port)
+                                .parse()
+                                .expect("valid 127.0.0.1 origin"),
+                        ];
+
+                        // Add frontend URL if valid
+                        if let Ok(parsed_url) = frontend_url.parse::<HeaderValue>() {
+                            origins.push(parsed_url);
+                        } else {
+                            tracing::error!(
+                                "Invalid frontend_url in config: {}. CORS will not include this origin.",
+                                frontend_url
+                            );
+                        }
+
+                        // Also allow default Vite dev server ports in development
+                        if frontend_url.contains(&format!("localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT))
+                            || frontend_url.contains(&format!("localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT_ALT))
+                        {
+                            origins.push(
+                                format!("http://localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT)
+                                    .parse()
+                                    .expect("valid Vite dev port"),
+                            );
+                            origins.push(
+                                format!("http://localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT_ALT)
+                                    .parse()
+                                    .expect("valid Vite alt port"),
+                            );
+                        }
+
+                        origins
                     } else {
-                        // Default to localhost origins for development
+                        // Integrated mode - same origin, minimal CORS
+                        // Frontend embedded and served from same port as API
                         vec![
                             format!("http://localhost:{}", http_config.port)
                                 .parse()
@@ -630,16 +791,6 @@ fn build_router(
                             format!("http://127.0.0.1:{}", http_config.port)
                                 .parse()
                                 .expect("valid 127.0.0.1 origin"),
-                            // Also allow common frontend dev server ports
-                            "http://localhost:5173"
-                                .parse()
-                                .expect("valid localhost:5173 origin"),
-                            "http://localhost:5174"
-                                .parse()
-                                .expect("valid localhost:5174 origin"),
-                            "http://localhost:3000"
-                                .parse()
-                                .expect("valid localhost:3000 origin"),
                         ]
                     };
 

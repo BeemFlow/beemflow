@@ -40,12 +40,16 @@ export function Layout() {
             </div>
 
             <div className="flex items-center space-x-4">
-              <a
-                href="/oauth/providers"
-                className="text-sm text-gray-600 hover:text-gray-900"
+              <Link
+                to="/oauth"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  location.pathname.startsWith('/oauth')
+                    ? 'bg-primary-50 text-primary-700'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
               >
-                OAuth Providers
-              </a>
+                🔐 Integrations
+              </Link>
               <a
                 href="https://github.com/beemflow/beemflow"
                 target="_blank"

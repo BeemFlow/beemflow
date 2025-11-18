@@ -287,3 +287,39 @@ export interface ApiError {
     status: number;
   };
 }
+
+// OAuth types
+export interface OAuthProviderInfo {
+  id: string;
+  name: string;
+  display_name?: string;
+  icon?: string;
+  description?: string;
+  scopes: ScopeInfo[];
+  connected: boolean;
+  connection_status?: OAuthConnectionStatus;
+}
+
+export interface ScopeInfo {
+  scope: string;
+  description: string;
+}
+
+export interface OAuthConnectionStatus {
+  connected_at: string;
+  expires_at?: string;
+  scopes_granted?: string[];
+}
+
+export interface OAuthConnection {
+  provider_id: string;
+  provider_name: string;
+  connected_at: string;
+  expires_at?: string;
+  scopes?: string[];
+}
+
+export interface ConnectOAuthProviderResponse {
+  auth_url: string;
+  provider_id: string;
+}

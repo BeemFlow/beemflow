@@ -41,6 +41,10 @@ hyper = { version = "1.7", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-webpki-roots"] }
 
+# Frontend Embedding (for standalone distribution)
+rust-embed = "8.0"
+mime_guess = "2.0"
+
 # Serialization & Data
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
