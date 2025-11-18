@@ -336,6 +336,12 @@ pub const DEFAULT_MCP_PORT: u16 = 3331;
 /// Default MCP address
 pub const DEFAULT_MCP_ADDR: &str = "localhost:3001";
 
+/// Default Vite dev server port (first choice)
+pub const DEFAULT_VITE_DEV_PORT: u16 = 5173;
+
+/// Alternative Vite dev server port (if 5173 is taken)
+pub const DEFAULT_VITE_DEV_PORT_ALT: u16 = 5174;
+
 /// Default MCP page size
 pub const DEFAULT_MCP_PAGE_SIZE: usize = 50;
 

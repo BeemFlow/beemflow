@@ -9,18 +9,22 @@ INTEGRATION_FLOWS := $(shell find flows/integration -name "*.flow.yaml" 2>/dev/n
 E2E_FLOWS := $(shell find flows/e2e -name "*.flow.yaml" 2>/dev/null)
 EXAMPLE_FLOWS := $(shell find flows/examples -name "*.flow.yaml" 2>/dev/null)
 
-.PHONY: all clean build build-static install test test-verbose coverage e2e integration examples test-all check fmt lint fix release
+.PHONY: all clean build build-frontend build-static install test test-verbose test-race coverage integration e2e test-all check fmt fmt-check lint fix release
 
 all: clean test build install
 
 clean:
 	cargo clean
+	rm -rf frontend/dist
 	rm -f test_all_flows.sh test_registry test_registry.rs flows/test_fetch.flow.yaml
 
-build:
+build-frontend:
+	cd frontend && npm install && npm run build
+
+build: build-frontend
 	cargo build --release
 
-build-static:
+build-static: build-frontend
 	cargo build --release --target x86_64-unknown-linux-musl
 
 install: build
@@ -33,9 +37,43 @@ serve:
 # Tests
 # ────────────────────────────────────────────────────────────────────────────
 
+# Run unit + integration tests
 test:
-	cargo test
+	cargo test --lib
+	cargo test --test integration_test
 
+# Integration tests only
+integration:
+	cargo test --test integration_test
+
+# E2E tests via CLI
+e2e: build
+	@test_dir="/tmp/beemflow-e2e-$$$$"; \
+	export BEEMFLOW_HOME="$$test_dir"; \
+	mkdir -p "$$test_dir"; \
+	failed=0; \
+	for flow in $(INTEGRATION_FLOWS) $(E2E_FLOWS); do \
+		flow_name=$$(basename $$flow .flow.yaml); \
+		if ! $(RELEASE_BINARY) flows save $$flow_name --file "$$flow"; then \
+			echo "Save failed: $$flow_name"; \
+			failed=$$((failed + 1)); \
+			continue; \
+		fi; \
+		if ! $(RELEASE_BINARY) runs start $$flow_name --draft; then \
+			echo "Execution failed: $$flow_name"; \
+			failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	rm -rf "$$test_dir"; \
+	if [ $$failed -gt 0 ]; then \
+		echo "E2E tests failed: $$failed flow(s)"; \
+		exit 1; \
+	fi
+
+# Full test suite (unit + integration + e2e)
+test-all: test e2e
+
+# Testing variants
 test-verbose:
 	cargo test -- --nocapture
 
@@ -46,96 +84,11 @@ coverage:
 	cargo tarpaulin --out Html --output-dir coverage
 
 # ────────────────────────────────────────────────────────────────────────────
-# Flow execution tests (auto-discovers all flows)
-# ────────────────────────────────────────────────────────────────────────────
-
-examples:
-	@echo "📖 Example flows (reference only, may require additional setup):"
-	@for flow in $(EXAMPLE_FLOWS); do \
-		echo "  - $$flow"; \
-	done
-
-integration:
-	@echo "🧪 Running integration tests..."
-	cargo test --test integration_test
-
-e2e:
-	@echo "🧪 Running end-to-end tests (via CLI)..."
-	@echo "Building release binary first..."
-	@cargo build --release
-	@echo ""
-	@test_dir="/tmp/beemflow-e2e-$$$$"; \
-	export BEEMFLOW_HOME="$$test_dir"; \
-	mkdir -p "$$test_dir"; \
-	echo "Using isolated test directory: $$test_dir"; \
-	echo ""; \
-	failed=0; \
-	for flow in $(INTEGRATION_FLOWS) $(E2E_FLOWS); do \
-		flow_name=$$(basename $$flow .flow.yaml); \
-		echo "══════════════════════════════════════════════════════════════"; \
-		echo "Running $$flow"; \
-		echo ""; \
-		if ! $(RELEASE_BINARY) flows save $$flow_name --file "$$flow"; then \
-			echo ""; \
-			echo "  ❌ Save failed for $$flow_name"; \
-			failed=$$((failed + 1)); \
-			continue; \
-		fi; \
-		echo ""; \
-		echo "Executing flow:"; \
-		if $(RELEASE_BINARY) runs start $$flow_name --draft; then \
-			echo ""; \
-			echo "  ✓ $$flow_name passed"; \
-		else \
-			echo ""; \
-			echo "  ❌ $$flow_name failed"; \
-			failed=$$((failed + 1)); \
-		fi; \
-		echo ""; \
-	done; \
-	rm -rf "$$test_dir"; \
-	echo "══════════════════════════════════════════════════════════════"; \
-	if [ $$failed -gt 0 ]; then \
-		echo "❌ E2E tests failed: $$failed flow(s) failed"; \
-		exit 1; \
-	fi; \
-	echo "✅ All E2E tests passed!"
-
-# Full test suite (unit + integration + e2e CLI tests)
-test-all: test integration e2e
-
-# ────────────────────────────────────────────────────────────────────────────
 # Code quality
 # ────────────────────────────────────────────────────────────────────────────
 
-# Run all checks (matches CI pipeline)
-check:
-	@echo "🔍 Running all quality checks..."
-	@echo ""
-	@echo "📋 Step 1/4: Checking formatting..."
-	@cargo fmt -- --check
-	@echo "✅ Formatting OK"
-	@echo ""
-	@echo "📋 Step 2/4: Running clippy..."
-	@cargo clippy --all-targets --all-features -- -D warnings
-	@echo "✅ Clippy OK"
-	@echo ""
-	@echo "📋 Step 3/4: Running unit tests..."
-	@cargo test --lib --quiet
-	@echo "✅ Unit tests OK"
-	@echo ""
-	@echo "📋 Step 4/4: Running integration tests..."
-	@cargo test --test integration_test --quiet
-	@echo "✅ Integration tests OK"
-	@echo ""
-	@echo "🎉 All checks passed! Ready to commit."
-
-# Quick check (formatting + clippy only, no tests)
-check-quick:
-	@echo "⚡ Running quick checks (no tests)..."
-	@cargo fmt -- --check
-	@cargo clippy --all-targets --all-features -- -D warnings
-	@echo "✅ Quick checks passed!"
+# Static analysis (formatting + linting)
+check: build-frontend fmt-check lint
 
 fmt:
 	cargo fmt
@@ -148,11 +101,9 @@ lint:
 
 # Auto-fix all issues (format + clippy --fix)
 fix:
-	@echo "🔧 Auto-fixing all issues..."
 	cargo fix --allow-dirty --allow-staged
 	cargo clippy --fix --allow-dirty --allow-staged
-	cargo fmt
-	@echo "✅ Auto-fix complete!"
+	$(MAKE) fmt
 
 # ────────────────────────────────────────────────────────────────────────────
 # Release
@@ -160,10 +111,8 @@ fix:
 
 release:
 	@if [ -z "$(TAG)" ]; then echo "Usage: make release TAG=v0.2.1"; exit 1; fi
-	@echo "Creating and pushing tag $(TAG)..."
 	git tag $(TAG)
 	git push origin $(TAG)
-	@echo "✅ Tag $(TAG) pushed! Check GitHub Actions for release progress."
 
 # ────────────────────────────────────────────────────────────────────────────
 # Development helpers
