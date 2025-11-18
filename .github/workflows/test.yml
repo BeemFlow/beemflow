@@ -39,8 +39,14 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Static analysis (formatting + linting)
-        run: make check
+      - name: Build frontend
+        run: make build-frontend
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Check linting
+        run: make lint
 
       - name: Run tests (unit + integration)
         run: make test
