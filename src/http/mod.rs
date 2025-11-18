@@ -677,7 +677,8 @@ fn build_router(
 
                         origins
                     } else {
-                        // Integrated mode - default to localhost origins
+                        // Integrated mode - same origin, minimal CORS
+                        // Frontend embedded and served from same port as API
                         vec![
                             format!("http://localhost:{}", http_config.port)
                                 .parse()
@@ -685,17 +686,6 @@ fn build_router(
                             format!("http://127.0.0.1:{}", http_config.port)
                                 .parse()
                                 .expect("valid 127.0.0.1 origin"),
-                            // Also allow common frontend dev server ports (for manual testing with separate Vite)
-                            format!("http://localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT)
-                                .parse()
-                                .expect("valid Vite dev port"),
-                            format!("http://localhost:{}", crate::constants::DEFAULT_VITE_DEV_PORT_ALT)
-                                .parse()
-                                .expect("valid Vite alt port"),
-                            // Also allow default HTTP port (for self-referential requests if needed)
-                            format!("http://localhost:{}", crate::constants::DEFAULT_HTTP_PORT)
-                                .parse()
-                                .expect("valid default HTTP port"),
                         ]
                     };
 

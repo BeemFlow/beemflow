@@ -85,7 +85,7 @@ pub fn create_frontend_routes() -> Router {
 
     Router::new()
         // Catch-all route for both assets and SPA fallback
-        .route("/*path", get(serve_embedded_frontend))
+        .route("/{*path}", get(serve_embedded_frontend))
         // Also handle root path explicitly
         .route("/", get(serve_embedded_index))
 }

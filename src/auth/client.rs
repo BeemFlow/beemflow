@@ -14,7 +14,7 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
 };
 use chrono::{Duration, Utc};
 use oauth2::{
@@ -149,6 +149,15 @@ impl OAuthClientManager {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
 
+        // Use provided scopes, or fall back to provider's default scopes
+        let scopes_to_use: Vec<String> = if scopes.is_empty() {
+            // No scopes provided - use provider's configured scopes
+            config.scopes.unwrap_or_else(|| vec!["read".to_string()])
+        } else {
+            // Use explicitly provided scopes
+            scopes.iter().map(|s| s.to_string()).collect()
+        };
+
         // Build OAuth client using oauth2 crate
         // Note: Can't extract this to a helper due to oauth2's typestate pattern
         let client = BasicClient::new(ClientId::new(config.client_id))
@@ -176,7 +185,7 @@ impl OAuthClientManager {
             // The oauth2 crate's CsrfToken is just a wrapper around a string
             let (url, _) = client
                 .authorize_url(|| CsrfToken::new(custom))
-                .add_scopes(scopes.iter().map(|s| Scope::new(s.to_string())))
+                .add_scopes(scopes_to_use.iter().map(|s| Scope::new(s.clone())))
                 .set_pkce_challenge(pkce_challenge)
                 .url();
             url
@@ -184,7 +193,7 @@ impl OAuthClientManager {
             // Generate random CSRF token (for flows that don't need custom state)
             let (url, _) = client
                 .authorize_url(CsrfToken::new_random)
-                .add_scopes(scopes.iter().map(|s| Scope::new(s.to_string())))
+                .add_scopes(scopes_to_use.iter().map(|s| Scope::new(s.clone())))
                 .set_pkce_challenge(pkce_challenge)
                 .url();
             url
@@ -512,13 +521,6 @@ pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Rou
             "/oauth/providers/{provider}/disconnect",
             delete(disconnect_oauth_provider_handler),
         )
-        // Provider configuration (admin - TODO: add admin RBAC check)
-        .route("/oauth/providers", post(create_oauth_provider_handler))
-        .route("/oauth/providers/{id}", put(update_oauth_provider_handler))
-        .route(
-            "/oauth/providers/{id}",
-            delete(delete_oauth_provider_handler),
-        )
         .with_state(state)
 }
 
@@ -687,26 +689,53 @@ async fn oauth_providers_handler(
     }
 }
 
+/// Check OAuth callback for error parameters and handle appropriately
+/// Returns None if no error, Some(response) if error detected
+fn check_oauth_error(params: &HashMap<String, String>) -> Option<(StatusCode, String, String)> {
+    let error = params.get("error")?;
+    let error_desc = params
+        .get("error_description")
+        .map(|s| s.as_str())
+        .unwrap_or("");
+
+    match error.as_str() {
+        "access_denied" => {
+            tracing::info!("OAuth authorization canceled by user");
+            Some((
+                StatusCode::OK,
+                "Authorization Canceled".to_string(),
+                "You canceled the authorization request. You can close this window and try again if you'd like to connect.".to_string(),
+            ))
+        }
+        other_error => {
+            let display_desc = if error_desc.is_empty() {
+                "No additional details provided"
+            } else {
+                error_desc
+            };
+            tracing::error!(
+                "OAuth authorization error: {} - {}",
+                other_error,
+                display_desc
+            );
+            Some((
+                StatusCode::BAD_REQUEST,
+                "OAuth Authorization Failed".to_string(),
+                format!("Error: {}\nDescription: {}", other_error, display_desc),
+            ))
+        }
+    }
+}
+
 pub async fn oauth_callback_handler(
     State(state): State<Arc<OAuthClientState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     // Check for OAuth error response
-    if let Some(error) = params.get("error") {
-        let error_desc = params
-            .get("error_description")
-            .map(|s| s.as_str())
-            .unwrap_or("Unknown error");
-        tracing::error!("OAuth authorization failed: {} - {}", error, error_desc);
-        let message = format!("Error: {}\nDescription: {}", error, error_desc);
+    if let Some((status, title, message)) = check_oauth_error(&params) {
         return (
-            StatusCode::BAD_REQUEST,
-            Html(error_html(
-                "OAuth Error",
-                "OAuth Authorization Failed",
-                Some(&message),
-                true,
-            )),
+            status,
+            Html(error_html("OAuth Error", &title, Some(&message), true)),
         )
             .into_response();
     }
@@ -1000,81 +1029,14 @@ async fn oauth_provider_handler(
 // OAUTH PROVIDER API HANDLERS
 // ============================================================================
 
-/// Create a new OAuth provider
-async fn create_oauth_provider_handler(
-    State(state): State<Arc<OAuthClientState>>,
-    Json(mut provider): Json<crate::model::OAuthProvider>,
-) -> std::result::Result<Json<Value>, StatusCode> {
-    // Validate provider
-    provider.validate().map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Ensure timestamps are set
-    let now = chrono::Utc::now();
-    provider.created_at = now;
-    provider.updated_at = now;
-
-    // Save provider
-    state
-        .storage
-        .save_oauth_provider(&provider)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "success": true,
-        "provider": provider,
-    })))
-}
-
-/// Update an existing OAuth provider
-async fn update_oauth_provider_handler(
-    State(state): State<Arc<OAuthClientState>>,
-    AxumPath(id): AxumPath<String>,
-    Json(mut provider): Json<crate::model::OAuthProvider>,
-) -> std::result::Result<Json<Value>, StatusCode> {
-    // Verify provider exists
-    let existing = state
-        .storage
-        .get_oauth_provider(&id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Update fields while preserving ID and created_at
-    provider.id = id;
-    provider.created_at = existing.created_at;
-    provider.updated_at = chrono::Utc::now();
-
-    // Validate and save
-    provider.validate().map_err(|_| StatusCode::BAD_REQUEST)?;
-    state
-        .storage
-        .save_oauth_provider(&provider)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(json!({
-        "success": true,
-        "provider": provider,
-    })))
-}
-
-/// Delete an OAuth provider
-async fn delete_oauth_provider_handler(
-    State(state): State<Arc<OAuthClientState>>,
-    AxumPath(id): AxumPath<String>,
-) -> std::result::Result<Json<Value>, StatusCode> {
-    state
-        .storage
-        .delete_oauth_provider(&id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(json!({ "success": true })))
-}
-
 // ============================================================================
 // OAUTH CREDENTIAL API HANDLERS
 // ============================================================================
+// Note: OAuth provider configuration (create/update/delete) was removed due to:
+// 1. Route conflicts with GET /oauth/providers/{provider}
+// 2. Not used by frontend
+// 3. Will be re-implemented with proper admin RBAC in future
+// OAuth providers are configured via YAML registry and environment variables instead.
 
 /// List all OAuth credentials
 async fn list_oauth_credentials_handler(
@@ -1207,12 +1169,20 @@ async fn connect_oauth_provider_post_handler(
     AxumPath(provider): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // Extract scopes from JSON body
-    let scopes: Vec<&str> = body
+    // Extract scopes from request body
+    // If not provided, build_auth_url() will use the provider's default scopes
+    let scope_strings: Vec<String> = body
         .get("scopes")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_else(|| vec!["read"]);
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let scopes: Vec<&str> = scope_strings.iter().map(|s| s.as_str()).collect();
 
     // Get integration name (optional)
     let integration = body.get("integration").and_then(|v| v.as_str());
@@ -1268,15 +1238,15 @@ async fn oauth_api_callback_handler(
     State(state): State<Arc<OAuthClientState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // Check for OAuth provider errors first (e.g., user denied access)
-    if let Some(error) = params.get("error") {
-        let error_desc = params
-            .get("error_description")
-            .map(|s| s.as_str())
-            .unwrap_or("Unknown OAuth error");
-
-        tracing::warn!("OAuth provider error: {} - {}", error, error_desc);
-        return Err(StatusCode::BAD_REQUEST);
+    // Check for OAuth provider errors using shared error checker
+    if let Some((status, _title, _message)) = check_oauth_error(&params) {
+        // For API callbacks, map OK (user cancel) to UNAUTHORIZED for clarity
+        let api_status = if status == StatusCode::OK {
+            StatusCode::UNAUTHORIZED
+        } else {
+            status
+        };
+        return Err(api_status);
     }
 
     // Get authorization code and state from OAuth provider
