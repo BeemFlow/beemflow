@@ -40,7 +40,7 @@ impl PostgresStorage {
             started_at: row.try_get("started_at")?,
             ended_at: row.try_get("ended_at")?,
             steps: None,
-            tenant_id: row.try_get("tenant_id")?,
+            organization_id: row.try_get("organization_id")?,
             triggered_by_user_id: row.try_get("triggered_by_user_id")?,
         })
     }
@@ -68,7 +68,7 @@ impl RunStorage for PostgresStorage {
     // Run methods
     async fn save_run(&self, run: &Run) -> Result<()> {
         sqlx::query(
-            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id)
+            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT(id) DO UPDATE SET
                 flow_name = EXCLUDED.flow_name,
@@ -77,7 +77,7 @@ impl RunStorage for PostgresStorage {
                 status = EXCLUDED.status,
                 started_at = EXCLUDED.started_at,
                 ended_at = EXCLUDED.ended_at,
-                tenant_id = EXCLUDED.tenant_id,
+                organization_id = EXCLUDED.organization_id,
                 triggered_by_user_id = EXCLUDED.triggered_by_user_id",
         )
         .bind(run.id)
@@ -87,7 +87,7 @@ impl RunStorage for PostgresStorage {
         .bind(run_status_to_str(run.status))
         .bind(run.started_at)
         .bind(run.ended_at)
-        .bind(&run.tenant_id)
+        .bind(&run.organization_id)
         .bind(&run.triggered_by_user_id)
         .execute(&self.pool)
         .await?;
@@ -95,13 +95,13 @@ impl RunStorage for PostgresStorage {
         Ok(())
     }
 
-    async fn get_run(&self, id: Uuid, tenant_id: &str) -> Result<Option<Run>> {
+    async fn get_run(&self, id: Uuid, organization_id: &str) -> Result<Option<Run>> {
         let row = sqlx::query(
-            "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
-             FROM runs WHERE id = $1 AND tenant_id = $2",
+            "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
+             FROM runs WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -111,18 +111,18 @@ impl RunStorage for PostgresStorage {
         }
     }
 
-    async fn list_runs(&self, tenant_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>> {
+    async fn list_runs(&self, organization_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>> {
         // Cap limit at 10,000 to prevent unbounded queries
         let capped_limit = limit.min(10_000);
 
         let rows = sqlx::query(
-            "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
+            "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
              FROM runs
-             WHERE tenant_id = $1
+             WHERE organization_id = $1
              ORDER BY started_at DESC
              LIMIT $2 OFFSET $3",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(capped_limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.pool)
@@ -139,7 +139,7 @@ impl RunStorage for PostgresStorage {
 
     async fn list_runs_by_flow_and_status(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
         status: RunStatus,
         exclude_id: Option<Uuid>,
@@ -150,26 +150,26 @@ impl RunStorage for PostgresStorage {
         // Build query with optional exclude clause
         let query = if let Some(id) = exclude_id {
             sqlx::query(
-                "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
+                "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
                  FROM runs
-                 WHERE tenant_id = $1 AND flow_name = $2 AND status = $3 AND id != $4
+                 WHERE organization_id = $1 AND flow_name = $2 AND status = $3 AND id != $4
                  ORDER BY started_at DESC
                  LIMIT $5",
             )
-            .bind(tenant_id)
+            .bind(organization_id)
             .bind(flow_name)
             .bind(status_str)
             .bind(id)
             .bind(limit as i64)
         } else {
             sqlx::query(
-                "SELECT id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id
+                "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
                  FROM runs
-                 WHERE tenant_id = $1 AND flow_name = $2 AND status = $3
+                 WHERE organization_id = $1 AND flow_name = $2 AND status = $3
                  ORDER BY started_at DESC
                  LIMIT $4",
             )
-            .bind(tenant_id)
+            .bind(organization_id)
             .bind(flow_name)
             .bind(status_str)
             .bind(limit as i64)
@@ -186,17 +186,17 @@ impl RunStorage for PostgresStorage {
         Ok(runs)
     }
 
-    async fn delete_run(&self, id: Uuid, tenant_id: &str) -> Result<()> {
-        // Verify run belongs to tenant before deleting
-        let run = self.get_run(id, tenant_id).await?;
+    async fn delete_run(&self, id: Uuid, organization_id: &str) -> Result<()> {
+        // Verify run belongs to organization before deleting
+        let run = self.get_run(id, organization_id).await?;
         if run.is_none() {
             return Err(BeemFlowError::not_found("run", id.to_string()));
         }
 
         // Postgres will cascade delete steps due to foreign key
-        sqlx::query("DELETE FROM runs WHERE id = $1 AND tenant_id = $2")
+        sqlx::query("DELETE FROM runs WHERE id = $1 AND organization_id = $2")
             .bind(id)
-            .bind(tenant_id)
+            .bind(organization_id)
             .execute(&self.pool)
             .await?;
 
@@ -205,7 +205,7 @@ impl RunStorage for PostgresStorage {
 
     async fn try_insert_run(&self, run: &Run) -> Result<bool> {
         let result = sqlx::query(
-            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, tenant_id, triggered_by_user_id)
+            "INSERT INTO runs (id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT(id) DO NOTHING",
         )
@@ -216,7 +216,7 @@ impl RunStorage for PostgresStorage {
         .bind(run_status_to_str(run.status))
         .bind(run.started_at)
         .bind(run.ended_at)
-        .bind(&run.tenant_id)
+        .bind(&run.organization_id)
         .bind(&run.triggered_by_user_id)
         .execute(&self.pool)
         .await?;
@@ -304,17 +304,17 @@ impl StateStorage for PostgresStorage {
         token: &str,
         source: &str,
         data: serde_json::Value,
-        tenant_id: &str,
+        organization_id: &str,
         user_id: &str,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO paused_runs (token, source, data, tenant_id, user_id) VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT(token) DO UPDATE SET source = EXCLUDED.source, data = EXCLUDED.data, tenant_id = EXCLUDED.tenant_id, user_id = EXCLUDED.user_id",
+            "INSERT INTO paused_runs (token, source, data, organization_id, user_id) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT(token) DO UPDATE SET source = EXCLUDED.source, data = EXCLUDED.data, organization_id = EXCLUDED.organization_id, user_id = EXCLUDED.user_id",
         )
         .bind(token)
         .bind(source)
         .bind(data)
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(user_id)
         .execute(&self.pool)
         .await?;
@@ -387,7 +387,7 @@ impl FlowStorage for PostgresStorage {
     // Flow versioning methods
     async fn deploy_flow_version(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
         version: &str,
         content: &str,
@@ -403,9 +403,9 @@ impl FlowStorage for PostgresStorage {
 
         // Check if this version already exists (enforce version immutability)
         let exists = sqlx::query(
-            "SELECT 1 FROM flow_versions WHERE tenant_id = $1 AND flow_name = $2 AND version = $3 LIMIT 1",
+            "SELECT 1 FROM flow_versions WHERE organization_id = $1 AND flow_name = $2 AND version = $3 LIMIT 1",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .bind(version)
         .fetch_optional(&mut *tx)
@@ -420,10 +420,10 @@ impl FlowStorage for PostgresStorage {
 
         // Save new version snapshot
         sqlx::query(
-            "INSERT INTO flow_versions (tenant_id, flow_name, version, content, deployed_at, deployed_by_user_id)
+            "INSERT INTO flow_versions (organization_id, flow_name, version, content, deployed_at, deployed_by_user_id)
             VALUES ($1, $2, $3, $4, $5, $6)",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .bind(version)
         .bind(content)
@@ -434,13 +434,13 @@ impl FlowStorage for PostgresStorage {
 
         // Update deployed version pointer
         sqlx::query(
-            "INSERT INTO deployed_flows (tenant_id, flow_name, deployed_version, deployed_at)
+            "INSERT INTO deployed_flows (organization_id, flow_name, deployed_version, deployed_at)
              VALUES ($1, $2, $3, $4)
-             ON CONFLICT(tenant_id, flow_name) DO UPDATE SET
+             ON CONFLICT(organization_id, flow_name) DO UPDATE SET
                 deployed_version = EXCLUDED.deployed_version,
                 deployed_at = EXCLUDED.deployed_at",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .bind(version)
         .bind(now)
@@ -451,11 +451,11 @@ impl FlowStorage for PostgresStorage {
         // Note: No need to delete - version is new (checked above)
         for topic in topics {
             sqlx::query(
-                "INSERT INTO flow_triggers (tenant_id, flow_name, version, topic)
+                "INSERT INTO flow_triggers (organization_id, flow_name, version, topic)
                  VALUES ($1, $2, $3, $4)
                  ON CONFLICT DO NOTHING",
             )
-            .bind(tenant_id)
+            .bind(organization_id)
             .bind(flow_name)
             .bind(version)
             .bind(&topic)
@@ -469,20 +469,20 @@ impl FlowStorage for PostgresStorage {
 
     async fn set_deployed_version(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
         version: &str,
     ) -> Result<()> {
         let now = Utc::now();
 
         sqlx::query(
-            "INSERT INTO deployed_flows (tenant_id, flow_name, deployed_version, deployed_at)
+            "INSERT INTO deployed_flows (organization_id, flow_name, deployed_version, deployed_at)
             VALUES ($1, $2, $3, $4)
-             ON CONFLICT(tenant_id, flow_name) DO UPDATE SET
+             ON CONFLICT(organization_id, flow_name) DO UPDATE SET
                 deployed_version = EXCLUDED.deployed_version,
                 deployed_at = EXCLUDED.deployed_at",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .bind(version)
         .bind(now)
@@ -494,13 +494,13 @@ impl FlowStorage for PostgresStorage {
 
     async fn get_deployed_version(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
         let row = sqlx::query(
-            "SELECT deployed_version FROM deployed_flows WHERE tenant_id = $1 AND flow_name = $2",
+            "SELECT deployed_version FROM deployed_flows WHERE organization_id = $1 AND flow_name = $2",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
         .await?;
@@ -510,13 +510,13 @@ impl FlowStorage for PostgresStorage {
 
     async fn get_flow_version_content(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
         version: &str,
     ) -> Result<Option<String>> {
         let row =
-            sqlx::query("SELECT content FROM flow_versions WHERE tenant_id = $1 AND flow_name = $2 AND version = $3")
-                .bind(tenant_id)
+            sqlx::query("SELECT content FROM flow_versions WHERE organization_id = $1 AND flow_name = $2 AND version = $3")
+                .bind(organization_id)
                 .bind(flow_name)
                 .bind(version)
                 .fetch_optional(&self.pool)
@@ -527,18 +527,18 @@ impl FlowStorage for PostgresStorage {
 
     async fn list_flow_versions(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
     ) -> Result<Vec<FlowSnapshot>> {
         let rows = sqlx::query(
             "SELECT v.version, v.deployed_at,
                 CASE WHEN d.deployed_version = v.version THEN true ELSE false END as is_live
              FROM flow_versions v
-             LEFT JOIN deployed_flows d ON v.tenant_id = d.tenant_id AND v.flow_name = d.flow_name
-             WHERE v.tenant_id = $1 AND v.flow_name = $2
+             LEFT JOIN deployed_flows d ON v.organization_id = d.organization_id AND v.flow_name = d.flow_name
+             WHERE v.organization_id = $1 AND v.flow_name = $2
              ORDER BY v.deployed_at DESC",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .fetch_all(&self.pool)
         .await?;
@@ -562,16 +562,16 @@ impl FlowStorage for PostgresStorage {
 
     async fn get_latest_deployed_version_from_history(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
         let row = sqlx::query(
             "SELECT version FROM flow_versions
-             WHERE tenant_id = $1 AND flow_name = $2
+             WHERE organization_id = $1 AND flow_name = $2
              ORDER BY deployed_at DESC, version DESC
              LIMIT 1",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
         .await?;
@@ -579,26 +579,26 @@ impl FlowStorage for PostgresStorage {
         Ok(row.and_then(|r| r.try_get("version").ok()))
     }
 
-    async fn unset_deployed_version(&self, tenant_id: &str, flow_name: &str) -> Result<()> {
-        sqlx::query("DELETE FROM deployed_flows WHERE tenant_id = $1 AND flow_name = $2")
-            .bind(tenant_id)
+    async fn unset_deployed_version(&self, organization_id: &str, flow_name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM deployed_flows WHERE organization_id = $1 AND flow_name = $2")
+            .bind(organization_id)
             .bind(flow_name)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    async fn list_all_deployed_flows(&self, tenant_id: &str) -> Result<Vec<(String, String)>> {
+    async fn list_all_deployed_flows(&self, organization_id: &str) -> Result<Vec<(String, String)>> {
         let rows = sqlx::query(
             "SELECT d.flow_name, v.content
              FROM deployed_flows d
              INNER JOIN flow_versions v
-               ON d.tenant_id = v.tenant_id
+               ON d.organization_id = v.organization_id
                AND d.flow_name = v.flow_name
                AND d.deployed_version = v.version
-             WHERE d.tenant_id = $1",
+             WHERE d.organization_id = $1",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -612,15 +612,15 @@ impl FlowStorage for PostgresStorage {
         Ok(result)
     }
 
-    async fn find_flow_names_by_topic(&self, tenant_id: &str, topic: &str) -> Result<Vec<String>> {
+    async fn find_flow_names_by_topic(&self, organization_id: &str, topic: &str) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT DISTINCT ft.flow_name
              FROM flow_triggers ft
-             INNER JOIN deployed_flows d ON ft.tenant_id = d.tenant_id AND ft.flow_name = d.flow_name AND ft.version = d.deployed_version
-             WHERE ft.tenant_id = $1 AND ft.topic = $2
+             INNER JOIN deployed_flows d ON ft.organization_id = d.organization_id AND ft.flow_name = d.flow_name AND ft.version = d.deployed_version
+             WHERE ft.organization_id = $1 AND ft.topic = $2
              ORDER BY ft.flow_name"
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(topic)
         .fetch_all(&self.pool)
         .await?;
@@ -633,14 +633,14 @@ impl FlowStorage for PostgresStorage {
 
     async fn get_deployed_flows_content(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         flow_names: &[String],
     ) -> Result<Vec<(String, String)>> {
         if flow_names.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Build placeholders for IN clause: $2, $3, $4, ... ($1 is tenant_id)
+        // Build placeholders for IN clause: $2, $3, $4, ... ($1 is organization_id)
         let placeholders = (2..=flow_names.len() + 1)
             .map(|i| format!("${}", i))
             .collect::<Vec<_>>()
@@ -649,13 +649,13 @@ impl FlowStorage for PostgresStorage {
         let query_str = format!(
             "SELECT df.flow_name, fv.content
              FROM deployed_flows df
-             INNER JOIN flow_versions fv ON df.tenant_id = fv.tenant_id AND df.flow_name = fv.flow_name AND df.deployed_version = fv.version
-             WHERE df.tenant_id = $1 AND df.flow_name IN ({})",
+             INNER JOIN flow_versions fv ON df.organization_id = fv.organization_id AND df.flow_name = fv.flow_name AND df.deployed_version = fv.version
+             WHERE df.organization_id = $1 AND df.flow_name IN ({})",
             placeholders
         );
 
         let mut query = sqlx::query(&query_str);
-        query = query.bind(tenant_id);
+        query = query.bind(organization_id);
         for name in flow_names {
             query = query.bind(name);
         }
@@ -667,17 +667,17 @@ impl FlowStorage for PostgresStorage {
             .collect()
     }
 
-    async fn get_deployed_by(&self, tenant_id: &str, flow_name: &str) -> Result<Option<String>> {
+    async fn get_deployed_by(&self, organization_id: &str, flow_name: &str) -> Result<Option<String>> {
         let row = sqlx::query(
             "SELECT fv.deployed_by_user_id
              FROM deployed_flows df
              INNER JOIN flow_versions fv
-               ON df.tenant_id = fv.tenant_id
+               ON df.organization_id = fv.organization_id
                AND df.flow_name = fv.flow_name
                AND df.deployed_version = fv.version
-             WHERE df.tenant_id = $1 AND df.flow_name = $2",
+             WHERE df.organization_id = $1 AND df.flow_name = $2",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
         .await?;
@@ -699,7 +699,7 @@ impl OAuthStorage for PostgresStorage {
 
         sqlx::query(
             "INSERT INTO oauth_credentials
-             (id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id)
+             (id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT(user_id, provider, integration) DO UPDATE SET
                 id = EXCLUDED.id,
@@ -708,7 +708,7 @@ impl OAuthStorage for PostgresStorage {
                 expires_at = EXCLUDED.expires_at,
                 scope = EXCLUDED.scope,
                 updated_at = EXCLUDED.updated_at,
-                tenant_id = EXCLUDED.tenant_id"
+                organization_id = EXCLUDED.organization_id"
         )
         .bind(&credential.id)
         .bind(&credential.provider)
@@ -720,7 +720,7 @@ impl OAuthStorage for PostgresStorage {
         .bind(credential.created_at)
         .bind(Utc::now())
         .bind(&credential.user_id)
-        .bind(&credential.tenant_id)
+        .bind(&credential.organization_id)
         .execute(&self.pool)
         .await?;
 
@@ -732,17 +732,17 @@ impl OAuthStorage for PostgresStorage {
         provider: &str,
         integration: &str,
         user_id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
         let row = sqlx::query(
-            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
-             WHERE provider = $1 AND integration = $2 AND user_id = $3 AND tenant_id = $4"
+             WHERE provider = $1 AND integration = $2 AND user_id = $3 AND organization_id = $4"
         )
         .bind(provider)
         .bind(integration)
         .bind(user_id)
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -769,7 +769,7 @@ impl OAuthStorage for PostgresStorage {
                     created_at: row.try_get("created_at")?,
                     updated_at: row.try_get("updated_at")?,
                     user_id: row.try_get("user_id")?,
-                    tenant_id: row.try_get("tenant_id")?,
+                    organization_id: row.try_get("organization_id")?,
                 }))
             }
             None => Ok(None),
@@ -779,16 +779,16 @@ impl OAuthStorage for PostgresStorage {
     async fn list_oauth_credentials(
         &self,
         user_id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<Vec<OAuthCredential>> {
         let rows = sqlx::query(
-            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
-             WHERE user_id = $1 AND tenant_id = $2
+             WHERE user_id = $1 AND organization_id = $2
              ORDER BY created_at DESC"
         )
         .bind(user_id)
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -815,7 +815,7 @@ impl OAuthStorage for PostgresStorage {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
                 user_id: row.try_get("user_id")?,
-                tenant_id: row.try_get("tenant_id")?,
+                organization_id: row.try_get("organization_id")?,
             });
         }
 
@@ -825,15 +825,15 @@ impl OAuthStorage for PostgresStorage {
     async fn get_oauth_credential_by_id(
         &self,
         id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
         let row = sqlx::query(
-            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, tenant_id
+            "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
-             WHERE id = $1 AND tenant_id = $2"
+             WHERE id = $1 AND organization_id = $2"
         )
         .bind(id)
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -856,18 +856,18 @@ impl OAuthStorage for PostgresStorage {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
                 user_id: row.try_get("user_id")?,
-                tenant_id: row.try_get("tenant_id")?,
+                organization_id: row.try_get("organization_id")?,
             }))
         } else {
             Ok(None)
         }
     }
 
-    async fn delete_oauth_credential(&self, id: &str, tenant_id: &str) -> Result<()> {
-        // Defense in depth: Verify tenant ownership at storage layer
-        let result = sqlx::query("DELETE FROM oauth_credentials WHERE id = $1 AND tenant_id = $2")
+    async fn delete_oauth_credential(&self, id: &str, organization_id: &str) -> Result<()> {
+        // Defense in depth: Verify organization ownership at storage layer
+        let result = sqlx::query("DELETE FROM oauth_credentials WHERE id = $1 AND organization_id = $2")
             .bind(id)
-            .bind(tenant_id)
+            .bind(organization_id)
             .execute(&self.pool)
             .await?;
 
@@ -1458,11 +1458,11 @@ impl crate::storage::AuthStorage for PostgresStorage {
         Ok(())
     }
 
-    // Tenant methods
-    async fn create_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()> {
+    // Organization methods
+    async fn create_organization(&self, organization: &crate::auth::Organization) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO tenants (
+            INSERT INTO organizations (
                 id, name, slug, plan, plan_starts_at, plan_ends_at,
                 max_users, max_flows, max_runs_per_month, settings,
                 created_by_user_id, created_at, updated_at, disabled
@@ -1470,34 +1470,34 @@ impl crate::storage::AuthStorage for PostgresStorage {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
-        .bind(&tenant.id)
-        .bind(&tenant.name)
-        .bind(&tenant.slug)
-        .bind(&tenant.plan)
-        .bind(tenant.plan_starts_at.map(|t| t.timestamp_millis()))
-        .bind(tenant.plan_ends_at.map(|t| t.timestamp_millis()))
-        .bind(tenant.max_users)
-        .bind(tenant.max_flows)
-        .bind(tenant.max_runs_per_month)
-        .bind(tenant.settings.as_ref())
-        .bind(&tenant.created_by_user_id)
-        .bind(tenant.created_at.timestamp_millis())
-        .bind(tenant.updated_at.timestamp_millis())
-        .bind(tenant.disabled)
+        .bind(&organization.id)
+        .bind(&organization.name)
+        .bind(&organization.slug)
+        .bind(&organization.plan)
+        .bind(organization.plan_starts_at.map(|t| t.timestamp_millis()))
+        .bind(organization.plan_ends_at.map(|t| t.timestamp_millis()))
+        .bind(organization.max_users)
+        .bind(organization.max_flows)
+        .bind(organization.max_runs_per_month)
+        .bind(organization.settings.as_ref())
+        .bind(&organization.created_by_user_id)
+        .bind(organization.created_at.timestamp_millis())
+        .bind(organization.updated_at.timestamp_millis())
+        .bind(organization.disabled)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn get_tenant(&self, id: &str) -> Result<Option<crate::auth::Tenant>> {
-        let row = sqlx::query("SELECT * FROM tenants WHERE id = $1")
+    async fn get_organization(&self, id: &str) -> Result<Option<crate::auth::Organization>> {
+        let row = sqlx::query("SELECT * FROM organizations WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
 
         match row {
-            Some(row) => Ok(Some(crate::auth::Tenant {
+            Some(row) => Ok(Some(crate::auth::Organization {
                 id: row.try_get("id")?,
                 name: row.try_get("name")?,
                 slug: row.try_get("slug")?,
@@ -1523,14 +1523,14 @@ impl crate::storage::AuthStorage for PostgresStorage {
         }
     }
 
-    async fn get_tenant_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Tenant>> {
-        let row = sqlx::query("SELECT * FROM tenants WHERE slug = $1")
+    async fn get_organization_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Organization>> {
+        let row = sqlx::query("SELECT * FROM organizations WHERE slug = $1")
             .bind(slug)
             .fetch_optional(&self.pool)
             .await?;
 
         match row {
-            Some(row) => Ok(Some(crate::auth::Tenant {
+            Some(row) => Ok(Some(crate::auth::Organization {
                 id: row.try_get("id")?,
                 name: row.try_get("name")?,
                 slug: row.try_get("slug")?,
@@ -1556,43 +1556,43 @@ impl crate::storage::AuthStorage for PostgresStorage {
         }
     }
 
-    async fn update_tenant(&self, tenant: &crate::auth::Tenant) -> Result<()> {
+    async fn update_organization(&self, organization: &crate::auth::Organization) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE tenants SET
+            UPDATE organizations SET
                 name = $1, slug = $2, plan = $3, plan_starts_at = $4, plan_ends_at = $5,
                 max_users = $6, max_flows = $7, max_runs_per_month = $8,
                 settings = $9, updated_at = $10, disabled = $11
             WHERE id = $12
             "#,
         )
-        .bind(&tenant.name)
-        .bind(&tenant.slug)
-        .bind(&tenant.plan)
-        .bind(tenant.plan_starts_at.map(|t| t.timestamp_millis()))
-        .bind(tenant.plan_ends_at.map(|t| t.timestamp_millis()))
-        .bind(tenant.max_users)
-        .bind(tenant.max_flows)
-        .bind(tenant.max_runs_per_month)
-        .bind(tenant.settings.as_ref())
-        .bind(tenant.updated_at.timestamp_millis())
-        .bind(tenant.disabled)
-        .bind(&tenant.id)
+        .bind(&organization.name)
+        .bind(&organization.slug)
+        .bind(&organization.plan)
+        .bind(organization.plan_starts_at.map(|t| t.timestamp_millis()))
+        .bind(organization.plan_ends_at.map(|t| t.timestamp_millis()))
+        .bind(organization.max_users)
+        .bind(organization.max_flows)
+        .bind(organization.max_runs_per_month)
+        .bind(organization.settings.as_ref())
+        .bind(organization.updated_at.timestamp_millis())
+        .bind(organization.disabled)
+        .bind(&organization.id)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    async fn list_active_tenants(&self) -> Result<Vec<crate::auth::Tenant>> {
+    async fn list_active_organizations(&self) -> Result<Vec<crate::auth::Organization>> {
         let rows =
-            sqlx::query("SELECT * FROM tenants WHERE disabled = FALSE ORDER BY created_at ASC")
+            sqlx::query("SELECT * FROM organizations WHERE disabled = FALSE ORDER BY created_at ASC")
                 .fetch_all(&self.pool)
                 .await?;
 
-        let mut tenants = Vec::new();
+        let mut organizations = Vec::new();
         for row in rows {
-            tenants.push(crate::auth::Tenant {
+            organizations.push(crate::auth::Organization {
                 id: row.try_get("id")?,
                 name: row.try_get("name")?,
                 slug: row.try_get("slug")?,
@@ -1616,22 +1616,22 @@ impl crate::storage::AuthStorage for PostgresStorage {
             });
         }
 
-        Ok(tenants)
+        Ok(organizations)
     }
 
-    // Tenant membership methods
-    async fn create_tenant_member(&self, member: &crate::auth::TenantMember) -> Result<()> {
+    // Organization membership methods
+    async fn create_organization_member(&self, member: &crate::auth::OrganizationMember) -> Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO tenant_members (
-                id, tenant_id, user_id, role,
+            INSERT INTO organization_members (
+                id, organization_id, user_id, role,
                 invited_by_user_id, invited_at, joined_at, disabled
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(&member.id)
-        .bind(&member.tenant_id)
+        .bind(&member.organization_id)
         .bind(&member.user_id)
         .bind(member.role.as_str())
         .bind(&member.invited_by_user_id)
@@ -1644,15 +1644,15 @@ impl crate::storage::AuthStorage for PostgresStorage {
         Ok(())
     }
 
-    async fn get_tenant_member(
+    async fn get_organization_member(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         user_id: &str,
-    ) -> Result<Option<crate::auth::TenantMember>> {
+    ) -> Result<Option<crate::auth::OrganizationMember>> {
         let row = sqlx::query(
-            "SELECT * FROM tenant_members WHERE tenant_id = $1 AND user_id = $2 AND disabled = FALSE",
+            "SELECT * FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND disabled = FALSE",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await?;
@@ -1664,9 +1664,9 @@ impl crate::storage::AuthStorage for PostgresStorage {
                     .parse::<crate::auth::Role>()
                     .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
 
-                Ok(Some(crate::auth::TenantMember {
+                Ok(Some(crate::auth::OrganizationMember {
                     id: row.try_get("id")?,
-                    tenant_id: row.try_get("tenant_id")?,
+                    organization_id: row.try_get("organization_id")?,
                     user_id: row.try_get("user_id")?,
                     role,
                     invited_by_user_id: row.try_get("invited_by_user_id")?,
@@ -1682,17 +1682,17 @@ impl crate::storage::AuthStorage for PostgresStorage {
         }
     }
 
-    async fn list_user_tenants(
+    async fn list_user_organizations(
         &self,
         user_id: &str,
-    ) -> Result<Vec<(crate::auth::Tenant, crate::auth::Role)>> {
+    ) -> Result<Vec<(crate::auth::Organization, crate::auth::Role)>> {
         let rows = sqlx::query(
             r#"
-            SELECT t.*, tm.role
-            FROM tenants t
-            INNER JOIN tenant_members tm ON t.id = tm.tenant_id
-            WHERE tm.user_id = $1 AND tm.disabled = FALSE AND t.disabled = FALSE
-            ORDER BY tm.joined_at ASC
+            SELECT o.*, om.role
+            FROM organizations o
+            INNER JOIN organization_members om ON o.id = om.organization_id
+            WHERE om.user_id = $1 AND om.disabled = FALSE AND o.disabled = FALSE
+            ORDER BY om.joined_at ASC
             "#,
         )
         .bind(user_id)
@@ -1706,7 +1706,7 @@ impl crate::storage::AuthStorage for PostgresStorage {
                 .parse::<crate::auth::Role>()
                 .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
 
-            let tenant = crate::auth::Tenant {
+            let organization = crate::auth::Organization {
                 id: row.try_get("id")?,
                 name: row.try_get("name")?,
                 slug: row.try_get("slug")?,
@@ -1729,26 +1729,26 @@ impl crate::storage::AuthStorage for PostgresStorage {
                 disabled: row.try_get("disabled")?,
             };
 
-            results.push((tenant, role));
+            results.push((organization, role));
         }
 
         Ok(results)
     }
 
-    async fn list_tenant_members(
+    async fn list_organization_members(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<Vec<(crate::auth::User, crate::auth::Role)>> {
         let rows = sqlx::query(
             r#"
-            SELECT u.*, tm.role
+            SELECT u.*, om.role
             FROM users u
-            INNER JOIN tenant_members tm ON u.id = tm.user_id
-            WHERE tm.tenant_id = $1 AND tm.disabled = FALSE AND u.disabled = FALSE
-            ORDER BY tm.joined_at ASC
+            INNER JOIN organization_members om ON u.id = om.user_id
+            WHERE om.organization_id = $1 AND om.disabled = FALSE AND u.disabled = FALSE
+            ORDER BY om.joined_at ASC
             "#,
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1790,13 +1790,13 @@ impl crate::storage::AuthStorage for PostgresStorage {
 
     async fn update_member_role(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         user_id: &str,
         role: crate::auth::Role,
     ) -> Result<()> {
-        sqlx::query("UPDATE tenant_members SET role = $1 WHERE tenant_id = $2 AND user_id = $3")
+        sqlx::query("UPDATE organization_members SET role = $1 WHERE organization_id = $2 AND user_id = $3")
             .bind(role.as_str())
-            .bind(tenant_id)
+            .bind(organization_id)
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -1804,9 +1804,9 @@ impl crate::storage::AuthStorage for PostgresStorage {
         Ok(())
     }
 
-    async fn remove_tenant_member(&self, tenant_id: &str, user_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM tenant_members WHERE tenant_id = $1 AND user_id = $2")
-            .bind(tenant_id)
+    async fn remove_organization_member(&self, organization_id: &str, user_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2")
+            .bind(organization_id)
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -1819,16 +1819,15 @@ impl crate::storage::AuthStorage for PostgresStorage {
         sqlx::query(
             r#"
             INSERT INTO refresh_tokens (
-                id, user_id, tenant_id, token_hash, expires_at,
+                id, user_id, token_hash, expires_at,
                 revoked, revoked_at, created_at, last_used_at,
                 user_agent, client_ip
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(&token.id)
         .bind(&token.user_id)
-        .bind(&token.tenant_id)
         .bind(&token.token_hash)
         .bind(token.expires_at.timestamp_millis())
         .bind(token.revoked)
@@ -1857,7 +1856,6 @@ impl crate::storage::AuthStorage for PostgresStorage {
             Some(row) => Ok(Some(crate::auth::RefreshToken {
                 id: row.try_get("id")?,
                 user_id: row.try_get("user_id")?,
-                tenant_id: row.try_get("tenant_id")?,
                 token_hash: row.try_get("token_hash")?,
                 expires_at: DateTime::from_timestamp_millis(row.try_get("expires_at")?)
                     .unwrap_or_else(Utc::now),
@@ -1914,7 +1912,7 @@ impl crate::storage::AuthStorage for PostgresStorage {
         sqlx::query(
             r#"
             INSERT INTO audit_logs (
-                id, timestamp, request_id, tenant_id, user_id,
+                id, timestamp, request_id, organization_id, user_id,
                 client_ip, user_agent, action, resource_type, resource_id,
                 resource_name, http_method, http_path, http_status_code,
                 success, error_message, metadata, created_at
@@ -1925,7 +1923,7 @@ impl crate::storage::AuthStorage for PostgresStorage {
         .bind(&log.id)
         .bind(log.timestamp)
         .bind(&log.request_id)
-        .bind(&log.tenant_id)
+        .bind(&log.organization_id)
         .bind(&log.user_id)
         .bind(&log.client_ip)
         .bind(&log.user_agent)
@@ -1948,14 +1946,14 @@ impl crate::storage::AuthStorage for PostgresStorage {
 
     async fn list_audit_logs(
         &self,
-        tenant_id: &str,
+        organization_id: &str,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<crate::audit::AuditLog>> {
         let rows = sqlx::query(
-            "SELECT * FROM audit_logs WHERE tenant_id = $1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
+            "SELECT * FROM audit_logs WHERE organization_id = $1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
         )
-        .bind(tenant_id)
+        .bind(organization_id)
         .bind(limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.pool)
@@ -1967,7 +1965,7 @@ impl crate::storage::AuthStorage for PostgresStorage {
                 id: row.try_get("id")?,
                 timestamp: row.try_get("timestamp")?,
                 request_id: row.try_get("request_id")?,
-                tenant_id: row.try_get("tenant_id")?,
+                organization_id: row.try_get("organization_id")?,
                 user_id: row.try_get("user_id")?,
                 client_ip: row.try_get("client_ip")?,
                 user_agent: row.try_get("user_agent")?,

@@ -11,8 +11,8 @@ use std::collections::HashMap;
 fn create_test_context() -> beemflow::auth::RequestContext {
     beemflow::auth::RequestContext {
         user_id: "test_user".to_string(),
-        tenant_id: "test_tenant".to_string(),
-        tenant_name: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
         role: beemflow::auth::Role::Admin,
         client_ip: None,
         user_agent: None,
@@ -31,7 +31,7 @@ async fn test_hello_world_flow() {
     // Execute it
     let engine = Engine::for_testing().await;
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await
         .unwrap();
     let outputs = result.outputs;
@@ -100,7 +100,7 @@ steps:
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await
         .unwrap();
     let outputs = result.outputs;
@@ -132,7 +132,7 @@ steps:
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await
         .unwrap();
     let outputs = result.outputs;
@@ -169,7 +169,7 @@ steps:
     let flow = parse_string(yaml, None).unwrap();
     let engine = Engine::for_testing().await;
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await
         .unwrap();
     let outputs = result.outputs;
@@ -241,13 +241,13 @@ async fn test_storage_operations() {
     // Test flow versioning
     env.deps
         .storage
-        .deploy_flow_version("test_tenant", "test_flow", "1.0.0", "content", "test_user")
+        .deploy_flow_version("test_org", "test_flow", "1.0.0", "content", "test_user")
         .await
         .unwrap();
     let retrieved = env
         .deps
         .storage
-        .get_flow_version_content("test_tenant", "test_flow", "1.0.0")
+        .get_flow_version_content("test_org", "test_flow", "1.0.0")
         .await
         .unwrap();
     assert_eq!(retrieved.unwrap(), "content");
@@ -262,7 +262,7 @@ async fn test_storage_operations() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
-        tenant_id: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
         triggered_by_user_id: "test_user".to_string(),
     };
 
@@ -270,7 +270,7 @@ async fn test_storage_operations() {
     let retrieved_run = env
         .deps
         .storage
-        .get_run(run.id, "test_tenant")
+        .get_run(run.id, "test_org")
         .await
         .unwrap();
     assert!(retrieved_run.is_some());
@@ -377,7 +377,7 @@ async fn test_cli_reuses_existing_database() {
         let storage = SqliteStorage::new(db_path_str).await.unwrap();
         storage
             .deploy_flow_version(
-                "test_tenant",
+                "test_org",
                 "persisted_flow",
                 "1.0.0",
                 "content",
@@ -391,7 +391,7 @@ async fn test_cli_reuses_existing_database() {
     {
         let storage = SqliteStorage::new(db_path_str).await.unwrap();
         let version = storage
-            .get_deployed_version("test_tenant", "persisted_flow")
+            .get_deployed_version("test_org", "persisted_flow")
             .await
             .unwrap();
         assert_eq!(
@@ -441,11 +441,11 @@ async fn test_cli_with_missing_parent_directory() {
         started_at: chrono::Utc::now(),
         ended_at: None,
         steps: None,
-        tenant_id: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
         triggered_by_user_id: "test_user".to_string(),
     };
     storage.save_run(&run).await.unwrap();
-    let runs = storage.list_runs("test_tenant", 1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 1);
 }
 
@@ -735,7 +735,7 @@ steps:
 
             // Verify version 2.0.0 is deployed
             let version = storage
-                .get_deployed_version("test_tenant", "rollback_flow")
+                .get_deployed_version("test_org", "rollback_flow")
                 .await
                 .unwrap();
             assert_eq!(version, Some("2.0.0".to_string()));
@@ -758,7 +758,7 @@ steps:
 
             // Verify version 1.0.0 is now deployed
             let version_after = storage
-                .get_deployed_version("test_tenant", "rollback_flow")
+                .get_deployed_version("test_org", "rollback_flow")
                 .await
                 .unwrap();
             assert_eq!(version_after, Some("1.0.0".to_string()));
@@ -827,7 +827,7 @@ steps:
 
             // Verify deployed
             let version = storage
-                .get_deployed_version("test_tenant", "disable_enable_test")
+                .get_deployed_version("test_org", "disable_enable_test")
                 .await
                 .unwrap();
             assert_eq!(version, Some("1.0.0".to_string()));
@@ -845,7 +845,7 @@ steps:
 
             // Verify disabled
             let version_after_disable = storage
-                .get_deployed_version("test_tenant", "disable_enable_test")
+                .get_deployed_version("test_org", "disable_enable_test")
                 .await
                 .unwrap();
             assert_eq!(version_after_disable, None, "Should be disabled");
@@ -877,7 +877,7 @@ steps:
 
             // Verify re-enabled with same version
             let version_after_enable = storage
-                .get_deployed_version("test_tenant", "disable_enable_test")
+                .get_deployed_version("test_org", "disable_enable_test")
                 .await
                 .unwrap();
             assert_eq!(
@@ -983,7 +983,7 @@ steps:
 
             // Verify v2.0.0 is deployed
             let version = storage
-                .get_deployed_version("test_tenant", "no_rollback_test")
+                .get_deployed_version("test_org", "no_rollback_test")
                 .await
                 .unwrap();
             assert_eq!(version, Some("2.0.0".to_string()));
@@ -1011,7 +1011,7 @@ steps:
                 .unwrap();
 
             let version_after = storage
-                .get_deployed_version("test_tenant", "no_rollback_test")
+                .get_deployed_version("test_org", "no_rollback_test")
                 .await
                 .unwrap();
             assert_eq!(
@@ -1621,7 +1621,7 @@ steps:
     let mut event1 = HashMap::new();
     event1.insert("run_number".to_string(), serde_json::json!(1));
     let result1 = engine
-        .execute(&flow, event1, "test_user", "test_tenant")
+        .execute(&flow, event1, "test_user", "test_org")
         .await
         .unwrap();
     let outputs1 = result1.outputs;
@@ -1644,7 +1644,7 @@ steps:
     let mut event2 = HashMap::new();
     event2.insert("run_number".to_string(), serde_json::json!(2));
     let result2 = engine
-        .execute(&flow, event2, "test_user", "test_tenant")
+        .execute(&flow, event2, "test_user", "test_org")
         .await
         .unwrap();
     let outputs2 = result2.outputs;

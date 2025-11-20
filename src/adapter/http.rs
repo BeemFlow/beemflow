@@ -267,15 +267,15 @@ impl HttpAdapter {
         let mut parts = oauth_ref.split(':');
         let (provider, integration) = (parts.next()?, parts.next()?);
 
-        // Get user_id and tenant_id from context - REQUIRED for per-user OAuth
-        let (user_id, tenant_id) = match (&ctx.user_id, &ctx.tenant_id) {
-            (Some(uid), Some(tid)) => (uid.as_str(), tid.as_str()),
+        // Get user_id and organization_id from context - REQUIRED for per-user OAuth
+        let (user_id, organization_id) = match (&ctx.user_id, &ctx.organization_id) {
+            (Some(uid), Some(oid)) => (uid.as_str(), oid.as_str()),
             _ => {
                 tracing::error!(
                     "OAuth token expansion requires user context. \
-                    Workflow triggered without authentication (user_id={:?}, tenant_id={:?})",
+                    Workflow triggered without authentication (user_id={:?}, organization_id={:?})",
                     ctx.user_id,
-                    ctx.tenant_id
+                    ctx.organization_id
                 );
                 return None;
             }
@@ -283,17 +283,17 @@ impl HttpAdapter {
 
         match ctx
             .oauth_client
-            .get_token(provider, integration, user_id, tenant_id)
+            .get_token(provider, integration, user_id, organization_id)
             .await
         {
             Ok(token) => Some(token),
             Err(e) => {
                 tracing::error!(
-                    "Failed to get OAuth token for {}:{} (user: {}, tenant: {}) - {}",
+                    "Failed to get OAuth token for {}:{} (user: {}, organization: {}) - {}",
                     provider,
                     integration,
                     user_id,
-                    tenant_id,
+                    organization_id,
                     e
                 );
                 None

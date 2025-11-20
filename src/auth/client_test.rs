@@ -15,7 +15,7 @@ fn create_test_credential() -> OAuthCredential {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: "test_user".to_string(),
-        tenant_id: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
     }
 }
 
@@ -35,7 +35,7 @@ async fn test_get_token_no_credential() {
     )
     .expect("Failed to create OAuth client manager");
 
-    let result = client.get_token("google", "sheets", "test_user", "test_tenant").await;
+    let result = client.get_token("google", "sheets", "test_user", "test_org").await;
     assert!(result.is_err());
 }
 
@@ -58,7 +58,7 @@ async fn test_get_token_valid() {
         "http://localhost:3000/callback".to_string(),
     )
     .expect("Failed to create OAuth client manager");
-    let token = client.get_token("google", "sheets", "test_user", "test_tenant").await.unwrap();
+    let token = client.get_token("google", "sheets", "test_user", "test_org").await.unwrap();
 
     assert_eq!(token, "test-token");
 }

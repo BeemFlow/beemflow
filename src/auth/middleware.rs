@@ -4,7 +4,7 @@
 //! 1. OAuth 2.0 middleware (for OAuth client - validates OAuth tokens)
 //! 2. JWT middleware (for multi-tenant auth - validates JWTs, resolves tenants)
 
-use super::{AuthContext, JwtManager, RequestContext};
+use super::{AuthContext, JwtClaims, JwtManager, RequestContext};
 use crate::audit::{AuditEvent, AuditLogger};
 use crate::model::OAuthToken;
 use crate::storage::Storage;
@@ -376,78 +376,106 @@ pub async fn auth_middleware(
         StatusCode::UNAUTHORIZED
     })?;
 
-    // Create auth context
+    // Create simplified auth context (organization/role determined by organization_middleware)
     let auth_ctx = AuthContext {
-        user_id: claims.sub,
-        tenant_id: claims.tenant,
-        role: claims.role,
+        user_id: claims.sub.clone(),
+        organization_id: String::new(), // Filled by organization_middleware
+        role: super::Role::Viewer, // Filled by organization_middleware
         token_exp: claims.exp,
     };
 
-    // Insert into request extensions
+    // Insert both Claims and AuthContext
+    req.extensions_mut().insert(claims);
     req.extensions_mut().insert(auth_ctx);
 
     Ok(next.run(req).await)
 }
 
-/// Tenant middleware - resolves tenant and creates RequestContext
+/// Organization middleware - validates organization header and creates RequestContext
 ///
-/// Retrieves tenant information, verifies user membership,
-/// and creates full RequestContext for downstream handlers.
+/// HEADER-BASED ORGANIZATION SELECTION (Stripe/Twilio pattern):
+/// 1. Client sends X-Organization-ID header with each request
+/// 2. Middleware validates user is a member (checks JWT's memberships array)
+/// 3. Creates RequestContext with organization_id and role from validated membership
 ///
 /// Returns:
-/// - 401 if no AuthContext (must run after auth_middleware)
-/// - 404 if tenant not found
-/// - 403 if user is not a member or tenant/membership is disabled
-pub async fn tenant_middleware(
+/// - 400 if X-Organization-ID header missing
+/// - 401 if no JWT Claims (must run after auth_middleware)
+/// - 403 if user is not a member of requested organization
+/// - 403 if organization or membership is disabled
+pub async fn organization_middleware(
     State(state): State<Arc<AuthMiddlewareState>>,
     mut req: Request,
     next: Next,
 ) -> std::result::Result<Response, StatusCode> {
-    // Get auth context from previous middleware
-    let auth_ctx = req
+    // Get JWT claims from previous auth middleware
+    let claims = req
         .extensions()
-        .get::<AuthContext>()
+        .get::<JwtClaims>()
         .ok_or(StatusCode::UNAUTHORIZED)?
         .clone();
 
-    // Get tenant info
-    let tenant = state
-        .storage
-        .get_tenant(&auth_ctx.tenant_id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get tenant: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+    // Extract requested organization from header
+    let requested_organization = req
+        .headers()
+        .get("X-Organization-ID")
+        .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
-            tracing::warn!("Tenant not found: {}", auth_ctx.tenant_id);
-            StatusCode::NOT_FOUND
+            tracing::warn!("Missing X-Organization-ID header");
+            StatusCode::BAD_REQUEST
         })?;
 
-    // Verify user is still a member
-    let member = state
-        .storage
-        .get_tenant_member(&auth_ctx.tenant_id, &auth_ctx.user_id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get tenant member: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+    // Validate user is member of requested organization
+    let membership = claims
+        .memberships
+        .iter()
+        .find(|m| m.organization_id == requested_organization)
         .ok_or_else(|| {
             tracing::warn!(
-                "User {} not a member of tenant {}",
-                auth_ctx.user_id,
-                auth_ctx.tenant_id
+                "User {} not a member of organization {}",
+                claims.sub,
+                requested_organization
             );
             StatusCode::FORBIDDEN
         })?;
 
-    // Check if tenant or membership is disabled
-    if tenant.disabled || member.disabled {
+    // Get organization info to check if disabled
+    let organization = state
+        .storage
+        .get_organization(requested_organization)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get organization: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!("Organization not found: {}", requested_organization);
+            StatusCode::NOT_FOUND
+        })?;
+
+    // Verify user membership status in database (in case it changed since JWT issued)
+    let member = state
+        .storage
+        .get_organization_member(requested_organization, &claims.sub)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get organization member: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(
+                "User {} membership in organization {} not found in database",
+                claims.sub,
+                requested_organization
+            );
+            StatusCode::FORBIDDEN
+        })?;
+
+    // Check if organization or membership is disabled
+    if organization.disabled || member.disabled {
         tracing::warn!(
-            "Access denied: tenant_disabled={}, member_disabled={}",
-            tenant.disabled,
+            "Access denied: organization_disabled={}, member_disabled={}",
+            organization.disabled,
             member.disabled
         );
         return Err(StatusCode::FORBIDDEN);
@@ -458,12 +486,12 @@ pub async fn tenant_middleware(
     let user_agent = extract_user_agent(&req);
     let request_id = Uuid::new_v4().to_string();
 
-    // Create full request context
+    // Create full request context with validated org and role from membership
     let req_ctx = RequestContext {
-        user_id: auth_ctx.user_id,
-        tenant_id: tenant.id.clone(),
-        tenant_name: tenant.name.clone(),
-        role: member.role,
+        user_id: claims.sub.clone(),
+        organization_id: requested_organization.to_string(),
+        organization_name: organization.name.clone(),
+        role: membership.role, // Role from JWT membership (validated above)
         client_ip,
         user_agent,
         request_id,
@@ -502,11 +530,11 @@ fn extract_user_agent(req: &Request) -> Option<String> {
 ///
 /// Automatically logs:
 /// - HTTP method, path, status code
-/// - User, tenant, request ID
+/// - User, organization, request ID
 /// - Client IP and user agent
 /// - Success/failure status
 ///
-/// Should be applied AFTER auth_middleware and tenant_middleware
+/// Should be applied AFTER auth_middleware and organization_middleware
 /// so RequestContext is available.
 pub async fn audit_middleware(
     State(state): State<Arc<AuthMiddlewareState>>,
@@ -543,7 +571,7 @@ pub async fn audit_middleware(
             let _ = logger
                 .log(AuditEvent {
                     request_id: ctx.request_id.clone(),
-                    tenant_id: ctx.tenant_id.clone(),
+                    organization_id: ctx.organization_id.clone(),
                     user_id: Some(ctx.user_id.clone()),
                     client_ip: ctx.client_ip.clone(),
                     user_agent: ctx.user_agent.clone(),

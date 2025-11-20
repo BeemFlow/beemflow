@@ -1,7 +1,7 @@
 //! Authentication and authorization system
 //!
 //! Provides comprehensive auth for BeemFlow:
-//! - **Multi-tenant**: Organization-based isolation with RBAC
+//! - **Multi-organization**: Organization-based isolation with RBAC
 //! - **JWT Auth**: Stateless authentication with refresh tokens
 //! - **OAuth Server**: OAuth 2.1 authorization server for MCP tools
 //! - **OAuth Client**: OAuth 2.0 client for external providers
@@ -38,9 +38,9 @@ pub struct User {
     pub disabled_at: Option<DateTime<Utc>>,
 }
 
-/// Tenant (Organization/Workspace)
+/// Organization (Workspace/Team)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tenant {
+pub struct Organization {
     pub id: String,
     pub name: String,
     pub slug: String,
@@ -57,7 +57,7 @@ pub struct Tenant {
     pub disabled: bool,
 }
 
-/// User role within a tenant
+/// User role within an organization
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -167,11 +167,11 @@ impl std::fmt::Display for Role {
     }
 }
 
-/// Tenant member (user-tenant relationship)
+/// Organization member (user-organization relationship)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantMember {
+pub struct OrganizationMember {
     pub id: String,
-    pub tenant_id: String,
+    pub organization_id: String,
     pub user_id: String,
     pub role: Role,
     pub invited_by_user_id: Option<String>,
@@ -180,15 +180,24 @@ pub struct TenantMember {
     pub disabled: bool,
 }
 
+/// Organization membership in JWT
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Membership {
+    /// Organization ID
+    pub organization_id: String,
+    /// User's role in this organization
+    pub role: Role,
+}
+
 /// JWT token claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
     /// Subject (user_id)
     pub sub: String,
-    /// Tenant ID
-    pub tenant: String,
-    /// User role
-    pub role: Role,
+    /// User email (for debugging/logging)
+    pub email: String,
+    /// All organization memberships
+    pub memberships: Vec<Membership>,
     /// Expiration timestamp (seconds since epoch)
     pub exp: usize,
     /// Issued at timestamp (seconds since epoch)
@@ -198,11 +207,14 @@ pub struct JwtClaims {
 }
 
 /// Refresh token (stored in database)
+///
+/// Refresh tokens are user-scoped (not organization-scoped).
+/// When refreshed, the new JWT includes ALL user's organization memberships.
+/// The client specifies which org to use via X-Organization-ID header.
 #[derive(Debug, Clone)]
 pub struct RefreshToken {
     pub id: String,
     pub user_id: String,
-    pub tenant_id: String,
     pub token_hash: String,
     pub expires_at: DateTime<Utc>,
     pub revoked: bool,
@@ -217,17 +229,17 @@ pub struct RefreshToken {
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     pub user_id: String,
-    pub tenant_id: String,
+    pub organization_id: String,
     pub role: Role,
     pub token_exp: usize,
 }
 
-/// Full request context with tenant information
+/// Full request context with organization information
 #[derive(Debug, Clone)]
 pub struct RequestContext {
     pub user_id: String,
-    pub tenant_id: String,
-    pub tenant_name: String,
+    pub organization_id: String,
+    pub organization_name: String,
     pub role: Role,
     pub client_ip: Option<String>,
     pub user_agent: Option<String>,
@@ -256,7 +268,7 @@ pub struct LoginResponse {
     pub refresh_token: String,
     pub expires_in: i64, // seconds
     pub user: UserInfo,
-    pub tenant: TenantInfo,
+    pub organization: OrganizationInfo,
 }
 
 /// User info (public subset)
@@ -268,9 +280,9 @@ pub struct UserInfo {
     pub avatar_url: Option<String>,
 }
 
-/// Tenant info
+/// Organization info
 #[derive(Debug, Serialize)]
-pub struct TenantInfo {
+pub struct OrganizationInfo {
     pub id: String,
     pub name: String,
     pub slug: String,
@@ -282,6 +294,7 @@ pub struct TenantInfo {
 pub struct RefreshRequest {
     pub refresh_token: String,
 }
+
 
 /// System permissions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -335,6 +348,7 @@ pub enum Permission {
 pub mod client;
 pub mod handlers;
 pub mod jwt;
+pub mod management;
 pub mod middleware;
 pub mod password;
 pub mod rbac;
@@ -361,14 +375,15 @@ pub use middleware::{
     has_any_scope,
     has_scope,
     oauth_middleware,
+    organization_middleware,
     rate_limit_middleware,
-    tenant_middleware,
     validate_token,
 };
 
-// Multi-tenant auth re-exports
+// Multi-organization auth re-exports
 pub use handlers::{AuthState, create_auth_routes};
 pub use jwt::{EncryptedToken, JwtManager, TokenEncryption, ValidatedJwtSecret};
+pub use management::create_management_routes;
 pub use password::{hash_password, validate_password_strength, verify_password};
 pub use rbac::{
     check_all_permissions, check_any_permission, check_can_invite_role, check_can_update_role,

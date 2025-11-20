@@ -22,15 +22,15 @@
 //! // Create and start scheduler
 //! let cron = CronManager::new(storage, engine).await?;
 //!
-//! // Full sync on startup (syncs all active tenants)
+//! // Full sync on startup (syncs all active organizations)
 //! let report = cron.sync().await?;
 //! println!("Scheduled {} flows", report.scheduled.len());
 //!
 //! // Add/update schedule for a flow
-//! cron.add_schedule("tenant_id", "my_flow").await?;
+//! cron.add_schedule("organization_id", "my_flow").await?;
 //!
 //! // Remove schedule for a flow
-//! cron.remove_schedule("tenant_id", "my_flow").await?;
+//! cron.remove_schedule("organization_id", "my_flow").await?;
 //!
 //! // Gracefully shutdown on exit
 //! cron.shutdown().await?;
@@ -63,7 +63,7 @@ pub struct CronManager {
     engine: Arc<Engine>,
     /// Scheduler wrapped in Mutex for interior mutability (shutdown requires &mut)
     scheduler: Mutex<JobScheduler>,
-    /// Maps (tenant_id, flow_name) to scheduled job UUIDs for efficient updates
+    /// Maps (organization_id, flow_name) to scheduled job UUIDs for efficient updates
     jobs: Mutex<HashMap<(String, String), Uuid>>,
 }
 
@@ -112,12 +112,12 @@ impl CronManager {
     pub async fn sync(&self) -> Result<SyncReport> {
         let mut report = SyncReport::default();
 
-        // Get all active tenants
-        let tenants = self.storage.list_active_tenants().await?;
+        // Get all active organizations
+        let organizations = self.storage.list_active_organizations().await?;
 
         tracing::debug!(
-            tenant_count = tenants.len(),
-            "Syncing cron jobs for active tenants"
+            organization_count = organizations.len(),
+            "Syncing cron jobs for active organizations"
         );
 
         // Clear existing jobs by removing each tracked job
@@ -136,18 +136,18 @@ impl CronManager {
         }
         drop(scheduler); // Release lock before adding new jobs
 
-        // Process each tenant
-        for tenant in tenants {
-            let tenant_id = &tenant.id;
+        // Process each organization
+        for organization in organizations {
+            let organization_id = &organization.id;
 
             // Query flows with schedule.cron trigger (O(log N) indexed lookup)
             let cron_flow_names = self
                 .storage
-                .find_flow_names_by_topic(tenant_id, crate::constants::TRIGGER_SCHEDULE_CRON)
+                .find_flow_names_by_topic(organization_id, crate::constants::TRIGGER_SCHEDULE_CRON)
                 .await?;
 
             tracing::debug!(
-                tenant_id = tenant_id,
+                organization_id = organization_id,
                 count = cron_flow_names.len(),
                 "Found flows with schedule.cron trigger"
             );
@@ -159,7 +159,7 @@ impl CronManager {
             // Batch query for flow content (single query instead of N queries)
             let cron_flows = self
                 .storage
-                .get_deployed_flows_content(tenant_id, &cron_flow_names)
+                .get_deployed_flows_content(organization_id, &cron_flow_names)
                 .await?;
 
             // Add jobs for each cron flow
@@ -169,14 +169,14 @@ impl CronManager {
                     Ok(f) => f,
                     Err(e) => {
                         tracing::warn!(
-                            tenant_id = tenant_id,
+                            organization_id = organization_id,
                             flow = %flow_name,
                             error = %e,
                             "Failed to parse flow"
                         );
                         report.errors.push(format!(
                             "{}/{}: Failed to parse flow: {}",
-                            tenant_id, flow_name, e
+                            organization_id, flow_name, e
                         ));
                         continue;
                     }
@@ -185,34 +185,34 @@ impl CronManager {
                 let Some(cron_expr) = flow.cron else {
                     let msg = "Flow has schedule.cron trigger but missing cron field";
                     tracing::warn!(
-                        tenant_id = tenant_id,
+                        organization_id = organization_id,
                         flow = %flow_name,
                         msg
                     );
                     report
                         .errors
-                        .push(format!("{}/{}: {}", tenant_id, flow_name, msg));
+                        .push(format!("{}/{}: {}", organization_id, flow_name, msg));
                     continue;
                 };
 
                 // Add job
-                match self.add_job(tenant_id, &flow_name, &cron_expr).await {
+                match self.add_job(organization_id, &flow_name, &cron_expr).await {
                     Ok(()) => {
                         report.scheduled.push(ScheduledFlow {
-                            name: format!("{}/{}", tenant_id, flow_name),
+                            name: format!("{}/{}", organization_id, flow_name),
                             cron_expression: cron_expr,
                         });
                     }
                     Err(e) => {
                         tracing::warn!(
-                            tenant_id = tenant_id,
+                            organization_id = organization_id,
                             flow = %flow_name,
                             error = %e,
                             "Failed to add job"
                         );
                         report
                             .errors
-                            .push(format!("{}/{}: {}", tenant_id, flow_name, e));
+                            .push(format!("{}/{}: {}", organization_id, flow_name, e));
                     }
                 }
             }
@@ -246,24 +246,24 @@ impl CronManager {
     /// # Errors
     ///
     /// Returns error if storage query or scheduler operations fail.
-    pub async fn add_schedule(&self, tenant_id: &str, flow_name: &str) -> Result<()> {
+    pub async fn add_schedule(&self, organization_id: &str, flow_name: &str) -> Result<()> {
         // Remove existing job if present (handles updates/redeploys)
-        self.remove_job(tenant_id, flow_name).await?;
+        self.remove_job(organization_id, flow_name).await?;
 
         // Check if flow is deployed
         let version = self
             .storage
-            .get_deployed_version(tenant_id, flow_name)
+            .get_deployed_version(organization_id, flow_name)
             .await?;
         let Some(version) = version else {
-            tracing::debug!(tenant_id = tenant_id, flow = flow_name, "Flow not deployed");
+            tracing::debug!(organization_id = organization_id, flow = flow_name, "Flow not deployed");
             return Ok(());
         };
 
         // Get flow content
         let content = self
             .storage
-            .get_flow_version_content(tenant_id, flow_name, &version)
+            .get_flow_version_content(organization_id, flow_name, &version)
             .await?
             .ok_or_else(|| {
                 BeemFlowError::not_found("Flow version", format!("{}@{}", flow_name, version))
@@ -277,7 +277,7 @@ impl CronManager {
 
         if !has_cron {
             tracing::debug!(
-                tenant_id = tenant_id,
+                organization_id = organization_id,
                 flow = flow_name,
                 "Flow has no cron trigger"
             );
@@ -290,10 +290,10 @@ impl CronManager {
         })?;
 
         // Create and add job
-        self.add_job(tenant_id, flow_name, &cron_expr).await?;
+        self.add_job(organization_id, flow_name, &cron_expr).await?;
 
         tracing::info!(
-            tenant_id = tenant_id,
+            organization_id = organization_id,
             flow = flow_name,
             cron = %cron_expr,
             "Flow scheduled"
@@ -314,46 +314,46 @@ impl CronManager {
     /// # Errors
     ///
     /// Returns error if scheduler remove operation fails.
-    pub async fn remove_schedule(&self, tenant_id: &str, flow_name: &str) -> Result<()> {
-        self.remove_job(tenant_id, flow_name).await?;
+    pub async fn remove_schedule(&self, organization_id: &str, flow_name: &str) -> Result<()> {
+        self.remove_job(organization_id, flow_name).await?;
 
-        tracing::info!(tenant_id = tenant_id, flow = flow_name, "Flow unscheduled");
+        tracing::info!(organization_id = organization_id, flow = flow_name, "Flow unscheduled");
         Ok(())
     }
 
     /// Add a job and track its UUID.
     ///
     /// Internal method used by `sync()` and `add_schedule()`.
-    async fn add_job(&self, tenant_id: &str, flow_name: &str, cron_expr: &str) -> Result<()> {
+    async fn add_job(&self, organization_id: &str, flow_name: &str, cron_expr: &str) -> Result<()> {
         // Create async job (Job::new_async validates the cron expression)
         let engine = self.engine.clone();
         let storage = self.storage.clone();
         let name = flow_name.to_string();
-        let tenant = tenant_id.to_string();
+        let org = organization_id.to_string();
 
         let job = Job::new_async(cron_expr, move |uuid, _lock| {
             let engine = engine.clone();
             let storage = storage.clone();
             let name = name.clone();
-            let tenant = tenant.clone();
+            let org = org.clone();
 
             Box::pin(async move {
                 tracing::info!(
                     job_id = %uuid,
-                    tenant_id = %tenant,
+                    organization_id = %org,
                     flow = %name,
                     "Cron trigger: starting scheduled flow"
                 );
 
                 // Use deployer's user_id for OAuth credential resolution
                 let deployed_by = storage
-                    .get_deployed_by(&tenant, &name)
+                    .get_deployed_by(&org, &name)
                     .await
                     .ok()
                     .flatten()
                     .unwrap_or_else(|| {
                         tracing::warn!(
-                            tenant_id = %tenant,
+                            organization_id = %org,
                             flow = %name,
                             "No deployer found for flow, using default user"
                         );
@@ -361,13 +361,13 @@ impl CronManager {
                     });
 
                 match engine
-                    .start(&name, HashMap::new(), false, &deployed_by, &tenant)
+                    .start(&name, HashMap::new(), false, &deployed_by, &org)
                     .await
                 {
                     Ok(result) => {
                         tracing::info!(
                             job_id = %uuid,
-                            tenant_id = %tenant,
+                            organization_id = %org,
                             flow = %name,
                             run_id = %result.run_id,
                             "Scheduled flow completed successfully"
@@ -376,7 +376,7 @@ impl CronManager {
                     Err(e) => {
                         tracing::error!(
                             job_id = %uuid,
-                            tenant_id = %tenant,
+                            organization_id = %org,
                             flow = %name,
                             error = %e,
                             "Scheduled flow execution failed"
@@ -403,11 +403,11 @@ impl CronManager {
         // Track job UUID
         {
             let mut jobs = self.jobs.lock().await;
-            jobs.insert((tenant_id.to_string(), flow_name.to_string()), job_id);
+            jobs.insert((organization_id.to_string(), flow_name.to_string()), job_id);
         }
 
         tracing::debug!(
-            tenant_id = tenant_id,
+            organization_id = organization_id,
             flow = flow_name,
             job_id = %job_id,
             cron = %cron_expr,
@@ -420,10 +420,10 @@ impl CronManager {
     /// Remove job for a flow.
     ///
     /// Internal method used by `add_schedule()` and `remove_schedule()`.
-    async fn remove_job(&self, tenant_id: &str, flow_name: &str) -> Result<()> {
+    async fn remove_job(&self, organization_id: &str, flow_name: &str) -> Result<()> {
         let job_id = {
             let mut jobs = self.jobs.lock().await;
-            jobs.remove(&(tenant_id.to_string(), flow_name.to_string()))
+            jobs.remove(&(organization_id.to_string(), flow_name.to_string()))
         };
 
         if let Some(job_id) = job_id {
@@ -434,7 +434,7 @@ impl CronManager {
                 .map_err(|e| BeemFlowError::config(format!("Failed to remove job: {}", e)))?;
 
             tracing::debug!(
-                tenant_id = tenant_id,
+                organization_id = organization_id,
                 flow = flow_name,
                 job_id = %job_id,
                 "Removed cron job"

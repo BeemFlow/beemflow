@@ -61,8 +61,8 @@ async fn test_list_flows_empty() {
     // Create test auth context
     let ctx = crate::auth::RequestContext {
         user_id: "test_user".to_string(),
-        tenant_id: "default".to_string(),
-        tenant_name: "default".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
         role: crate::auth::Role::Admin,
         client_ip: None,
         user_agent: None,
@@ -87,8 +87,8 @@ async fn test_save_and_get_flow() {
     // Create test auth context
     let ctx = crate::auth::RequestContext {
         user_id: "test_user".to_string(),
-        tenant_id: "default".to_string(),
-        tenant_name: "default".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
         role: crate::auth::Role::Admin,
         client_ip: None,
         user_agent: None,
@@ -140,8 +140,8 @@ async fn test_delete_flow() {
     // Create test auth context
     let ctx = crate::auth::RequestContext {
         user_id: "test_user".to_string(),
-        tenant_id: "default".to_string(),
-        tenant_name: "default".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
         role: crate::auth::Role::Admin,
         client_ip: None,
         user_agent: None,
@@ -316,8 +316,8 @@ async fn test_list_runs() {
     // Create test auth context
     let ctx = crate::auth::RequestContext {
         user_id: "test_user".to_string(),
-        tenant_id: "default".to_string(),
-        tenant_name: "default".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
         role: crate::auth::Role::Admin,
         client_ip: None,
         user_agent: None,

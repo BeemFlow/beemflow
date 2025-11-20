@@ -398,7 +398,7 @@ pub mod flows {
             self.deps
                 .storage
                 .deploy_flow_version(
-                    &ctx.tenant_id,
+                    &ctx.organization_id,
                     &input.name,
                     &version,
                     &content,
@@ -408,13 +408,13 @@ pub mod flows {
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback deployment
                 if let Err(rollback_err) = self
                     .deps
                     .storage
-                    .unset_deployed_version(&ctx.tenant_id, &input.name)
+                    .unset_deployed_version(&ctx.organization_id, &input.name)
                     .await
                 {
                     tracing::error!(
@@ -472,7 +472,7 @@ pub mod flows {
             let current_version = self
                 .deps
                 .storage
-                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .get_deployed_version(&ctx.organization_id, &input.name)
                 .await?;
 
             // Pre-validate target version's cron expression BEFORE touching storage
@@ -481,7 +481,7 @@ pub mod flows {
                 let content = self
                     .deps
                     .storage
-                    .get_flow_version_content(&ctx.tenant_id, &input.name, &input.version)
+                    .get_flow_version_content(&ctx.organization_id, &input.name, &input.version)
                     .await?
                     .ok_or_else(|| {
                         not_found("Flow version", &format!("{}@{}", input.name, input.version))
@@ -511,23 +511,23 @@ pub mod flows {
             // Database foreign key constraint ensures version exists in flow_versions table
             self.deps
                 .storage
-                .set_deployed_version(&ctx.tenant_id, &input.name, &input.version)
+                .set_deployed_version(&ctx.organization_id, &input.name, &input.version)
                 .await?;
 
             // Update cron schedule (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback to previous version
                 let rollback_result = if let Some(prev_version) = &current_version {
                     self.deps
                         .storage
-                        .set_deployed_version(&ctx.tenant_id, &input.name, prev_version)
+                        .set_deployed_version(&ctx.organization_id, &input.name, prev_version)
                         .await
                 } else {
                     self.deps
                         .storage
-                        .unset_deployed_version(&ctx.tenant_id, &input.name)
+                        .unset_deployed_version(&ctx.organization_id, &input.name)
                         .await
                 };
 
@@ -588,7 +588,7 @@ pub mod flows {
             let deployed_version = self
                 .deps
                 .storage
-                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .get_deployed_version(&ctx.organization_id, &input.name)
                 .await?;
 
             let version = deployed_version.ok_or_else(|| {
@@ -601,7 +601,7 @@ pub mod flows {
             // Remove from production
             self.deps
                 .storage
-                .unset_deployed_version(&ctx.tenant_id, &input.name)
+                .unset_deployed_version(&ctx.organization_id, &input.name)
                 .await?;
 
             // Remove from cron scheduler (warn but don't fail disable)
@@ -610,7 +610,7 @@ pub mod flows {
             // Failing disable would prevent users from stopping flows, which is dangerous.
             if let Some(cron_manager) = &self.deps.cron_manager
                 && let Err(e) = cron_manager
-                    .remove_schedule(&ctx.tenant_id, &input.name)
+                    .remove_schedule(&ctx.organization_id, &input.name)
                     .await
             {
                 tracing::warn!(
@@ -668,7 +668,7 @@ pub mod flows {
             if let Some(current) = self
                 .deps
                 .storage
-                .get_deployed_version(&ctx.tenant_id, &input.name)
+                .get_deployed_version(&ctx.organization_id, &input.name)
                 .await?
             {
                 return Err(BeemFlowError::validation(format!(
@@ -681,7 +681,7 @@ pub mod flows {
             let latest_version = self
                 .deps
                 .storage
-                .get_latest_deployed_version_from_history(&ctx.tenant_id, &input.name)
+                .get_latest_deployed_version_from_history(&ctx.organization_id, &input.name)
                 .await?
                 .ok_or_else(|| {
                     BeemFlowError::not_found(
@@ -696,7 +696,7 @@ pub mod flows {
                 let content = self
                     .deps
                     .storage
-                    .get_flow_version_content(&ctx.tenant_id, &input.name, &latest_version)
+                    .get_flow_version_content(&ctx.organization_id, &input.name, &latest_version)
                     .await?
                     .ok_or_else(|| {
                         not_found(
@@ -728,18 +728,18 @@ pub mod flows {
             // Re-deploy it (atomic)
             self.deps
                 .storage
-                .set_deployed_version(&ctx.tenant_id, &input.name, &latest_version)
+                .set_deployed_version(&ctx.organization_id, &input.name, &latest_version)
                 .await?;
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.tenant_id, &input.name).await
+                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
             {
                 // Rare failure (scheduler crash) - rollback enable
                 if let Err(rollback_err) = self
                     .deps
                     .storage
-                    .unset_deployed_version(&ctx.tenant_id, &input.name)
+                    .unset_deployed_version(&ctx.organization_id, &input.name)
                     .await
                 {
                     tracing::error!(
@@ -795,7 +795,7 @@ pub mod flows {
                 match self
                     .deps
                     .storage
-                    .get_deployed_version(&ctx.tenant_id, &input.name)
+                    .get_deployed_version(&ctx.organization_id, &input.name)
                     .await?
                 {
                     Some(v) => v,
@@ -803,7 +803,7 @@ pub mod flows {
                         // If no deployed version, get latest from history (for disabled flows)
                         self.deps
                             .storage
-                            .get_latest_deployed_version_from_history(&ctx.tenant_id, &input.name)
+                            .get_latest_deployed_version_from_history(&ctx.organization_id, &input.name)
                             .await?
                             .ok_or_else(|| {
                                 BeemFlowError::not_found(
@@ -819,7 +819,7 @@ pub mod flows {
             let content = self
                 .deps
                 .storage
-                .get_flow_version_content(&ctx.tenant_id, &input.name, &version)
+                .get_flow_version_content(&ctx.organization_id, &input.name, &version)
                 .await?
                 .ok_or_else(|| {
                     not_found(
@@ -871,7 +871,7 @@ pub mod flows {
             let history = self
                 .deps
                 .storage
-                .list_flow_versions(&ctx.tenant_id, &input.name)
+                .list_flow_versions(&ctx.organization_id, &input.name)
                 .await?;
 
             let result: Vec<_> = history

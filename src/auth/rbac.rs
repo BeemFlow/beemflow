@@ -194,8 +194,8 @@ mod tests {
     fn create_test_context(role: Role, user_id: &str) -> RequestContext {
         RequestContext {
             user_id: user_id.to_string(),
-            tenant_id: "tenant123".to_string(),
-            tenant_name: "Test Tenant".to_string(),
+            organization_id: "org123".to_string(),
+            organization_name: "Test Organization".to_string(),
             role,
             client_ip: None,
             user_agent: None,

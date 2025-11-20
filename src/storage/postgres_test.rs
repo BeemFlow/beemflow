@@ -23,12 +23,12 @@ async fn test_save_and_get_run() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
-        tenant_id: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
         triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&run).await.unwrap();
-    let retrieved = storage.get_run(run.id, "test_tenant").await.unwrap();
+    let retrieved = storage.get_run(run.id, "test_org").await.unwrap();
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().flow_name.as_str(), "test");
 }

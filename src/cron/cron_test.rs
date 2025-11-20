@@ -7,7 +7,7 @@ use crate::config::{Config, StorageConfig};
 use crate::storage::{Storage, create_storage_from_config};
 use std::sync::Arc;
 
-/// Create test storage with in-memory SQLite and default tenant
+/// Create test storage with in-memory SQLite and default organization
 async fn create_test_storage() -> Arc<dyn Storage> {
     let config = StorageConfig {
         driver: "sqlite".to_string(),
@@ -18,7 +18,7 @@ async fn create_test_storage() -> Arc<dyn Storage> {
         .await
         .expect("Failed to create test storage");
 
-    // Create system user for tenant creation
+    // Create system user for organization creation
     let user = crate::auth::User {
         id: "system".to_string(),
         email: "system@beemflow.local".to_string(),
@@ -40,10 +40,10 @@ async fn create_test_storage() -> Arc<dyn Storage> {
         .await
         .expect("Failed to create system user");
 
-    // Create default tenant for cron operations
-    let tenant = crate::auth::Tenant {
+    // Create default organization for cron operations
+    let organization = crate::auth::Organization {
         id: "default".to_string(),
-        name: "Default Tenant".to_string(),
+        name: "Default Organization".to_string(),
         slug: "default".to_string(),
         plan: "free".to_string(),
         plan_starts_at: None,
@@ -58,9 +58,9 @@ async fn create_test_storage() -> Arc<dyn Storage> {
         disabled: false,
     };
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create default tenant");
+        .expect("Failed to create default organization");
 
     storage
 }

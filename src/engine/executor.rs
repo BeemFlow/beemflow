@@ -147,7 +147,7 @@ pub struct ExecutorConfig {
     pub runs_data: Option<HashMap<String, Value>>,
     pub max_concurrent_tasks: usize,
     pub user_id: String,
-    pub tenant_id: String,
+    pub organization_id: String,
 }
 
 /// Step executor
@@ -160,7 +160,7 @@ pub struct Executor {
     runs_data: Option<HashMap<String, Value>>,
     max_concurrent_tasks: usize,
     user_id: String,
-    tenant_id: String,
+    organization_id: String,
 }
 
 impl Executor {
@@ -175,7 +175,7 @@ impl Executor {
             runs_data: config.runs_data,
             max_concurrent_tasks: config.max_concurrent_tasks,
             user_id: config.user_id,
-            tenant_id: config.tenant_id,
+            organization_id: config.organization_id,
         }
     }
 
@@ -322,7 +322,7 @@ impl Executor {
             let secrets_provider = self.secrets_provider.clone();
             let oauth_client = self.oauth_client.clone();
             let user_id = Some(self.user_id.clone());
-            let tenant_id = Some(self.tenant_id.clone());
+            let organization_id = Some(self.organization_id.clone());
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
                 BeemFlowError::adapter(format!("Failed to acquire semaphore: {}", e))
             })?;
@@ -343,7 +343,7 @@ impl Executor {
                         secrets_provider.clone(),
                         oauth_client.clone(),
                         user_id,
-                        tenant_id,
+                        organization_id,
                     );
 
                     let outputs = adapter.execute(inputs, &exec_ctx).await?;
@@ -502,7 +502,7 @@ impl Executor {
             let secrets_provider = self.secrets_provider.clone();
             let oauth_client = self.oauth_client.clone();
             let user_id = Some(self.user_id.clone());
-            let tenant_id = Some(self.tenant_id.clone());
+            let organization_id = Some(self.organization_id.clone());
             let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
                 BeemFlowError::adapter(format!("Failed to acquire semaphore: {}", e))
             })?;
@@ -526,7 +526,7 @@ impl Executor {
                     secrets_provider.clone(),
                     oauth_client.clone(),
                     user_id,
-                    tenant_id,
+                    organization_id,
                 );
 
                 // Execute steps - simple tool calls only in parallel foreach
@@ -597,7 +597,7 @@ impl Executor {
             self.secrets_provider.clone(),
             self.oauth_client.clone(),
             Some(self.user_id.clone()),
-            Some(self.tenant_id.clone()),
+            Some(self.organization_id.clone()),
         );
 
         // Execute with retry if configured
@@ -716,7 +716,7 @@ impl Executor {
             outputs: step_ctx.snapshot().outputs,
             token: token.to_string(),
             run_id,
-            tenant_id: self.tenant_id.clone(),
+            organization_id: self.organization_id.clone(),
             user_id: self.user_id.clone(),
         };
 
@@ -727,7 +727,7 @@ impl Executor {
                 &token,
                 &await_spec.source,
                 paused_value,
-                &self.tenant_id,
+                &self.organization_id,
                 &self.user_id,
             )
             .await?;

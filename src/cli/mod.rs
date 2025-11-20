@@ -43,7 +43,7 @@ async fn create_registry() -> Result<OperationRegistry> {
     let deps = crate::core::create_dependencies(&config).await?;
 
     // TODO: Load CLI credentials and validate JWT
-    // For multi-tenant CLI support, add:
+    // For multi-organization CLI support, add:
     //
     // if let Some(credentials) = load_cli_credentials()? {
     //     // Check if token expired
@@ -88,16 +88,16 @@ pub async fn run() -> Result<()> {
 
     // Try to dispatch to an operation (uses registry.execute() like MCP does)
     if let Some((op_name, input)) = dispatch_to_operation(&matches, &registry)? {
-        // TODO: Scope REQUEST_CONTEXT for multi-tenant CLI support
+        // TODO: Scope REQUEST_CONTEXT for multi-organization CLI support
         // For authenticated CLI operations:
         //
         // let credentials = load_cli_credentials()?;
         // let ctx = RequestContext {
         //     user_id: credentials.user_id,
-        //     tenant_id: credentials.tenant_id,
+        //     organization_id: credentials.organization_id,
         //     role: credentials.role,  // Stored from JWT claims
         //     request_id: Uuid::new_v4().to_string(),
-        //     tenant_name: credentials.tenant_name,
+        //     organization_name: credentials.organization_name,
         //     client_ip: None,
         //     user_agent: Some(format!("BeemFlow-CLI/{}", env!("CARGO_PKG_VERSION"))),
         // };
@@ -107,7 +107,7 @@ pub async fn run() -> Result<()> {
         // }).await?;
         //
         // For now, operations use get_auth_context_or_default() which returns
-        // default user/tenant (single-user mode).
+        // default user/organization (single-user mode).
 
         let result = registry.execute(&op_name, input).await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -212,8 +212,8 @@ fn build_cli(registry: &OperationRegistry) -> Command {
                 ),
         )
         // TODO: Add CLI authentication support
-        // Currently, CLI operates in single-user mode only (user_id="default", tenant_id="default").
-        // To support multi-tenant CLI:
+        // Currently, CLI operates in single-user mode only (user_id="default", organization_id="default").
+        // To support multi-organization CLI:
         //
         // 1. Add auth subcommand:
         //    .subcommand(
@@ -228,7 +228,7 @@ fn build_cli(registry: &OperationRegistry) -> Command {
         //                .arg(Arg::new("password").required(true))
         //                .arg(Arg::new("server").default_value("http://localhost:3330")))
         //            .subcommand(Command::new("logout").about("Logout and clear credentials"))
-        //            .subcommand(Command::new("whoami").about("Show current user and tenant"))
+        //            .subcommand(Command::new("whoami").about("Show current user and organization"))
         //    )
         //
         // 2. Implement credential storage in ~/.beemflow/credentials.json:
@@ -238,7 +238,7 @@ fn build_cli(registry: &OperationRegistry) -> Command {
         //        "refresh_token": "rt_...",
         //        "expires_at": 1704700800,
         //        "user_id": "user_123",
-        //        "tenant_id": "tenant_456"
+        //        "organization_id": "org_456"
         //    }
         //
         // 3. Load credentials in create_registry() and scope REQUEST_CONTEXT for each operation:
@@ -250,8 +250,8 @@ fn build_cli(registry: &OperationRegistry) -> Command {
         //
         // 4. Auto-refresh expired tokens before operation execution
         //
-        // 5. Handle multiple tenants (let user switch contexts):
-        //    flow auth switch-tenant <tenant_id>
+        // 5. Handle multiple organizations (let user switch contexts):
+        //    flow auth switch-organization <organization_id>
         //
         // For now, use HTTP API for registration/login, or run server with --single-user flag.
 ;

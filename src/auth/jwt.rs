@@ -8,7 +8,9 @@
 //!
 //! - JWT: Uses validated secrets (enforced at type level via ValidatedJwtSecret)
 //! - OAuth: AES-256-GCM authenticated encryption with separate encryption key
-use super::{JwtClaims, Role};
+use super::{JwtClaims, Membership};
+#[cfg(test)]
+use super::Role;
 use crate::{BeemFlowError, Result};
 use aes_gcm::{
     Aes256Gcm,
@@ -184,16 +186,21 @@ impl JwtManager {
     ///
     /// # Arguments
     /// * `user_id` - User's unique identifier
-    /// * `tenant_id` - Tenant's unique identifier
-    /// * `role` - User's role within the tenant
+    /// * `email` - User's email address
+    /// * `memberships` - All organization memberships with roles
     ///
     /// # Returns
     /// JWT token string that can be used in Authorization header
+    ///
+    /// # Security
+    /// Token includes ALL user's organization memberships. The organization_id
+    /// for the current request is specified via X-Organization-ID header,
+    /// and middleware validates the user is a member of that organization.
     pub fn generate_access_token(
         &self,
         user_id: &str,
-        tenant_id: &str,
-        role: Role,
+        email: &str,
+        memberships: Vec<Membership>,
     ) -> Result<String> {
         let now = Utc::now();
         let exp = (now + self.access_token_ttl).timestamp() as usize;
@@ -201,8 +208,8 @@ impl JwtManager {
 
         let claims = JwtClaims {
             sub: user_id.to_string(),
-            tenant: tenant_id.to_string(),
-            role,
+            email: email.to_string(),
+            memberships,
             exp,
             iat,
             iss: self.issuer.clone(),
@@ -352,8 +359,15 @@ mod tests {
     fn test_generate_and_validate_token() {
         let manager = create_test_manager();
 
+        let memberships = vec![
+            Membership {
+                organization_id: "org456".to_string(),
+                role: Role::Admin,
+            },
+        ];
+
         let token = manager
-            .generate_access_token("user123", "tenant456", Role::Admin)
+            .generate_access_token("user123", "user@example.com", memberships.clone())
             .expect("Failed to generate token");
 
         let claims = manager
@@ -361,8 +375,8 @@ mod tests {
             .expect("Failed to validate token");
 
         assert_eq!(claims.sub, "user123");
-        assert_eq!(claims.tenant, "tenant456");
-        assert_eq!(claims.role, Role::Admin);
+        assert_eq!(claims.email, "user@example.com");
+        assert_eq!(claims.memberships, memberships);
         assert_eq!(claims.iss, "test-issuer");
     }
 
@@ -381,8 +395,13 @@ mod tests {
             Duration::minutes(15),
         );
 
+        let memberships = vec![Membership {
+            organization_id: "org456".to_string(),
+            role: Role::Member,
+        }];
+
         let token = manager1
-            .generate_access_token("user123", "tenant456", Role::Member)
+            .generate_access_token("user123", "user@example.com", memberships)
             .expect("Failed to generate token");
 
         // Should fail with different key
@@ -397,8 +416,13 @@ mod tests {
         let manager1 = JwtManager::new(&secret, "issuer1".to_string(), Duration::minutes(15));
         let manager2 = JwtManager::new(&secret, "issuer2".to_string(), Duration::minutes(15));
 
+        let memberships = vec![Membership {
+            organization_id: "org456".to_string(),
+            role: Role::Viewer,
+        }];
+
         let token = manager1
-            .generate_access_token("user123", "tenant456", Role::Viewer)
+            .generate_access_token("user123", "user@example.com", memberships)
             .expect("Failed to generate token");
 
         // Should fail with different issuer
@@ -417,8 +441,13 @@ mod tests {
             Duration::seconds(-120), // Expired 2 minutes ago
         );
 
+        let memberships = vec![Membership {
+            organization_id: "org456".to_string(),
+            role: Role::Owner,
+        }];
+
         let token = manager
-            .generate_access_token("user123", "tenant456", Role::Owner)
+            .generate_access_token("user123", "user@example.com", memberships)
             .expect("Failed to generate token");
 
         // Token should be rejected as expired
@@ -443,14 +472,19 @@ mod tests {
         let manager = create_test_manager();
 
         for role in [Role::Owner, Role::Admin, Role::Member, Role::Viewer] {
+            let memberships = vec![Membership {
+                organization_id: "org456".to_string(),
+                role,
+            }];
+
             let token = manager
-                .generate_access_token("user123", "tenant456", role)
+                .generate_access_token("user123", "user@example.com", memberships.clone())
                 .expect("Failed to generate token");
 
             let claims = manager
                 .validate_token(&token)
                 .expect("Failed to validate token");
-            assert_eq!(claims.role, role);
+            assert_eq!(claims.memberships, memberships);
         }
     }
 }

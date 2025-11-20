@@ -133,28 +133,28 @@ pub struct ExecutionContext {
     /// Used to retrieve user-specific OAuth credentials during tool execution.
     pub user_id: Option<String>,
 
-    /// Tenant context for this execution (for multi-tenant isolation)
+    /// Organization context for this execution (for multi-tenant isolation)
     ///
-    /// When a workflow is triggered via authenticated API, this contains the tenant ID.
-    /// Used with user_id to retrieve tenant-scoped OAuth credentials.
-    pub tenant_id: Option<String>,
+    /// When a workflow is triggered via authenticated API, this contains the organization ID.
+    /// Used with user_id to retrieve organization-scoped OAuth credentials.
+    pub organization_id: Option<String>,
 }
 
 impl ExecutionContext {
-    /// Create a new execution context with user/tenant information
+    /// Create a new execution context with user/organization information
     pub fn new(
         storage: Arc<dyn Storage>,
         secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
         oauth_client: Arc<crate::auth::OAuthClientManager>,
         user_id: Option<String>,
-        tenant_id: Option<String>,
+        organization_id: Option<String>,
     ) -> Self {
         Self {
             storage,
             secrets_provider,
             oauth_client,
             user_id,
-            tenant_id,
+            organization_id,
         }
     }
 }

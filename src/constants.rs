@@ -696,7 +696,7 @@ pub const OUTPUT_PREFIX_HTTP: &str = "🌐 ";
 pub const OUTPUT_PREFIX_JSON: &str = "📋 ";
 
 // ============================================================================
-// AUTHENTICATION & MULTI-TENANT CONSTANTS
+// AUTHENTICATION & MULTI-ORGANIZATION CONSTANTS
 // ============================================================================
 
 /// System user ID for automated/unauthenticated operations (cron, webhooks)
@@ -705,5 +705,5 @@ pub const SYSTEM_USER_ID: &str = "system";
 /// Default user ID for fallback when deployer is unknown
 pub const DEFAULT_USER_ID: &str = "default";
 
-/// Default tenant ID for local development and single-user mode
-pub const DEFAULT_TENANT_ID: &str = "default";
+/// Default organization ID for local development and single-user mode
+pub const DEFAULT_ORGANIZATION_ID: &str = "default";

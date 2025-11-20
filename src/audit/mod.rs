@@ -28,7 +28,7 @@ impl AuditLogger {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now().timestamp_millis(),
             request_id: event.request_id.clone(),
-            tenant_id: event.tenant_id.clone(),
+            organization_id: event.organization_id.clone(),
             user_id: event.user_id.clone(),
             client_ip: event.client_ip.clone(),
             user_agent: event.user_agent.clone(),
@@ -51,7 +51,7 @@ impl AuditLogger {
             tracing::Level::ERROR => tracing::error!(
                 action = %event.action,
                 user_id = ?event.user_id,
-                tenant_id = %event.tenant_id,
+                organization_id = %event.organization_id,
                 success = event.success,
                 http_status = ?event.http_status_code,
                 error = ?event.error_message,
@@ -61,7 +61,7 @@ impl AuditLogger {
             tracing::Level::WARN => tracing::warn!(
                 action = %event.action,
                 user_id = ?event.user_id,
-                tenant_id = %event.tenant_id,
+                organization_id = %event.organization_id,
                 success = event.success,
                 http_status = ?event.http_status_code,
                 error = ?event.error_message,
@@ -71,7 +71,7 @@ impl AuditLogger {
             tracing::Level::INFO => tracing::info!(
                 action = %event.action,
                 user_id = ?event.user_id,
-                tenant_id = %event.tenant_id,
+                organization_id = %event.organization_id,
                 success = event.success,
                 resource_type = ?event.resource_type,
                 resource_id = ?event.resource_id,
@@ -81,7 +81,7 @@ impl AuditLogger {
             _ => tracing::debug!(
                 action = %event.action,
                 user_id = ?event.user_id,
-                tenant_id = %event.tenant_id,
+                organization_id = %event.organization_id,
                 success = event.success,
                 http_method = ?event.http_method,
                 http_path = ?event.http_path,
@@ -103,7 +103,7 @@ impl AuditLogger {
     ) -> Result<()> {
         self.log(AuditEvent {
             request_id: ctx.request_id.clone(),
-            tenant_id: ctx.tenant_id.clone(),
+            organization_id: ctx.organization_id.clone(),
             user_id: Some(ctx.user_id.clone()),
             client_ip: ctx.client_ip.clone(),
             user_agent: ctx.user_agent.clone(),
@@ -126,7 +126,7 @@ impl AuditLogger {
 #[derive(Debug, Clone)]
 pub struct AuditEvent {
     pub request_id: String,
-    pub tenant_id: String,
+    pub organization_id: String,
     pub user_id: Option<String>,
     pub client_ip: Option<String>,
     pub user_agent: Option<String>,
@@ -147,7 +147,7 @@ impl AuditEvent {
     pub fn from_context(ctx: &RequestContext, action: impl Into<String>, success: bool) -> Self {
         Self {
             request_id: ctx.request_id.clone(),
-            tenant_id: ctx.tenant_id.clone(),
+            organization_id: ctx.organization_id.clone(),
             user_id: Some(ctx.user_id.clone()),
             client_ip: ctx.client_ip.clone(),
             user_agent: ctx.user_agent.clone(),
@@ -239,7 +239,7 @@ pub struct AuditLog {
     pub id: String,
     pub timestamp: i64,
     pub request_id: String,
-    pub tenant_id: String,
+    pub organization_id: String,
     pub user_id: Option<String>,
     pub client_ip: Option<String>,
     pub user_agent: Option<String>,
@@ -310,8 +310,8 @@ mod tests {
     fn create_test_context() -> RequestContext {
         RequestContext {
             user_id: "user123".to_string(),
-            tenant_id: "tenant456".to_string(),
-            tenant_name: "Test Tenant".to_string(),
+            organization_id: "org456".to_string(),
+            organization_name: "Test Org".to_string(),
             role: Role::Admin,
             client_ip: Some("192.168.1.1".to_string()),
             user_agent: Some("TestAgent/1.0".to_string()),
@@ -324,7 +324,7 @@ mod tests {
         let ctx = create_test_context();
         let event = AuditEvent::from_context(&ctx, actions::FLOW_CREATE, true);
 
-        assert_eq!(event.tenant_id, "tenant456");
+        assert_eq!(event.organization_id, "org456");
         assert_eq!(event.user_id, Some("user123".to_string()));
         assert_eq!(event.action, actions::FLOW_CREATE);
         assert!(event.success);

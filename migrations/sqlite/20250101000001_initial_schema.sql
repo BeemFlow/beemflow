@@ -5,7 +5,7 @@
 -- CORE EXECUTION TABLES
 -- ============================================================================
 
--- Runs table (execution tracking) - Multi-tenant with full constraints
+-- Runs table (execution tracking) - Multi-organization with full constraints
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     flow_name TEXT NOT NULL,
@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at BIGINT NOT NULL,
     ended_at BIGINT,
 
-    -- Multi-tenant support
-    tenant_id TEXT NOT NULL,
+    -- Multi-organization support
+    organization_id TEXT NOT NULL,
     triggered_by_user_id TEXT NOT NULL,
     created_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
@@ -47,14 +47,14 @@ CREATE TABLE IF NOT EXISTS waits (
     wake_at BIGINT  -- Nullable - wait can be indefinite
 );
 
--- Paused runs table (await_event support) - Multi-tenant
+-- Paused runs table (await_event support) - Multi-organization
 CREATE TABLE IF NOT EXISTS paused_runs (
     token TEXT PRIMARY KEY,
     source TEXT NOT NULL,
     data TEXT NOT NULL DEFAULT '{}',  -- JSON stored as TEXT
 
-    -- Tenant/user tracking
-    tenant_id TEXT NOT NULL,
+    -- Organization/user tracking
+    organization_id TEXT NOT NULL,
     user_id TEXT NOT NULL
 );
 
@@ -62,51 +62,51 @@ CREATE TABLE IF NOT EXISTS paused_runs (
 -- FLOW MANAGEMENT TABLES
 -- ============================================================================
 
--- Flows table (flow definitions) - Multi-tenant
+-- Flows table (flow definitions) - Multi-organization
 CREATE TABLE IF NOT EXISTS flows (
     name TEXT PRIMARY KEY,
     content TEXT NOT NULL,
     created_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     updated_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
-    -- Multi-tenant support
-    tenant_id TEXT NOT NULL,
+    -- Multi-organization support
+    organization_id TEXT NOT NULL,
     created_by_user_id TEXT NOT NULL,
     visibility TEXT DEFAULT 'private' CHECK(visibility IN ('private', 'shared', 'public')),
     tags TEXT DEFAULT '[]'  -- JSON array stored as TEXT
 );
 
--- Flow versions table (deployment history) - Multi-tenant
+-- Flow versions table (deployment history) - Multi-organization
 CREATE TABLE IF NOT EXISTS flow_versions (
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     flow_name TEXT NOT NULL,
     version TEXT NOT NULL,
     content TEXT NOT NULL,
     deployed_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     deployed_by_user_id TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, flow_name, version)
+    PRIMARY KEY (organization_id, flow_name, version)
 );
 
--- Deployed flows table (current live versions) - Multi-tenant
+-- Deployed flows table (current live versions) - Multi-organization
 CREATE TABLE IF NOT EXISTS deployed_flows (
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     flow_name TEXT NOT NULL,
     deployed_version TEXT NOT NULL,
     deployed_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
-    PRIMARY KEY (tenant_id, flow_name),
-    FOREIGN KEY (tenant_id, flow_name, deployed_version)
-        REFERENCES flow_versions(tenant_id, flow_name, version) ON DELETE CASCADE
+    PRIMARY KEY (organization_id, flow_name),
+    FOREIGN KEY (organization_id, flow_name, deployed_version)
+        REFERENCES flow_versions(organization_id, flow_name, version) ON DELETE CASCADE
 );
 
--- Flow triggers table (O(1) webhook routing) - Multi-tenant
+-- Flow triggers table (O(1) webhook routing) - Multi-organization
 CREATE TABLE IF NOT EXISTS flow_triggers (
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     flow_name TEXT NOT NULL,
     version TEXT NOT NULL,
     topic TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, flow_name, version, topic),
-    FOREIGN KEY (tenant_id, flow_name, version)
-        REFERENCES flow_versions(tenant_id, flow_name, version) ON DELETE CASCADE
+    PRIMARY KEY (organization_id, flow_name, version, topic),
+    FOREIGN KEY (organization_id, flow_name, version)
+        REFERENCES flow_versions(organization_id, flow_name, version) ON DELETE CASCADE
 );
 
 -- ============================================================================
@@ -125,15 +125,15 @@ CREATE TABLE IF NOT EXISTS oauth_credentials (
     created_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     updated_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
-    -- User/tenant scoping
+    -- User/organization scoping
     user_id TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
 
     -- One credential per user/provider/integration combination
-    UNIQUE(user_id, tenant_id, provider, integration)
+    UNIQUE(user_id, organization_id, provider, integration)
 );
 
--- OAuth providers table - System-wide with optional tenant overrides
+-- OAuth providers table - System-wide with optional organization overrides
 CREATE TABLE IF NOT EXISTS oauth_providers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,  -- Human-readable name (e.g., "Google", "GitHub")
@@ -210,8 +210,8 @@ CREATE TABLE IF NOT EXISTS users (
     disabled_at BIGINT
 );
 
--- Tenants table (Organizations/Workspaces)
-CREATE TABLE IF NOT EXISTS tenants (
+-- Organizations table (Teams/Workspaces)
+CREATE TABLE IF NOT EXISTS organizations (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     name TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -243,10 +243,10 @@ CREATE TABLE IF NOT EXISTS tenants (
     CHECK (plan_ends_at IS NULL OR plan_starts_at <= plan_ends_at)
 );
 
--- Tenant members table (User-Tenant Relationship)
-CREATE TABLE IF NOT EXISTS tenant_members (
+-- Organization members table (User-Organization Relationship)
+CREATE TABLE IF NOT EXISTS organization_members (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'member', 'viewer')),
 
@@ -258,17 +258,17 @@ CREATE TABLE IF NOT EXISTS tenant_members (
     -- Status
     disabled INTEGER DEFAULT 0,
 
-    UNIQUE(tenant_id, user_id),
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE(organization_id, user_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (invited_by_user_id) REFERENCES users(id)
 );
 
 -- Refresh tokens table (For JWT authentication)
+-- User-scoped (users can belong to multiple organizations)
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     user_id TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,  -- SHA-256 hash
 
     expires_at BIGINT NOT NULL,
@@ -283,7 +283,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     client_ip TEXT,
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
 
     -- Constraints
     CHECK (created_at <= expires_at)
@@ -298,7 +297,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     request_id TEXT,
 
     -- Who
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     user_id TEXT,
     client_ip TEXT,
     user_agent TEXT,
@@ -323,14 +322,14 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
     created_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Tenant secrets table
-CREATE TABLE IF NOT EXISTS tenant_secrets (
+-- Organization secrets table
+CREATE TABLE IF NOT EXISTS organization_secrets (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    tenant_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,  -- Encrypted by application
     description TEXT,
@@ -339,8 +338,8 @@ CREATE TABLE IF NOT EXISTS tenant_secrets (
     created_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     updated_at BIGINT NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
-    UNIQUE(tenant_id, key),
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE(organization_id, key),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 );
 
@@ -350,27 +349,27 @@ CREATE TABLE IF NOT EXISTS tenant_secrets (
 
 -- Core execution indexes
 CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
-CREATE INDEX IF NOT EXISTS idx_runs_tenant_time ON runs(tenant_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_tenant_flow_status_time ON runs(tenant_id, flow_name, status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_organization_time ON runs(organization_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_organization_flow_status_time ON runs(organization_id, flow_name, status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(triggered_by_user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_status_time ON runs(started_at DESC) WHERE status IN ('PENDING', 'RUNNING');
 
 -- Flow management indexes
-CREATE INDEX IF NOT EXISTS idx_flows_tenant_name ON flows(tenant_id, name);
+CREATE INDEX IF NOT EXISTS idx_flows_organization_name ON flows(organization_id, name);
 CREATE INDEX IF NOT EXISTS idx_flows_user ON flows(created_by_user_id);
-CREATE INDEX IF NOT EXISTS idx_flow_versions_tenant_name ON flow_versions(tenant_id, flow_name, deployed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_deployed_flows_tenant ON deployed_flows(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_flow_versions_organization_name ON flow_versions(organization_id, flow_name, deployed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deployed_flows_organization ON deployed_flows(organization_id);
 
 -- Webhook routing indexes (HOT PATH - critical for performance)
-CREATE INDEX IF NOT EXISTS idx_flow_triggers_tenant_topic ON flow_triggers(tenant_id, topic, flow_name, version);
-CREATE INDEX IF NOT EXISTS idx_deployed_flows_join ON deployed_flows(tenant_id, flow_name, deployed_version);
+CREATE INDEX IF NOT EXISTS idx_flow_triggers_organization_topic ON flow_triggers(organization_id, topic, flow_name, version);
+CREATE INDEX IF NOT EXISTS idx_deployed_flows_join ON deployed_flows(organization_id, flow_name, deployed_version);
 
 -- OAuth indexes
-CREATE INDEX IF NOT EXISTS idx_oauth_creds_user_tenant ON oauth_credentials(user_id, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_creds_tenant ON oauth_credentials(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_user_organization ON oauth_credentials(user_id, organization_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_organization ON oauth_credentials(organization_id);
 
 -- Paused runs indexes
-CREATE INDEX IF NOT EXISTS idx_paused_runs_tenant ON paused_runs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_paused_runs_organization ON paused_runs(organization_id);
 CREATE INDEX IF NOT EXISTS idx_paused_runs_source ON paused_runs(source) WHERE source IS NOT NULL;
 
 -- User indexes
@@ -378,30 +377,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_active ON users(email) WHERE d
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_users_disabled ON users(disabled, disabled_at) WHERE disabled = 1;
 
--- Tenant indexes
-CREATE INDEX IF NOT EXISTS idx_tenants_created_by ON tenants(created_by_user_id);
-CREATE INDEX IF NOT EXISTS idx_tenants_disabled ON tenants(disabled) WHERE disabled = 1;
+-- Organization indexes
+CREATE INDEX IF NOT EXISTS idx_organizations_created_by ON organizations(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_organizations_disabled ON organizations(disabled) WHERE disabled = 1;
 
--- Tenant membership indexes
-CREATE INDEX IF NOT EXISTS idx_tenant_members_tenant_role ON tenant_members(tenant_id, role) WHERE disabled = 0;
-CREATE INDEX IF NOT EXISTS idx_tenant_members_user ON tenant_members(user_id) WHERE disabled = 0;
-CREATE INDEX IF NOT EXISTS idx_tenant_members_invited_by ON tenant_members(invited_by_user_id) WHERE invited_by_user_id IS NOT NULL;
+-- Organization membership indexes
+CREATE INDEX IF NOT EXISTS idx_organization_members_organization_role ON organization_members(organization_id, role) WHERE disabled = 0;
+CREATE INDEX IF NOT EXISTS idx_organization_members_user ON organization_members(user_id) WHERE disabled = 0;
+CREATE INDEX IF NOT EXISTS idx_organization_members_invited_by ON organization_members(invited_by_user_id) WHERE invited_by_user_id IS NOT NULL;
 
 -- Refresh token indexes (with partial indexes for active tokens)
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id) WHERE revoked = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_hash_active ON refresh_tokens(token_hash) WHERE revoked = 0;
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at) WHERE revoked = 0;
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_tenant ON refresh_tokens(tenant_id);
 
 -- Audit log indexes
-CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_organization_time ON audit_logs(organization_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time ON audit_logs(user_id, timestamp DESC) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action_time ON audit_logs(action, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id, timestamp DESC) WHERE resource_id IS NOT NULL;
 
--- Tenant secrets indexes
-CREATE INDEX IF NOT EXISTS idx_tenant_secrets_tenant ON tenant_secrets(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_tenant_secrets_created_by ON tenant_secrets(created_by_user_id);
+-- Organization secrets indexes
+CREATE INDEX IF NOT EXISTS idx_organization_secrets_organization ON organization_secrets(organization_id);
+CREATE INDEX IF NOT EXISTS idx_organization_secrets_created_by ON organization_secrets(created_by_user_id);
 
 -- ============================================================================
 -- AUDIT LOG IMMUTABILITY (Security & Compliance)

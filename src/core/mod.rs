@@ -9,28 +9,28 @@ pub mod runs;
 pub mod system;
 pub mod tools;
 
-// TODO: Add user and tenant management operation modules
-// For complete multi-tenant SaaS, add:
+// TODO: Add user and organization management operation modules
+// For complete multi-organization SaaS, add:
 //
-// pub mod users;   // User management operations
-// pub mod tenants; // Tenant management operations
+// pub mod users;         // User management operations
+// pub mod organizations; // Organization management operations
 //
 // Suggested operations:
 //
 // users module:
-// - users.list         - List users in current tenant
+// - users.list         - List users in current organization
 // - users.get          - Get user details
 // - users.update       - Update user profile
 // - users.disable      - Disable user account
 //
-// tenants module:
-// - tenants.list       - List all tenants for current user
-// - tenants.get        - Get tenant details
-// - tenants.update     - Update tenant settings
-// - tenants.members.list   - List tenant members
-// - tenants.members.invite - Invite user to tenant
-// - tenants.members.update - Update member role
-// - tenants.members.remove - Remove member from tenant
+// organizations module:
+// - organizations.list       - List all organizations for current user
+// - organizations.get        - Get organization details
+// - organizations.update     - Update organization settings
+// - organizations.members.list   - List organization members
+// - organizations.members.invite - Invite user to organization
+// - organizations.members.update - Update member role
+// - organizations.members.remove - Remove member from organization
 //
 // Note: Registration and login are already implemented as HTTP-only routes
 // in src/auth/handlers.rs (not exposed as operations). This works for HTTP/MCP,
@@ -66,10 +66,10 @@ tokio::task_local! {
 ///
 /// **Single-User Mode (Default):**
 /// - user_id: "default"
-/// - tenant_id: "default"
+/// - organization_id: "default"
 /// - role: Owner (full permissions)
 ///
-/// **Multi-Tenant Mode (Advanced):**
+/// **Multi-Organization Mode (Advanced):**
 /// - Requires JWT_SECRET environment variable
 /// - HTTP requests must include Authorization: Bearer <token>
 /// - CLI requires `flow login` (TODO: not yet implemented)
@@ -77,12 +77,12 @@ tokio::task_local! {
 /// # Example
 /// ```ignore
 /// let ctx = get_auth_context_or_default();
-/// storage.list_flows(&ctx.tenant_id).await?
+/// storage.list_flows(&ctx.organization_id).await?
 /// ```
 ///
 /// # TODO: CLI Authentication
 /// Currently, CLI always returns default context (single-user mode).
-/// For multi-tenant CLI support:
+/// For multi-organization CLI support:
 /// - Add `flow auth login/register/logout` commands (see src/cli/mod.rs TODOs)
 /// - Store credentials in ~/.beemflow/credentials.json
 /// - Load and scope REQUEST_CONTEXT in CLI before calling operations
@@ -94,8 +94,8 @@ pub fn get_auth_context_or_default() -> crate::auth::RequestContext {
             // Default context for single-user mode
             crate::auth::RequestContext {
                 user_id: "default".to_string(),
-                tenant_id: "default".to_string(),
-                tenant_name: "Default".to_string(),
+                organization_id: "default".to_string(),
+                organization_name: "Default".to_string(),
                 role: crate::auth::Role::Owner,
                 client_ip: None,
                 user_agent: None,
@@ -107,7 +107,7 @@ pub fn get_auth_context_or_default() -> crate::auth::RequestContext {
 /// Extract authenticated RequestContext from task-local storage
 ///
 /// Returns error if no context available (unauthenticated call).
-/// Use this for operations that REQUIRE authentication (user/tenant management).
+/// Use this for operations that REQUIRE authentication (user/organization management).
 ///
 /// # Errors
 /// Returns `BeemFlowError::Unauthorized` if REQUEST_CONTEXT is not set
@@ -117,7 +117,7 @@ pub fn get_auth_context_or_default() -> crate::auth::RequestContext {
 /// ```ignore
 /// let ctx = require_auth_context()?;
 /// check_permission(&ctx.role, "runs.read")?;
-/// storage.list_runs(&ctx.tenant_id, limit, offset).await?
+/// storage.list_runs(&ctx.organization_id, limit, offset).await?
 /// ```
 pub fn require_auth_context() -> crate::Result<crate::auth::RequestContext> {
     REQUEST_CONTEXT

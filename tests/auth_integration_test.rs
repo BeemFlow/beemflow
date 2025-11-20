@@ -1,10 +1,10 @@
 //! Integration tests for authentication system
 //!
-//! Tests multi-tenant auth, RBAC, JWT, and tenant isolation.
+//! Tests multi-tenant auth, RBAC, JWT, and organization isolation.
 
 use beemflow::audit::{AuditEvent, AuditLogger};
 use beemflow::auth::{
-    JwtManager, Role, Tenant, TenantMember, User, ValidatedJwtSecret, hash_password,
+    JwtManager, Membership, Role, Organization, OrganizationMember, User, ValidatedJwtSecret, hash_password,
     validate_password_strength, verify_password,
 };
 use beemflow::model::OAuthCredential;
@@ -40,9 +40,9 @@ fn create_test_user(email: &str, name: &str) -> User {
     }
 }
 
-/// Create test tenant
-fn create_test_tenant(name: &str, slug: &str, creator_id: &str) -> Tenant {
-    Tenant {
+/// Create test organization
+fn create_test_organization(name: &str, slug: &str, creator_id: &str) -> Organization {
+    Organization {
         id: Uuid::new_v4().to_string(),
         name: name.to_string(),
         slug: slug.to_string(),
@@ -210,11 +210,11 @@ async fn test_disabled_user_not_returned_by_email() {
 }
 
 // ============================================================================
-// Tenant Storage Tests
+// Organization Storage Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_tenant_crud_operations() {
+async fn test_organization_crud_operations() {
     let storage = create_test_storage().await;
 
     // Create user first
@@ -224,58 +224,58 @@ async fn test_tenant_crud_operations() {
         .await
         .expect("Failed to create user");
 
-    // Create tenant
-    let tenant = create_test_tenant("Acme Corp", "acme", &user.id);
-    let tenant_id = tenant.id.clone();
+    // Create organization
+    let organization = create_test_organization("Acme Corp", "acme", &user.id);
+    let organization_id = organization.id.clone();
 
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
-    // Get tenant by ID
+    // Get organization by ID
     let retrieved = storage
-        .get_tenant(&tenant_id)
+        .get_organization(&organization_id)
         .await
-        .expect("Failed to get tenant")
-        .expect("Tenant not found");
+        .expect("Failed to get organization")
+        .expect("Organization not found");
 
     assert_eq!(retrieved.name, "Acme Corp");
     assert_eq!(retrieved.slug, "acme");
     assert_eq!(retrieved.plan, "free");
     assert_eq!(retrieved.max_users, 5);
 
-    // Get tenant by slug
+    // Get organization by slug
     let by_slug = storage
-        .get_tenant_by_slug("acme")
+        .get_organization_by_slug("acme")
         .await
-        .expect("Failed to get tenant by slug")
-        .expect("Tenant not found");
+        .expect("Failed to get organization by slug")
+        .expect("Organization not found");
 
-    assert_eq!(by_slug.id, tenant_id);
+    assert_eq!(by_slug.id, organization_id);
 
-    // Update tenant
-    let mut updated_tenant = retrieved.clone();
-    updated_tenant.plan = "pro".to_string();
-    updated_tenant.max_users = 20;
+    // Update organization
+    let mut updated_organization = retrieved.clone();
+    updated_organization.plan = "pro".to_string();
+    updated_organization.max_users = 20;
 
     storage
-        .update_tenant(&updated_tenant)
+        .update_organization(&updated_organization)
         .await
-        .expect("Failed to update tenant");
+        .expect("Failed to update organization");
 
     let verified = storage
-        .get_tenant(&tenant_id)
+        .get_organization(&organization_id)
         .await
-        .expect("Failed to get tenant")
-        .expect("Tenant not found");
+        .expect("Failed to get organization")
+        .expect("Organization not found");
 
     assert_eq!(verified.plan, "pro");
     assert_eq!(verified.max_users, 20);
 }
 
 #[tokio::test]
-async fn test_tenant_slug_uniqueness() {
+async fn test_organization_slug_uniqueness() {
     let storage = create_test_storage().await;
 
     let user = create_test_user("owner@example.com", "Owner");
@@ -284,45 +284,45 @@ async fn test_tenant_slug_uniqueness() {
         .await
         .expect("Failed to create user");
 
-    // Create first tenant
-    let tenant1 = create_test_tenant("Company A", "company", &user.id);
+    // Create first organization
+    let organization1 = create_test_organization("Company A", "company", &user.id);
     storage
-        .create_tenant(&tenant1)
+        .create_organization(&organization1)
         .await
-        .expect("Failed to create first tenant");
+        .expect("Failed to create first organization");
 
-    // Try to create second tenant with same slug
-    let tenant2 = create_test_tenant("Company B", "company", &user.id);
-    let result = storage.create_tenant(&tenant2).await;
+    // Try to create second organization with same slug
+    let organization2 = create_test_organization("Company B", "company", &user.id);
+    let result = storage.create_organization(&organization2).await;
 
     assert!(result.is_err(), "Should not allow duplicate slugs");
 }
 
 // ============================================================================
-// Tenant Membership Tests
+// Organization Membership Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_tenant_member_operations() {
+async fn test_organization_member_operations() {
     let storage = create_test_storage().await;
 
-    // Create user and tenant
+    // Create user and organization
     let user = create_test_user("member@example.com", "Member");
-    let tenant = create_test_tenant("Test Org", "test-org", &user.id);
+    let organization = create_test_organization("Test Org", "test-org", &user.id);
 
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // Create membership
-    let member = TenantMember {
+    let member = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant.id.clone(),
+        organization_id: organization.id.clone(),
         user_id: user.id.clone(),
         role: Role::Admin,
         invited_by_user_id: None,
@@ -332,13 +332,13 @@ async fn test_tenant_member_operations() {
     };
 
     storage
-        .create_tenant_member(&member)
+        .create_organization_member(&member)
         .await
         .expect("Failed to create membership");
 
     // Get membership
     let retrieved = storage
-        .get_tenant_member(&tenant.id, &user.id)
+        .get_organization_member(&organization.id, &user.id)
         .await
         .expect("Failed to get member")
         .expect("Member not found");
@@ -346,21 +346,21 @@ async fn test_tenant_member_operations() {
     assert_eq!(retrieved.role, Role::Admin);
     assert!(!retrieved.disabled);
 
-    // List user's tenants
-    let tenants = storage
-        .list_user_tenants(&user.id)
+    // List user's organizations
+    let organizations = storage
+        .list_user_organizations(&user.id)
         .await
-        .expect("Failed to list user tenants");
+        .expect("Failed to list user organizations");
 
-    assert_eq!(tenants.len(), 1);
-    assert_eq!(tenants[0].0.id, tenant.id);
-    assert_eq!(tenants[0].1, Role::Admin);
+    assert_eq!(organizations.len(), 1);
+    assert_eq!(organizations[0].0.id, organization.id);
+    assert_eq!(organizations[0].1, Role::Admin);
 
-    // List tenant members
+    // List organization members
     let members = storage
-        .list_tenant_members(&tenant.id)
+        .list_organization_members(&organization.id)
         .await
-        .expect("Failed to list tenant members");
+        .expect("Failed to list organization members");
 
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].0.id, user.id);
@@ -368,12 +368,12 @@ async fn test_tenant_member_operations() {
 
     // Update role
     storage
-        .update_member_role(&tenant.id, &user.id, Role::Member)
+        .update_member_role(&organization.id, &user.id, Role::Member)
         .await
         .expect("Failed to update role");
 
     let updated = storage
-        .get_tenant_member(&tenant.id, &user.id)
+        .get_organization_member(&organization.id, &user.id)
         .await
         .expect("Failed to get member")
         .expect("Member not found");
@@ -382,12 +382,12 @@ async fn test_tenant_member_operations() {
 
     // Remove member
     storage
-        .remove_tenant_member(&tenant.id, &user.id)
+        .remove_organization_member(&organization.id, &user.id)
         .await
         .expect("Failed to remove member");
 
     let removed = storage
-        .get_tenant_member(&tenant.id, &user.id)
+        .get_organization_member(&organization.id, &user.id)
         .await
         .expect("Failed to get member");
 
@@ -399,21 +399,21 @@ async fn test_disabled_members_not_returned() {
     let storage = create_test_storage().await;
 
     let user = create_test_user("user@example.com", "User");
-    let tenant = create_test_tenant("Org", "org", &user.id);
+    let organization = create_test_organization("Org", "org", &user.id);
 
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // Create disabled membership
-    let member = TenantMember {
+    let member = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant.id.clone(),
+        organization_id: organization.id.clone(),
         user_id: user.id.clone(),
         role: Role::Member,
         invited_by_user_id: None,
@@ -423,13 +423,13 @@ async fn test_disabled_members_not_returned() {
     };
 
     storage
-        .create_tenant_member(&member)
+        .create_organization_member(&member)
         .await
         .expect("Failed to create membership");
 
     // Disabled member should not be returned
     let result = storage
-        .get_tenant_member(&tenant.id, &user.id)
+        .get_organization_member(&organization.id, &user.id)
         .await
         .expect("Query failed");
 
@@ -453,7 +453,9 @@ async fn test_jwt_generate_and_validate() {
 
     // Generate token
     let token = jwt_manager
-        .generate_access_token("user123", "tenant456", Role::Admin)
+        .generate_access_token("user123", "user@example.com", vec![
+            Membership { organization_id: "org456".to_string(), role: Role::Admin }
+        ])
         .expect("Failed to generate token");
 
     // Validate token
@@ -462,8 +464,8 @@ async fn test_jwt_generate_and_validate() {
         .expect("Failed to validate token");
 
     assert_eq!(claims.sub, "user123");
-    assert_eq!(claims.tenant, "tenant456");
-    assert_eq!(claims.role, Role::Admin);
+    assert_eq!(claims.memberships[0].organization_id, "org456");
+    assert_eq!(claims.memberships[0].role, Role::Admin);
     assert_eq!(claims.iss, "beemflow-test");
 
     // Verify expiration is in the future
@@ -488,7 +490,9 @@ async fn test_jwt_expired_token_rejected() {
     );
 
     let token = jwt_manager
-        .generate_access_token("user123", "tenant456", Role::Owner)
+        .generate_access_token("user123", "user@example.com", vec![
+            Membership { organization_id: "org456".to_string(), role: Role::Owner }
+        ])
         .expect("Failed to generate token");
 
     // Token should be rejected as expired
@@ -529,7 +533,9 @@ async fn test_jwt_invalid_signature_rejected() {
     );
 
     let token = manager1
-        .generate_access_token("user123", "tenant456", Role::Member)
+        .generate_access_token("user123", "user@example.com", vec![
+            Membership { organization_id: "org456".to_string(), role: Role::Member }
+        ])
         .expect("Failed to generate token");
 
     // Should fail with different key
@@ -549,22 +555,21 @@ async fn test_refresh_token_lifecycle() {
     let storage = create_test_storage().await;
 
     let user = create_test_user("user@example.com", "User");
-    let tenant = create_test_tenant("Org", "org", &user.id);
+    let organization = create_test_organization("Org", "org", &user.id);
 
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // Create refresh token
     let refresh_token = beemflow::auth::RefreshToken {
         id: Uuid::new_v4().to_string(),
         user_id: user.id.clone(),
-        tenant_id: tenant.id.clone(),
         token_hash: "test_hash_123".to_string(),
         expires_at: Utc::now() + Duration::days(30),
         revoked: false,
@@ -588,7 +593,6 @@ async fn test_refresh_token_lifecycle() {
         .expect("Token not found");
 
     assert_eq!(retrieved.user_id, user.id);
-    assert_eq!(retrieved.tenant_id, tenant.id);
     assert!(!retrieved.revoked);
 
     // Update last used
@@ -625,23 +629,22 @@ async fn test_revoke_all_user_tokens() {
     let storage = create_test_storage().await;
 
     let user = create_test_user("user@example.com", "User");
-    let tenant = create_test_tenant("Org", "org", &user.id);
+    let organization = create_test_organization("Org", "org", &user.id);
 
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // Create multiple refresh tokens
     for i in 0..3 {
         let token = beemflow::auth::RefreshToken {
             id: Uuid::new_v4().to_string(),
             user_id: user.id.clone(),
-            tenant_id: tenant.id.clone(),
             token_hash: format!("token_hash_{}", i),
             expires_at: Utc::now() + Duration::days(30),
             revoked: false,
@@ -676,19 +679,19 @@ async fn test_revoke_all_user_tokens() {
 }
 
 // ============================================================================
-// Tenant Isolation Tests (CRITICAL for multi-tenant security)
+// Organization Isolation Tests (CRITICAL for multi-tenant security)
 // ============================================================================
 
 #[tokio::test]
-async fn test_tenant_isolation_users_cannot_see_each_other() {
+async fn test_organization_isolation_users_cannot_see_each_other() {
     let storage = create_test_storage().await;
 
-    // Create two separate users and tenants
+    // Create two separate users and organizations
     let user_a = create_test_user("usera@example.com", "User A");
     let user_b = create_test_user("userb@example.com", "User B");
 
-    let tenant_a = create_test_tenant("Tenant A", "tenant-a", &user_a.id);
-    let tenant_b = create_test_tenant("Tenant B", "tenant-b", &user_b.id);
+    let org_a = create_test_organization("Organization A", "org-a", &user_a.id);
+    let org_b = create_test_organization("Organization B", "org-b", &user_b.id);
 
     storage
         .create_user(&user_a)
@@ -699,18 +702,18 @@ async fn test_tenant_isolation_users_cannot_see_each_other() {
         .await
         .expect("Failed to create user B");
     storage
-        .create_tenant(&tenant_a)
+        .create_organization(&org_a)
         .await
-        .expect("Failed to create tenant A");
+        .expect("Failed to create organization A");
     storage
-        .create_tenant(&tenant_b)
+        .create_organization(&org_b)
         .await
-        .expect("Failed to create tenant B");
+        .expect("Failed to create organization B");
 
-    // Add users as owners of their respective tenants
-    let member_a = TenantMember {
+    // Add users as owners of their respective organizations
+    let member_a = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant_a.id.clone(),
+        organization_id: org_a.id.clone(),
         user_id: user_a.id.clone(),
         role: Role::Owner,
         invited_by_user_id: None,
@@ -719,9 +722,9 @@ async fn test_tenant_isolation_users_cannot_see_each_other() {
         disabled: false,
     };
 
-    let member_b = TenantMember {
+    let member_b = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant_b.id.clone(),
+        organization_id: org_b.id.clone(),
         user_id: user_b.id.clone(),
         role: Role::Owner,
         invited_by_user_id: None,
@@ -731,70 +734,70 @@ async fn test_tenant_isolation_users_cannot_see_each_other() {
     };
 
     storage
-        .create_tenant_member(&member_a)
+        .create_organization_member(&member_a)
         .await
         .expect("Failed to create member A");
     storage
-        .create_tenant_member(&member_b)
+        .create_organization_member(&member_b)
         .await
         .expect("Failed to create member B");
 
-    // User A should only see Tenant A
-    let user_a_tenants = storage
-        .list_user_tenants(&user_a.id)
+    // User A should only see Organization A
+    let user_a_organizations = storage
+        .list_user_organizations(&user_a.id)
         .await
-        .expect("Failed to list tenants");
+        .expect("Failed to list organizations");
 
-    assert_eq!(user_a_tenants.len(), 1);
-    assert_eq!(user_a_tenants[0].0.id, tenant_a.id);
+    assert_eq!(user_a_organizations.len(), 1);
+    assert_eq!(user_a_organizations[0].0.id, org_a.id);
 
-    // User B should only see Tenant B
-    let user_b_tenants = storage
-        .list_user_tenants(&user_b.id)
+    // User B should only see Organization B
+    let user_b_organizations = storage
+        .list_user_organizations(&user_b.id)
         .await
-        .expect("Failed to list tenants");
+        .expect("Failed to list organizations");
 
-    assert_eq!(user_b_tenants.len(), 1);
-    assert_eq!(user_b_tenants[0].0.id, tenant_b.id);
+    assert_eq!(user_b_organizations.len(), 1);
+    assert_eq!(user_b_organizations[0].0.id, org_b.id);
 
-    // Tenant A should only see User A as member
-    let tenant_a_members = storage
-        .list_tenant_members(&tenant_a.id)
+    // Organization A should only see User A as member
+    let org_a_members = storage
+        .list_organization_members(&org_a.id)
         .await
         .expect("Failed to list members");
 
-    assert_eq!(tenant_a_members.len(), 1);
-    assert_eq!(tenant_a_members[0].0.id, user_a.id);
+    assert_eq!(org_a_members.len(), 1);
+    assert_eq!(org_a_members[0].0.id, user_a.id);
 }
 
 #[tokio::test]
-async fn test_user_can_belong_to_multiple_tenants() {
+async fn test_user_can_belong_to_multiple_organizations() {
     let storage = create_test_storage().await;
 
     // Create one user
-    let user = create_test_user("multitenant@example.com", "Multi Tenant User");
+    let user = create_test_user("multiorg@example.com", "Multi Organization User");
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
 
-    // Create two tenants
-    let tenant1 = create_test_tenant("Tenant 1", "tenant-1", &user.id);
-    let tenant2 = create_test_tenant("Tenant 2", "tenant-2", &user.id);
+    // Create two organizations
+    let organization1 = create_test_organization("Organization 1", "org-1", &user.id);
+    let organization2 = create_test_organization("Organization 2", "org-2", &user.id);
 
     storage
-        .create_tenant(&tenant1)
+        .create_organization(&organization1)
         .await
-        .expect("Failed to create tenant 1");
+        .expect("Failed to create organization 1");
     storage
-        .create_tenant(&tenant2)
+        .create_organization(&organization2)
         .await
-        .expect("Failed to create tenant 2");
+        .expect("Failed to create organization 2");
 
-    // Add user to both tenants with different roles
-    let member1 = TenantMember {
+    // Add user to both organizations with different roles
+    let member1 = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant1.id.clone(),
+        organization_id: organization1.id.clone(),
         user_id: user.id.clone(),
         role: Role::Owner,
         invited_by_user_id: None,
@@ -803,9 +806,9 @@ async fn test_user_can_belong_to_multiple_tenants() {
         disabled: false,
     };
 
-    let member2 = TenantMember {
+    let member2 = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant2.id.clone(),
+        organization_id: organization2.id.clone(),
         user_id: user.id.clone(),
         role: Role::Viewer,
         invited_by_user_id: Some(user.id.clone()),
@@ -815,31 +818,31 @@ async fn test_user_can_belong_to_multiple_tenants() {
     };
 
     storage
-        .create_tenant_member(&member1)
+        .create_organization_member(&member1)
         .await
         .expect("Failed to create member 1");
     storage
-        .create_tenant_member(&member2)
+        .create_organization_member(&member2)
         .await
         .expect("Failed to create member 2");
 
-    // User should see both tenants
-    let tenants = storage
-        .list_user_tenants(&user.id)
+    // User should see both organizations
+    let organizations = storage
+        .list_user_organizations(&user.id)
         .await
-        .expect("Failed to list tenants");
+        .expect("Failed to list organizations");
 
-    assert_eq!(tenants.len(), 2);
+    assert_eq!(organizations.len(), 2);
 
-    // Find tenant1 and verify role
-    let tenant1_entry = tenants.iter().find(|(t, _)| t.id == tenant1.id);
-    assert!(tenant1_entry.is_some());
-    assert_eq!(tenant1_entry.unwrap().1, Role::Owner);
+    // Find organization1 and verify role
+    let organization1_entry = organizations.iter().find(|(o, _)| o.id == organization1.id);
+    assert!(organization1_entry.is_some());
+    assert_eq!(organization1_entry.unwrap().1, Role::Owner);
 
-    // Find tenant2 and verify role
-    let tenant2_entry = tenants.iter().find(|(t, _)| t.id == tenant2.id);
-    assert!(tenant2_entry.is_some());
-    assert_eq!(tenant2_entry.unwrap().1, Role::Viewer);
+    // Find organization2 and verify role
+    let organization2_entry = organizations.iter().find(|(o, _)| o.id == organization2.id);
+    assert!(organization2_entry.is_some());
+    assert_eq!(organization2_entry.unwrap().1, Role::Viewer);
 }
 
 // ============================================================================
@@ -851,16 +854,16 @@ async fn test_audit_log_creation_and_retrieval() {
     let storage = create_test_storage().await;
 
     let user = create_test_user("user@example.com", "User");
-    let tenant = create_test_tenant("Org", "org", &user.id);
+    let organization = create_test_organization("Org", "org", &user.id);
 
     storage
         .create_user(&user)
         .await
         .expect("Failed to create user");
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // Create audit logger
     let audit_logger = AuditLogger::new(storage.clone() as std::sync::Arc<dyn Storage>);
@@ -870,7 +873,7 @@ async fn test_audit_log_creation_and_retrieval() {
         audit_logger
             .log(AuditEvent {
                 request_id: format!("req-{}", i),
-                tenant_id: tenant.id.clone(),
+                organization_id: organization.id.clone(),
                 user_id: Some(user.id.clone()),
                 client_ip: Some("192.168.1.1".to_string()),
                 user_agent: Some("TestAgent/1.0".to_string()),
@@ -891,7 +894,7 @@ async fn test_audit_log_creation_and_retrieval() {
 
     // Retrieve logs
     let logs = storage
-        .list_audit_logs(&tenant.id, 10, 0)
+        .list_audit_logs(&organization.id, 10, 0)
         .await
         .expect("Failed to list audit logs");
 
@@ -905,9 +908,9 @@ async fn test_audit_log_creation_and_retrieval() {
         );
     }
 
-    // Verify all logs belong to correct tenant
+    // Verify all logs belong to correct organization
     for log in &logs {
-        assert_eq!(log.tenant_id, tenant.id);
+        assert_eq!(log.organization_id, organization.id);
         assert_eq!(log.user_id, Some(user.id.clone()));
         assert!(log.success);
     }
@@ -919,14 +922,14 @@ async fn test_audit_log_creation_and_retrieval() {
 }
 
 #[tokio::test]
-async fn test_audit_logs_tenant_isolation() {
+async fn test_audit_logs_organization_isolation() {
     let storage = create_test_storage().await;
 
-    // Create two tenants
+    // Create two organizations
     let user_a = create_test_user("usera@example.com", "User A");
     let user_b = create_test_user("userb@example.com", "User B");
-    let tenant_a = create_test_tenant("Tenant A", "tenant-a", &user_a.id);
-    let tenant_b = create_test_tenant("Tenant B", "tenant-b", &user_b.id);
+    let org_a = create_test_organization("Organization A", "org-a", &user_a.id);
+    let org_b = create_test_organization("Organization B", "org-b", &user_b.id);
 
     storage
         .create_user(&user_a)
@@ -937,25 +940,25 @@ async fn test_audit_logs_tenant_isolation() {
         .await
         .expect("Failed to create user B");
     storage
-        .create_tenant(&tenant_a)
+        .create_organization(&org_a)
         .await
-        .expect("Failed to create tenant A");
+        .expect("Failed to create organization A");
     storage
-        .create_tenant(&tenant_b)
+        .create_organization(&org_b)
         .await
-        .expect("Failed to create tenant B");
+        .expect("Failed to create organization B");
 
     let audit_logger = AuditLogger::new(storage.clone() as std::sync::Arc<dyn Storage>);
 
-    // Log events for both tenants
+    // Log events for both organizations
     audit_logger
         .log(AuditEvent {
             request_id: "req-a".to_string(),
-            tenant_id: tenant_a.id.clone(),
+            organization_id: org_a.id.clone(),
             user_id: Some(user_a.id.clone()),
             client_ip: None,
             user_agent: None,
-            action: "tenant_a.action".to_string(),
+            action: "org_a.action".to_string(),
             resource_type: None,
             resource_id: None,
             resource_name: None,
@@ -972,11 +975,11 @@ async fn test_audit_logs_tenant_isolation() {
     audit_logger
         .log(AuditEvent {
             request_id: "req-b".to_string(),
-            tenant_id: tenant_b.id.clone(),
+            organization_id: org_b.id.clone(),
             user_id: Some(user_b.id.clone()),
             client_ip: None,
             user_agent: None,
-            action: "tenant_b.action".to_string(),
+            action: "org_b.action".to_string(),
             resource_type: None,
             resource_id: None,
             resource_name: None,
@@ -990,25 +993,25 @@ async fn test_audit_logs_tenant_isolation() {
         .await
         .expect("Failed to log");
 
-    // Tenant A should only see its own logs
+    // Organization A should only see its own logs
     let logs_a = storage
-        .list_audit_logs(&tenant_a.id, 10, 0)
+        .list_audit_logs(&org_a.id, 10, 0)
         .await
         .expect("Failed to list logs");
 
     assert_eq!(logs_a.len(), 1);
-    assert_eq!(logs_a[0].action, "tenant_a.action");
-    assert_eq!(logs_a[0].tenant_id, tenant_a.id);
+    assert_eq!(logs_a[0].action, "org_a.action");
+    assert_eq!(logs_a[0].organization_id, org_a.id);
 
-    // Tenant B should only see its own logs
+    // Organization B should only see its own logs
     let logs_b = storage
-        .list_audit_logs(&tenant_b.id, 10, 0)
+        .list_audit_logs(&org_b.id, 10, 0)
         .await
         .expect("Failed to list logs");
 
     assert_eq!(logs_b.len(), 1);
-    assert_eq!(logs_b[0].action, "tenant_b.action");
-    assert_eq!(logs_b[0].tenant_id, tenant_b.id);
+    assert_eq!(logs_b[0].action, "org_b.action");
+    assert_eq!(logs_b[0].organization_id, org_b.id);
 }
 
 // ============================================================================
@@ -1049,8 +1052,8 @@ async fn test_check_permission() {
 
     let owner_ctx = RequestContext {
         user_id: "user1".to_string(),
-        tenant_id: "tenant1".to_string(),
-        tenant_name: "Tenant 1".to_string(),
+        organization_id: "org1".to_string(),
+        organization_name: "Organization 1".to_string(),
         role: Role::Owner,
         client_ip: None,
         user_agent: None,
@@ -1059,8 +1062,8 @@ async fn test_check_permission() {
 
     let viewer_ctx = RequestContext {
         user_id: "user2".to_string(),
-        tenant_id: "tenant1".to_string(),
-        tenant_name: "Tenant 1".to_string(),
+        organization_id: "org1".to_string(),
+        organization_name: "Organization 1".to_string(),
         role: Role::Viewer,
         client_ip: None,
         user_agent: None,
@@ -1084,8 +1087,8 @@ async fn test_resource_ownership_checks() {
 
     let admin_ctx = RequestContext {
         user_id: "admin1".to_string(),
-        tenant_id: "tenant1".to_string(),
-        tenant_name: "Tenant 1".to_string(),
+        organization_id: "org1".to_string(),
+        organization_name: "Organization 1".to_string(),
         role: Role::Admin,
         client_ip: None,
         user_agent: None,
@@ -1094,8 +1097,8 @@ async fn test_resource_ownership_checks() {
 
     let member_ctx = RequestContext {
         user_id: "member1".to_string(),
-        tenant_id: "tenant1".to_string(),
-        tenant_name: "Tenant 1".to_string(),
+        organization_id: "org1".to_string(),
+        organization_name: "Organization 1".to_string(),
         role: Role::Member,
         client_ip: None,
         user_agent: None,
@@ -1157,8 +1160,8 @@ async fn test_complete_user_registration_flow() {
         .await
         .expect("Failed to create user");
 
-    // 4. Create default tenant
-    let tenant = Tenant {
+    // 4. Create default organization
+    let organization = Organization {
         id: Uuid::new_v4().to_string(),
         name: "My Workspace".to_string(),
         slug: "newuser-workspace".to_string(),
@@ -1176,14 +1179,14 @@ async fn test_complete_user_registration_flow() {
     };
 
     storage
-        .create_tenant(&tenant)
+        .create_organization(&organization)
         .await
-        .expect("Failed to create tenant");
+        .expect("Failed to create organization");
 
     // 5. Add user as owner
-    let member = TenantMember {
+    let member = OrganizationMember {
         id: Uuid::new_v4().to_string(),
-        tenant_id: tenant.id.clone(),
+        organization_id: organization.id.clone(),
         user_id: user.id.clone(),
         role: Role::Owner,
         invited_by_user_id: None,
@@ -1193,7 +1196,7 @@ async fn test_complete_user_registration_flow() {
     };
 
     storage
-        .create_tenant_member(&member)
+        .create_organization_member(&member)
         .await
         .expect("Failed to create member");
 
@@ -1209,15 +1212,15 @@ async fn test_complete_user_registration_flow() {
         "Password should verify"
     );
 
-    // 7. Verify user has tenant with owner role
-    let user_tenants = storage
-        .list_user_tenants(&user.id)
+    // 7. Verify user has organization with owner role
+    let user_organizations = storage
+        .list_user_organizations(&user.id)
         .await
-        .expect("Failed to list tenants");
+        .expect("Failed to list organizations");
 
-    assert_eq!(user_tenants.len(), 1);
-    assert_eq!(user_tenants[0].0.id, tenant.id);
-    assert_eq!(user_tenants[0].1, Role::Owner);
+    assert_eq!(user_organizations.len(), 1);
+    assert_eq!(user_organizations[0].0.id, organization.id);
+    assert_eq!(user_organizations[0].1, Role::Owner);
 
     // 8. Generate JWT token
     let jwt_secret =
@@ -1230,7 +1233,9 @@ async fn test_complete_user_registration_flow() {
     );
 
     let token = jwt_manager
-        .generate_access_token(&user.id, &tenant.id, Role::Owner)
+        .generate_access_token(&user.id, &user.email, vec![
+            Membership { organization_id: organization.id.clone(), role: Role::Owner }
+        ])
         .expect("Failed to generate token");
 
     // 9. Validate JWT
@@ -1239,8 +1244,8 @@ async fn test_complete_user_registration_flow() {
         .expect("Failed to validate token");
 
     assert_eq!(claims.sub, user.id);
-    assert_eq!(claims.tenant, tenant.id);
-    assert_eq!(claims.role, Role::Owner);
+    assert_eq!(claims.memberships[0].organization_id, organization.id);
+    assert_eq!(claims.memberships[0].role, Role::Owner);
 }
 
 // ============================================================================
@@ -1263,11 +1268,11 @@ async fn test_oauth_credentials_per_user_not_global() {
 
     let storage = create_test_storage().await;
 
-    // Create two users in different tenants
+    // Create two users in different organizations
     let user_a = create_test_user("usera@example.com", "User A");
     let user_b = create_test_user("userb@example.com", "User B");
-    let tenant_a = create_test_tenant("Tenant A", "tenant-a", &user_a.id);
-    let tenant_b = create_test_tenant("Tenant B", "tenant-b", &user_b.id);
+    let org_a = create_test_organization("Organization A", "org-a", &user_a.id);
+    let org_b = create_test_organization("Organization B", "org-b", &user_b.id);
 
     storage
         .create_user(&user_a)
@@ -1278,13 +1283,13 @@ async fn test_oauth_credentials_per_user_not_global() {
         .await
         .expect("Failed to create user B");
     storage
-        .create_tenant(&tenant_a)
+        .create_organization(&org_a)
         .await
-        .expect("Failed to create tenant A");
+        .expect("Failed to create organization A");
     storage
-        .create_tenant(&tenant_b)
+        .create_organization(&org_b)
         .await
-        .expect("Failed to create tenant B");
+        .expect("Failed to create organization B");
 
     // Create OAuth credentials for both users with same provider
     use beemflow::model::OAuthCredential;
@@ -1300,7 +1305,7 @@ async fn test_oauth_credentials_per_user_not_global() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: user_a.id.clone(),
-        tenant_id: tenant_a.id.clone(),
+        organization_id: org_a.id.clone(),
     };
 
     let cred_b = OAuthCredential {
@@ -1314,7 +1319,7 @@ async fn test_oauth_credentials_per_user_not_global() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: user_b.id.clone(),
-        tenant_id: tenant_b.id.clone(),
+        organization_id: org_b.id.clone(),
     };
 
     // Both should succeed (different users)
@@ -1330,7 +1335,7 @@ async fn test_oauth_credentials_per_user_not_global() {
 
     // Each user should see only their own credentials
     let creds_a = storage
-        .list_oauth_credentials(&user_a.id, &tenant_a.id)
+        .list_oauth_credentials(&user_a.id, &org_a.id)
         .await
         .expect("Failed to list credentials for user A");
 
@@ -1339,7 +1344,7 @@ async fn test_oauth_credentials_per_user_not_global() {
     assert_eq!(creds_a[0].access_token, "user_a_token");
 
     let creds_b = storage
-        .list_oauth_credentials(&user_b.id, &tenant_b.id)
+        .list_oauth_credentials(&user_b.id, &org_b.id)
         .await
         .expect("Failed to list credentials for user B");
 
@@ -1395,7 +1400,7 @@ async fn test_oauth_tokens_encrypted_at_rest() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: "user-123".to_string(),
-        tenant_id: "tenant-456".to_string(),
+        organization_id: "org-456".to_string(),
     };
 
     storage
@@ -1404,7 +1409,7 @@ async fn test_oauth_tokens_encrypted_at_rest() {
         .expect("Failed to save");
 
     let loaded = storage
-        .get_oauth_credential("github", "default", "user-123", "tenant-456")
+        .get_oauth_credential("github", "default", "user-123", "org-456")
         .await
         .expect("Failed to load")
         .expect("Not found");
@@ -1446,7 +1451,7 @@ async fn test_multiple_credentials_different_ciphertexts() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: "user-1".to_string(),
-        tenant_id: "tenant-1".to_string(),
+        organization_id: "org-1".to_string(),
     };
 
     let cred2 = OAuthCredential {
@@ -1460,7 +1465,7 @@ async fn test_multiple_credentials_different_ciphertexts() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: "user-1".to_string(),
-        tenant_id: "tenant-1".to_string(),
+        organization_id: "org-1".to_string(),
     };
 
     storage
@@ -1473,13 +1478,13 @@ async fn test_multiple_credentials_different_ciphertexts() {
         .expect("Failed to save cred2");
 
     let loaded1 = storage
-        .get_oauth_credential("github", "integration1", "user-1", "tenant-1")
+        .get_oauth_credential("github", "integration1", "user-1", "org-1")
         .await
         .expect("Failed to load cred1")
         .expect("Cred1 not found");
 
     let loaded2 = storage
-        .get_oauth_credential("github", "integration2", "user-1", "tenant-1")
+        .get_oauth_credential("github", "integration2", "user-1", "org-1")
         .await
         .expect("Failed to load cred2")
         .expect("Cred2 not found");
@@ -1511,8 +1516,8 @@ async fn test_oauth_credentials_use_triggering_users_context() {
     let user_a = create_test_user("usera@example.com", "User A");
     let user_b = create_test_user("userb@example.com", "User B");
 
-    let tenant_a = create_test_tenant("Tenant A", "tenant-a", &user_a.id);
-    let tenant_b = create_test_tenant("Tenant B", "tenant-b", &user_b.id);
+    let org_a = create_test_organization("Organization A", "org-a", &user_a.id);
+    let org_b = create_test_organization("Organization B", "org-b", &user_b.id);
 
     storage
         .create_user(&user_a)
@@ -1523,18 +1528,18 @@ async fn test_oauth_credentials_use_triggering_users_context() {
         .await
         .expect("Failed to create user B");
     storage
-        .create_tenant(&tenant_a)
+        .create_organization(&org_a)
         .await
-        .expect("Failed to create tenant A");
+        .expect("Failed to create organization A");
     storage
-        .create_tenant(&tenant_b)
+        .create_organization(&org_b)
         .await
-        .expect("Failed to create tenant B");
+        .expect("Failed to create organization B");
 
     storage
-        .create_tenant_member(&TenantMember {
+        .create_organization_member(&OrganizationMember {
             id: Uuid::new_v4().to_string(),
-            tenant_id: tenant_a.id.clone(),
+            organization_id: org_a.id.clone(),
             user_id: user_a.id.clone(),
             role: Role::Owner,
             invited_by_user_id: None,
@@ -1546,9 +1551,9 @@ async fn test_oauth_credentials_use_triggering_users_context() {
         .expect("Failed to add user A");
 
     storage
-        .create_tenant_member(&TenantMember {
+        .create_organization_member(&OrganizationMember {
             id: Uuid::new_v4().to_string(),
-            tenant_id: tenant_b.id.clone(),
+            organization_id: org_b.id.clone(),
             user_id: user_b.id.clone(),
             role: Role::Owner,
             invited_by_user_id: None,
@@ -1570,7 +1575,7 @@ async fn test_oauth_credentials_use_triggering_users_context() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: user_a.id.clone(),
-        tenant_id: tenant_a.id.clone(),
+        organization_id: org_a.id.clone(),
     };
 
     let cred_b = OAuthCredential {
@@ -1584,7 +1589,7 @@ async fn test_oauth_credentials_use_triggering_users_context() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: user_b.id.clone(),
-        tenant_id: tenant_b.id.clone(),
+        organization_id: org_b.id.clone(),
     };
 
     storage
@@ -1597,7 +1602,7 @@ async fn test_oauth_credentials_use_triggering_users_context() {
         .expect("Failed to save B");
 
     let creds_a = storage
-        .list_oauth_credentials(&user_a.id, &tenant_a.id)
+        .list_oauth_credentials(&user_a.id, &org_a.id)
         .await
         .expect("Failed to list A");
 
@@ -1605,7 +1610,7 @@ async fn test_oauth_credentials_use_triggering_users_context() {
     assert_eq!(creds_a[0].access_token, "user_a_github_token");
 
     let creds_b = storage
-        .list_oauth_credentials(&user_b.id, &tenant_b.id)
+        .list_oauth_credentials(&user_b.id, &org_b.id)
         .await
         .expect("Failed to list B");
 
@@ -1621,18 +1626,18 @@ async fn test_get_deployed_by_returns_deployer_user_id() {
     let storage = std::sync::Arc::new(SqliteStorage::new(":memory:").await.unwrap());
 
     let alice = create_test_user("alice@company.com", "Alice");
-    let tenant = create_test_tenant("Company", "company", &alice.id);
+    let organization = create_test_organization("Company", "company", &alice.id);
 
     storage.create_user(&alice).await.unwrap();
-    storage.create_tenant(&tenant).await.unwrap();
+    storage.create_organization(&organization).await.unwrap();
 
     storage
-        .deploy_flow_version(&tenant.id, "daily_report", "1.0.0", "content", &alice.id)
+        .deploy_flow_version(&organization.id, "daily_report", "1.0.0", "content", &alice.id)
         .await
         .unwrap();
 
     let deployer = storage
-        .get_deployed_by(&tenant.id, "daily_report")
+        .get_deployed_by(&organization.id, "daily_report")
         .await
         .unwrap();
     assert_eq!(
@@ -1645,12 +1650,12 @@ async fn test_get_deployed_by_returns_deployer_user_id() {
     storage.create_user(&bob).await.unwrap();
 
     storage
-        .deploy_flow_version(&tenant.id, "daily_report", "1.0.1", "content-v2", &bob.id)
+        .deploy_flow_version(&organization.id, "daily_report", "1.0.1", "content-v2", &bob.id)
         .await
         .unwrap();
 
     let deployer_v2 = storage
-        .get_deployed_by(&tenant.id, "daily_report")
+        .get_deployed_by(&organization.id, "daily_report")
         .await
         .unwrap();
     assert_eq!(deployer_v2, Some(bob.id), "Deployer should update to Bob");
@@ -1672,11 +1677,11 @@ async fn test_oauth_lookup_uses_deployer_not_trigger() {
 
     let alice = create_test_user("alice@company.com", "Alice");
     let bob = create_test_user("bob@company.com", "Bob");
-    let tenant = create_test_tenant("Company", "company", &alice.id);
+    let organization = create_test_organization("Company", "company", &alice.id);
 
     storage.create_user(&alice).await.unwrap();
     storage.create_user(&bob).await.unwrap();
-    storage.create_tenant(&tenant).await.unwrap();
+    storage.create_organization(&organization).await.unwrap();
 
     let alice_oauth = OAuthCredential {
         id: Uuid::new_v4().to_string(),
@@ -1689,23 +1694,23 @@ async fn test_oauth_lookup_uses_deployer_not_trigger() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: alice.id.clone(),
-        tenant_id: tenant.id.clone(),
+        organization_id: organization.id.clone(),
     };
 
     storage.save_oauth_credential(&alice_oauth).await.unwrap();
 
     storage
-        .deploy_flow_version(&tenant.id, "sync", "1.0.0", "content", &alice.id)
+        .deploy_flow_version(&organization.id, "sync", "1.0.0", "content", &alice.id)
         .await
         .unwrap();
 
     let deployer_id = storage
-        .get_deployed_by(&tenant.id, "sync")
+        .get_deployed_by(&organization.id, "sync")
         .await
         .unwrap()
         .unwrap();
     let oauth = storage
-        .get_oauth_credential("google", "default", &deployer_id, &tenant.id)
+        .get_oauth_credential("google", "default", &deployer_id, &organization.id)
         .await
         .unwrap()
         .unwrap();
@@ -1720,16 +1725,16 @@ async fn test_oauth_lookup_uses_deployer_not_trigger() {
     );
 
     let bob_oauth = storage
-        .get_oauth_credential("google", "default", &bob.id, &tenant.id)
+        .get_oauth_credential("google", "default", &bob.id, &organization.id)
         .await
         .unwrap();
 
     assert!(bob_oauth.is_none(), "Bob has no OAuth (would fail if used)");
 }
 
-/// Test deployer OAuth across tenant boundaries
+/// Test deployer OAuth across organization boundaries
 #[tokio::test]
-async fn test_deployer_oauth_tenant_scoped() {
+async fn test_deployer_oauth_organization_scoped() {
     use beemflow::storage::FlowStorage;
 
     unsafe {
@@ -1742,12 +1747,12 @@ async fn test_deployer_oauth_tenant_scoped() {
     let storage = std::sync::Arc::new(SqliteStorage::new(":memory:").await.unwrap());
 
     let alice = create_test_user("alice@company.com", "Alice");
-    let tenant_a = create_test_tenant("Company A", "company-a", &alice.id);
-    let tenant_b = create_test_tenant("Company B", "company-b", &alice.id);
+    let org_a = create_test_organization("Company A", "company-a", &alice.id);
+    let org_b = create_test_organization("Company B", "company-b", &alice.id);
 
     storage.create_user(&alice).await.unwrap();
-    storage.create_tenant(&tenant_a).await.unwrap();
-    storage.create_tenant(&tenant_b).await.unwrap();
+    storage.create_organization(&org_a).await.unwrap();
+    storage.create_organization(&org_b).await.unwrap();
 
     let oauth_a = OAuthCredential {
         id: Uuid::new_v4().to_string(),
@@ -1760,7 +1765,7 @@ async fn test_deployer_oauth_tenant_scoped() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: alice.id.clone(),
-        tenant_id: tenant_a.id.clone(),
+        organization_id: org_a.id.clone(),
     };
 
     let oauth_b = OAuthCredential {
@@ -1774,40 +1779,40 @@ async fn test_deployer_oauth_tenant_scoped() {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         user_id: alice.id.clone(),
-        tenant_id: tenant_b.id.clone(),
+        organization_id: org_b.id.clone(),
     };
 
     storage.save_oauth_credential(&oauth_a).await.unwrap();
     storage.save_oauth_credential(&oauth_b).await.unwrap();
 
     storage
-        .deploy_flow_version(&tenant_a.id, "sync", "1.0.0", "content", &alice.id)
+        .deploy_flow_version(&org_a.id, "sync", "1.0.0", "content", &alice.id)
         .await
         .unwrap();
     storage
-        .deploy_flow_version(&tenant_b.id, "sync", "1.0.0", "content", &alice.id)
+        .deploy_flow_version(&org_b.id, "sync", "1.0.0", "content", &alice.id)
         .await
         .unwrap();
 
     let deployer_a = storage
-        .get_deployed_by(&tenant_a.id, "sync")
+        .get_deployed_by(&org_a.id, "sync")
         .await
         .unwrap()
         .unwrap();
     let deployer_b = storage
-        .get_deployed_by(&tenant_b.id, "sync")
+        .get_deployed_by(&org_b.id, "sync")
         .await
         .unwrap()
         .unwrap();
 
     let oauth_exec_a = storage
-        .get_oauth_credential("google", "default", &deployer_a, &tenant_a.id)
+        .get_oauth_credential("google", "default", &deployer_a, &org_a.id)
         .await
         .unwrap()
         .unwrap();
 
     let oauth_exec_b = storage
-        .get_oauth_credential("google", "default", &deployer_b, &tenant_b.id)
+        .get_oauth_credential("google", "default", &deployer_b, &org_b.id)
         .await
         .unwrap()
         .unwrap();
@@ -1816,6 +1821,6 @@ async fn test_deployer_oauth_tenant_scoped() {
     assert_eq!(oauth_exec_b.access_token, "alice_work_token");
     assert_ne!(
         oauth_exec_a.access_token, oauth_exec_b.access_token,
-        "Different OAuth per tenant"
+        "Different OAuth per organization"
     );
 }

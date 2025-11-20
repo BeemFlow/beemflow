@@ -29,11 +29,11 @@ async fn test_webhook_route_registration() {
     // Build webhook router
     let app = create_webhook_routes().with_state(webhook_state);
 
-    // Make a POST request to /test-tenant/test-topic
-    // This should return 404 (tenant not found) but proves the route is registered
+    // Make a POST request to /test-org/test-topic
+    // This should return 404 (organization not found) but proves the route is registered
     let request = Request::builder()
         .method("POST")
-        .uri("/test-tenant/test-topic")
+        .uri("/test-org/test-topic")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"test":"data"}"#))
         .unwrap();
@@ -41,7 +41,7 @@ async fn test_webhook_route_registration() {
     let response = app.oneshot(request).await.unwrap();
 
     // Verify the route is accessible (not 404 NOT_FOUND for the route itself)
-    // We expect 404 "Tenant not found" since test-tenant doesn't exist
+    // We expect 404 "Organization not found" since test-org doesn't exist
     // This is different from Axum returning 404 for an unregistered route
     assert_eq!(
         response.status(),
@@ -440,7 +440,7 @@ steps:
     let result = env
         .deps
         .engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_err(), "Flow should pause (error) at await_event");
     let err = result.unwrap_err();
@@ -536,7 +536,7 @@ steps:
     let flow = parse_string(flow_yaml, None).unwrap();
     env.deps
         .engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await
         .ok();
 

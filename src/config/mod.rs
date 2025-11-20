@@ -255,7 +255,7 @@ pub struct HttpConfig {
     #[serde(skip_serializing_if = "Option::is_none", rename = "frontendUrl")]
     pub frontend_url: Option<String>,
 
-    /// Enable single-user mode (bypasses authentication, uses DEFAULT_TENANT_ID)
+    /// Enable single-user mode (bypasses authentication, uses DEFAULT_ORGANIZATION_ID)
     /// WARNING: Only use for personal/local development. Disables all authentication.
     /// Default: false (multi-tenant mode with full authentication)
     #[serde(default, rename = "singleUser")]

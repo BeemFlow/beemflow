@@ -100,7 +100,7 @@ async fn test_execute_minimal_valid_flow() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(
         result.is_ok(),
@@ -123,7 +123,7 @@ async fn test_execute_empty_steps() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Flow with empty steps should succeed");
     assert_eq!(
@@ -163,7 +163,7 @@ async fn test_execute_with_event_data() {
     event.insert("name".to_string(), serde_json::json!("TestEvent"));
 
     let result = engine
-        .execute(&flow, event, "test_user", "test_tenant")
+        .execute(&flow, event, "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Flow with event data should succeed");
 }
@@ -200,7 +200,7 @@ async fn test_execute_with_vars() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Flow with vars should succeed");
 
@@ -249,7 +249,7 @@ async fn test_execute_step_output_chaining() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Output chaining should work");
 
@@ -294,7 +294,7 @@ async fn test_execute_concurrent_flows() {
             let mut event = HashMap::new();
             event.insert("index".to_string(), serde_json::json!(i));
             engine_clone
-                .execute(&flow_clone, event, "test_user", "test_tenant")
+                .execute(&flow_clone, event, "test_user", "test_org")
                 .await
         });
         handles.push(handle);
@@ -348,7 +348,7 @@ async fn test_execute_catch_block() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should error (fail step) but catch blocks should run
     assert!(result.is_err(), "Should error from fail step");
@@ -356,7 +356,7 @@ async fn test_execute_catch_block() {
     // Verify catch block outputs are stored in the run
     let storage = engine.storage();
     let runs = storage
-        .list_runs("test_tenant", 1000, 0)
+        .list_runs("test_org", 1000, 0)
         .await
         .expect("Failed to list runs");
 
@@ -447,7 +447,7 @@ async fn test_execute_secrets_injection() {
     );
 
     let result = engine
-        .execute(&flow, event, "test_user", "test_tenant")
+        .execute(&flow, event, "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Secrets injection should work");
 
@@ -492,7 +492,7 @@ async fn test_execute_secrets_dot_access() {
     );
 
     let result = engine
-        .execute(&flow, event, "test_user", "test_tenant")
+        .execute(&flow, event, "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Secrets dot access should work");
 
@@ -549,7 +549,7 @@ async fn test_execute_array_access_in_template() {
     );
 
     let result = engine
-        .execute(&flow, event, "test_user", "test_tenant")
+        .execute(&flow, event, "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Array access should work");
 
@@ -588,7 +588,7 @@ async fn test_adapter_error_propagation() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_ok(), "Should not error with empty with map");
 
@@ -716,7 +716,7 @@ async fn test_await_event_resume_roundtrip() {
 
     // Execute should pause at await_event
     let result = engine
-        .execute(&flow, start_event, "test_user", "test_tenant")
+        .execute(&flow, start_event, "test_user", "test_org")
         .await;
 
     // Should error with "waiting for event" message

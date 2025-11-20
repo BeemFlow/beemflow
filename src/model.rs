@@ -549,8 +549,8 @@ pub struct Run {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<StepRun>>,
 
-    /// Tenant ID (organization context) - REQUIRED for multi-tenant isolation
-    pub tenant_id: String,
+    /// Organization ID (organization context) - REQUIRED for multi-tenant isolation
+    pub organization_id: String,
 
     /// User who triggered this run - REQUIRED for audit trail and per-user OAuth
     pub triggered_by_user_id: String,
@@ -666,8 +666,8 @@ pub struct OAuthCredential {
     /// User ID (owner of this credential)
     pub user_id: String,
 
-    /// Tenant ID (organization context)
-    pub tenant_id: String,
+    /// Organization ID (organization context)
+    pub organization_id: String,
 }
 
 // Validation macros for required fields
@@ -906,7 +906,7 @@ steps:
             created_at: Utc::now(),
             updated_at: Utc::now(),
             user_id: "test_user".to_string(),
-            tenant_id: "test_tenant".to_string(),
+            organization_id: "test_org".to_string(),
         };
 
         assert!(cred.is_expired());

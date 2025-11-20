@@ -225,7 +225,7 @@ impl OAuthClientManager {
         code_verifier: &str,
         integration: &str,
         user_id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<OAuthCredential> {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
@@ -278,7 +278,7 @@ impl OAuthClientManager {
             created_at: now,
             updated_at: now,
             user_id: user_id.to_string(),
-            tenant_id: tenant_id.to_string(),
+            organization_id: organization_id.to_string(),
         };
 
         // Save credential
@@ -315,7 +315,7 @@ impl OAuthClientManager {
     ///     "http://localhost:3000/oauth/callback".to_string()
     /// )?;
     ///
-    /// let token = client.get_token("google", "sheets", "user123", "tenant456").await?;
+    /// let token = client.get_token("google", "sheets", "user123", "org456").await?;
     /// println!("Access token: {}", token);
     /// # Ok(())
     /// # }
@@ -325,11 +325,11 @@ impl OAuthClientManager {
         provider: &str,
         integration: &str,
         user_id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<String> {
         let cred = self
             .storage
-            .get_oauth_credential(provider, integration, user_id, tenant_id)
+            .get_oauth_credential(provider, integration, user_id, organization_id)
             .await
             .map_err(|e| {
                 BeemFlowError::OAuth(format!(
@@ -464,7 +464,7 @@ impl OAuthClientManager {
     ///     "default",
     ///     &[],
     ///     "user123",
-    ///     "tenant456"
+    ///     "org456"
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -475,7 +475,7 @@ impl OAuthClientManager {
         integration: &str,
         scopes: &[&str],
         user_id: &str,
-        tenant_id: &str,
+        organization_id: &str,
     ) -> Result<OAuthCredential> {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
@@ -530,7 +530,7 @@ impl OAuthClientManager {
             created_at: now,
             updated_at: now,
             user_id: user_id.to_string(),
-            tenant_id: tenant_id.to_string(),
+            organization_id: organization_id.to_string(),
         };
 
         // Save credential
@@ -612,7 +612,7 @@ pub fn create_public_oauth_client_routes(state: Arc<OAuthClientState>) -> Router
 /// Create protected OAuth client routes (requires authentication)
 ///
 /// These routes initiate OAuth flows and manage credentials.
-/// TODO: Apply auth middleware when feat/multi-tenant is merged.
+/// Protected by auth_middleware and organization_middleware.
 pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
     Router::new()
         // Provider browsing (HTML + JSON)
@@ -752,7 +752,7 @@ async fn oauth_providers_handler(
     // Fetch user's credentials and build a set of connected provider IDs for O(1) lookup
     let connected_providers: HashSet<String> = match state
         .storage
-        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
     {
         Ok(credentials) => credentials.iter().map(|c| c.provider.clone()).collect(),
@@ -1034,7 +1034,7 @@ pub async fn oauth_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
-    // Extract user_id and tenant_id from session (set during authorization)
+    // Extract user_id and organization_id from session (set during authorization)
     let user_id = match session.data.get("user_id").and_then(|v| v.as_str()) {
         Some(id) => id,
         None => {
@@ -1052,16 +1052,16 @@ pub async fn oauth_callback_handler(
         }
     };
 
-    let tenant_id = match session.data.get("tenant_id").and_then(|v| v.as_str()) {
+    let organization_id = match session.data.get("organization_id").and_then(|v| v.as_str()) {
         Some(id) => id,
         None => {
-            tracing::error!("No tenant_id found in session");
+            tracing::error!("No organization_id found in session");
             return (
                 StatusCode::UNAUTHORIZED,
                 Html(error_html(
                     "OAuth Error",
-                    "Tenant Required",
-                    Some("Tenant context required. Please log in and try again."),
+                    "Organization Required",
+                    Some("Organization context required. Please log in and try again."),
                     true,
                 )),
             )
@@ -1078,7 +1078,7 @@ pub async fn oauth_callback_handler(
             code_verifier,
             integration,
             user_id,
-            tenant_id,
+            organization_id,
         )
         .await
     {
@@ -1220,14 +1220,14 @@ async fn oauth_provider_handler(
         json!("default"),
     );
 
-    // Store user_id and tenant_id for callback (critical for multi-tenant security)
+    // Store user_id and organization_id for callback (critical for multi-tenant security)
     state
         .session_store
         .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
     state.session_store.update_session(
         &session.id,
-        "tenant_id".to_string(),
-        json!(req_ctx.tenant_id),
+        "organization_id".to_string(),
+        json!(req_ctx.organization_id),
     );
 
     // Redirect to OAuth provider (session_id is embedded in state parameter)
@@ -1261,7 +1261,7 @@ async fn list_oauth_credentials_handler(
 
     let credentials = state
         .storage
-        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1289,7 +1289,7 @@ async fn list_oauth_credentials_handler(
 ///
 /// # Security - RBAC
 /// - Users can delete their own credentials
-/// - Admins/Owners can delete any credential in their tenant (OAuthDisconnect permission)
+/// - Admins/Owners can delete any credential in their organization (OAuthDisconnect permission)
 async fn delete_oauth_credential_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(id): AxumPath<String>,
@@ -1301,10 +1301,10 @@ async fn delete_oauth_credential_handler(
         .cloned()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Efficient direct lookup with tenant isolation
+    // Efficient direct lookup with organization isolation
     let credential = state
         .storage
-        .get_oauth_credential_by_id(&id, &req_ctx.tenant_id)
+        .get_oauth_credential_by_id(&id, &req_ctx.organization_id)
         .await
         .map_err(|e| {
             tracing::error!("Failed to fetch credential: {}", e);
@@ -1331,7 +1331,7 @@ async fn delete_oauth_credential_handler(
     // Delete with defense-in-depth
     state
         .storage
-        .delete_oauth_credential(&id, &req_ctx.tenant_id)
+        .delete_oauth_credential(&id, &req_ctx.organization_id)
         .await
         .map_err(|e| {
             tracing::error!("Failed to delete credential: {}", e);
@@ -1356,7 +1356,7 @@ async fn disconnect_oauth_provider_handler(
 
     let credentials = state
         .storage
-        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1366,10 +1366,10 @@ async fn disconnect_oauth_provider_handler(
         .find(|c| c.provider == provider)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Delete the credential with tenant isolation
+    // Delete the credential with organization isolation
     state
         .storage
-        .delete_oauth_credential(&credential.id, &req_ctx.tenant_id)
+        .delete_oauth_credential(&credential.id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1393,7 +1393,7 @@ async fn list_oauth_connections_handler(
 
     let credentials = state
         .storage
-        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.tenant_id)
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1506,14 +1506,14 @@ async fn connect_oauth_provider_post_handler(
         json!(integration.unwrap_or("default")),
     );
 
-    // Store user_id and tenant_id for callback (critical for multi-tenant security)
+    // Store user_id and organization_id for callback (critical for multi-tenant security)
     state
         .session_store
         .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
     state.session_store.update_session(
         &session.id,
-        "tenant_id".to_string(),
-        json!(req_ctx.tenant_id),
+        "organization_id".to_string(),
+        json!(req_ctx.organization_id),
     );
 
     // Return authorization URL (session_id is now embedded in the state parameter)
@@ -1584,16 +1584,16 @@ async fn oauth_api_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
-    // Extract user_id and tenant_id from session
+    // Extract user_id and organization_id from session
     let user_id = session
         .data
         .get("user_id")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let tenant_id = session
+    let organization_id = session
         .data
-        .get("tenant_id")
+        .get("organization_id")
         .and_then(|v| v.as_str())
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
@@ -1606,7 +1606,7 @@ async fn oauth_api_callback_handler(
             code_verifier,
             stored_integration,
             user_id,
-            tenant_id,
+            organization_id,
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

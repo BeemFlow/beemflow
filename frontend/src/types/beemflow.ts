@@ -323,3 +323,77 @@ export interface ConnectOAuthProviderResponse {
   auth_url: string;
   provider_id: string;
 }
+
+// ============================================================================
+// Authentication & Authorization Types
+// ============================================================================
+
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  avatar_url?: string;
+  email_verified: boolean;
+  mfa_enabled: boolean;
+  created_at: string;
+  last_login_at?: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  plan: 'free' | 'starter' | 'pro' | 'enterprise';
+  max_users: number;
+  max_flows: number;
+  max_runs_per_month: number;
+  created_at: string;
+  role?: string; // User's role in this organization
+  current?: boolean; // True if this is the org in current JWT context
+}
+
+export interface OrganizationMember {
+  user: {
+    id: string;
+    email: string;
+    name?: string;
+    avatar_url?: string;
+  };
+  role: 'owner' | 'admin' | 'member' | 'viewer';
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name?: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  user: User;
+  organization: Organization & { role: string };
+}
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  action: string;
+  user_id?: string;
+  resource_type?: string;
+  resource_id?: string;
+  resource_name?: string;
+  http_method?: string;
+  http_path?: string;
+  http_status_code?: number;
+  success: boolean;
+  error_message?: string;
+  client_ip?: string;
+  user_agent?: string;
+}

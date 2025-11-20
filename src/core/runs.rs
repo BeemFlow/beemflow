@@ -91,7 +91,7 @@ pub mod runs {
                     input.event.unwrap_or_default(),
                     input.draft.unwrap_or(false),
                     &ctx.user_id,
-                    &ctx.tenant_id,
+                    &ctx.organization_id,
                 )
                 .await?;
 
@@ -132,7 +132,7 @@ pub mod runs {
             let mut run = self
                 .deps
                 .storage
-                .get_run(run_id, &ctx.tenant_id)
+                .get_run(run_id, &ctx.organization_id)
                 .await?
                 .ok_or_else(|| not_found("Run", &input.run_id))?;
 
@@ -173,7 +173,7 @@ pub mod runs {
             let runs = self
                 .deps
                 .storage
-                .list_runs(&ctx.tenant_id, limit, offset)
+                .list_runs(&ctx.organization_id, limit, offset)
                 .await?;
             Ok(serde_json::to_value(runs)?)
         }

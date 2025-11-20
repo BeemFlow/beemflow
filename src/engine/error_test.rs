@@ -30,7 +30,7 @@ async fn test_missing_adapter() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     assert!(result.is_err());
 
@@ -69,7 +69,7 @@ async fn test_invalid_step_configuration() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Engine may tolerate missing/wrong fields
     if result.is_ok() {
@@ -97,7 +97,7 @@ async fn test_template_rendering_error() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle template errors gracefully
     assert!(result.is_ok());
@@ -133,7 +133,7 @@ async fn test_circular_dependency() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // May render as empty strings or handle gracefully
     assert!(result.is_ok() || result.is_err());
@@ -162,7 +162,7 @@ async fn test_error_in_catch_block() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle errors in catch blocks
     assert!(result.is_err());
@@ -184,7 +184,7 @@ async fn test_foreach_with_invalid_expression() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle invalid foreach gracefully
     assert!(result.is_ok() || result.is_err());
@@ -210,7 +210,7 @@ async fn test_retry_exhaustion() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should fail after retries exhausted
     assert!(result.is_err());
@@ -240,7 +240,7 @@ async fn test_parallel_block_partial_failure() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle partial failures in parallel blocks
     assert!(result.is_err());
@@ -265,7 +265,7 @@ async fn test_empty_step_id() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle empty step IDs
     assert!(result.is_ok() || result.is_err());
@@ -285,7 +285,7 @@ async fn test_duplicate_step_ids() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Engine should handle duplicate IDs (may overwrite or error)
     if result.is_ok() {
@@ -316,7 +316,7 @@ async fn test_condition_evaluation() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should skip the step due to false condition or handle it gracefully
     let _ = result;
@@ -342,7 +342,7 @@ async fn test_step_without_use_field() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle steps without use field
     assert!(result.is_ok() || result.is_err());
@@ -369,7 +369,7 @@ async fn test_deeply_nested_steps() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle deeply nested structures
     assert!(result.is_ok());
@@ -397,7 +397,7 @@ async fn test_large_output_handling() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should handle large outputs
     assert!(result.is_ok());
@@ -425,7 +425,7 @@ async fn test_null_values_in_context() {
     };
 
     let result = engine
-        .execute(&flow, event, "test_user", "test_tenant")
+        .execute(&flow, event, "test_user", "test_org")
         .await;
     // Should handle null values in templates
     assert!(result.is_ok());
@@ -449,7 +449,7 @@ async fn test_error_recovery_with_catch() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should recover using catch block
     if result.is_ok() {
@@ -482,7 +482,7 @@ async fn test_multiple_errors_sequentially() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should fail on first error
     assert!(result.is_err());
@@ -517,7 +517,7 @@ async fn test_step_depends_on_failed_step() {
     };
 
     let result = engine
-        .execute(&flow, HashMap::new(), "test_user", "test_tenant")
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
         .await;
     // Should fail because dependency failed
     assert!(result.is_err());

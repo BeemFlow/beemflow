@@ -31,7 +31,7 @@ async fn test_check_constraint_rejects_invalid_status() {
     let result = sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at,
-            tenant_id, triggered_by_user_id, created_at
+            organization_id, triggered_by_user_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind("test_run_123")
@@ -40,7 +40,7 @@ async fn test_check_constraint_rejects_invalid_status() {
     .bind("{}")
     .bind("INVALID_STATUS_VALUE") // ← Should be rejected!
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
@@ -64,7 +64,7 @@ async fn test_check_constraint_rejects_invalid_status() {
     let valid_result = sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at,
-            tenant_id, triggered_by_user_id, created_at
+            organization_id, triggered_by_user_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind("test_run_456")
@@ -73,7 +73,7 @@ async fn test_check_constraint_rejects_invalid_status() {
     .bind("{}")
     .bind("SUCCEEDED") // ← Valid status
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
@@ -97,7 +97,7 @@ async fn test_audit_log_delete_prevented_by_trigger() {
         .await
         .unwrap();
 
-    // Create user and tenant first (foreign key requirement)
+    // Create user and organization first (foreign key requirement)
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, created_at, updated_at, disabled)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -114,13 +114,13 @@ async fn test_audit_log_delete_prevented_by_trigger() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO tenants (
+        "INSERT INTO organizations (
             id, name, slug, created_by_user_id, created_at, updated_at, disabled
         ) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind("test_tenant")
-    .bind("Test Tenant")
-    .bind("test-tenant")
+    .bind("test_org")
+    .bind("Test Organization")
+    .bind("test-org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .bind(Utc::now().timestamp_millis())
@@ -132,12 +132,12 @@ async fn test_audit_log_delete_prevented_by_trigger() {
     // Insert audit log
     sqlx::query(
         "INSERT INTO audit_logs (
-            id, timestamp, tenant_id, action, success, created_at
+            id, timestamp, organization_id, action, success, created_at
         ) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("audit_123")
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test.action")
     .bind(1) // SQLite boolean
     .bind(Utc::now().timestamp_millis())
@@ -181,7 +181,7 @@ async fn test_audit_log_update_prevented_by_trigger() {
         .await
         .unwrap();
 
-    // Create user and tenant first (foreign key requirement)
+    // Create user and organization first (foreign key requirement)
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, created_at, updated_at, disabled)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -198,13 +198,13 @@ async fn test_audit_log_update_prevented_by_trigger() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO tenants (
+        "INSERT INTO organizations (
             id, name, slug, created_by_user_id, created_at, updated_at, disabled
         ) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind("test_tenant")
-    .bind("Test Tenant")
-    .bind("test-tenant")
+    .bind("test_org")
+    .bind("Test Organization")
+    .bind("test-org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .bind(Utc::now().timestamp_millis())
@@ -216,12 +216,12 @@ async fn test_audit_log_update_prevented_by_trigger() {
     // Insert audit log
     sqlx::query(
         "INSERT INTO audit_logs (
-            id, timestamp, tenant_id, action, success, created_at
+            id, timestamp, organization_id, action, success, created_at
         ) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind("audit_456")
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test.action")
     .bind(1)
     .bind(Utc::now().timestamp_millis())
@@ -271,7 +271,7 @@ async fn test_timestamp_stores_milliseconds_not_seconds() {
     sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at,
-            tenant_id, triggered_by_user_id, created_at
+            organization_id, triggered_by_user_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind("test_run")
@@ -280,7 +280,7 @@ async fn test_timestamp_stores_milliseconds_not_seconds() {
     .bind("{}")
     .bind("SUCCEEDED")
     .bind(timestamp_millis)
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
@@ -334,7 +334,7 @@ async fn test_millisecond_precision_preserved_in_differences() {
     sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at, ended_at,
-            tenant_id, triggered_by_user_id, created_at
+            organization_id, triggered_by_user_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind("test_run_precision")
@@ -344,7 +344,7 @@ async fn test_millisecond_precision_preserved_in_differences() {
     .bind("SUCCEEDED")
     .bind(start_millis)
     .bind(end_millis)
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
@@ -390,14 +390,14 @@ async fn test_check_constraint_validates_positive_quotas() {
         .await
         .unwrap();
 
-    // Try to insert tenant with max_users = 0 (invalid)
+    // Try to insert organization with max_users = 0 (invalid)
     let result = sqlx::query(
-        "INSERT INTO tenants (
+        "INSERT INTO organizations (
             id, name, slug, plan, max_users, max_flows, max_runs_per_month,
             created_by_user_id, created_at, updated_at, disabled
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("Test")
     .bind("test")
     .bind("free")
@@ -419,12 +419,12 @@ async fn test_check_constraint_validates_positive_quotas() {
 
     // Try with negative value
     let result2 = sqlx::query(
-        "INSERT INTO tenants (
+        "INSERT INTO organizations (
             id, name, slug, plan, max_users, max_flows, max_runs_per_month,
             created_by_user_id, created_at, updated_at, disabled
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind("test_tenant2")
+    .bind("test_org2")
     .bind("Test")
     .bind("test2")
     .bind("free")
@@ -463,7 +463,7 @@ async fn test_not_null_constraint_on_flow_name() {
     let result = sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at,
-            tenant_id, triggered_by_user_id, created_at
+            organization_id, triggered_by_user_id, created_at
         ) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)", // ← NULL flow_name
     )
     .bind("test_run")
@@ -471,7 +471,7 @@ async fn test_not_null_constraint_on_flow_name() {
     .bind("{}")
     .bind("PENDING")
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
@@ -592,11 +592,11 @@ async fn test_oauth_providers_has_name_column() {
     // OLD SCHEMA: Would fail (no name column)
 }
 
-/// Test that UNIQUE constraint includes tenant_id
+/// Test that UNIQUE constraint includes organization_id
 ///
-/// This allows same user to connect same provider in different tenants
+/// This allows same user to connect same provider in different organizations
 #[tokio::test]
-async fn test_oauth_credentials_unique_includes_tenant_id() {
+async fn test_oauth_credentials_unique_includes_organization_id() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:?mode=rwc")
         .await
         .unwrap();
@@ -606,10 +606,10 @@ async fn test_oauth_credentials_unique_includes_tenant_id() {
         .await
         .unwrap();
 
-    // Insert credential for user in tenant A
+    // Insert credential for user in organization A
     sqlx::query(
         "INSERT INTO oauth_credentials (
-            id, provider, integration, access_token, user_id, tenant_id,
+            id, provider, integration, access_token, user_id, organization_id,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -618,17 +618,17 @@ async fn test_oauth_credentials_unique_includes_tenant_id() {
     .bind("default")
     .bind("token_A")
     .bind("user_123")
-    .bind("tenant_A")
+    .bind("org_A")
     .bind(Utc::now().timestamp_millis())
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
     .await
     .unwrap();
 
-    // Insert same user/provider/integration in tenant B (should succeed)
+    // Insert same user/provider/integration in organization B (should succeed)
     let result = sqlx::query(
         "INSERT INTO oauth_credentials (
-            id, provider, integration, access_token, user_id, tenant_id,
+            id, provider, integration, access_token, user_id, organization_id,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -637,20 +637,20 @@ async fn test_oauth_credentials_unique_includes_tenant_id() {
     .bind("default")
     .bind("token_B")
     .bind("user_123") // Same user
-    .bind("tenant_B") // Different tenant
+    .bind("org_B") // Different organization
     .bind(Utc::now().timestamp_millis())
     .bind(Utc::now().timestamp_millis())
     .execute(&pool)
     .await;
 
-    // NEW SCHEMA: Must succeed (tenant_id in UNIQUE constraint)
+    // NEW SCHEMA: Must succeed (organization_id in UNIQUE constraint)
     assert!(
         result.is_ok(),
-        "Should allow same user/provider in different tenants: {:?}",
+        "Should allow same user/provider in different organizations: {:?}",
         result.err()
     );
 
-    // OLD SCHEMA: Would fail (UNIQUE didn't include tenant_id)
+    // OLD SCHEMA: Would fail (UNIQUE didn't include organization_id)
 
     // Verify we have 2 credentials
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_credentials")
@@ -658,7 +658,7 @@ async fn test_oauth_credentials_unique_includes_tenant_id() {
         .await
         .unwrap();
 
-    assert_eq!(count, 2, "Should have 2 credentials (different tenants)");
+    assert_eq!(count, 2, "Should have 2 credentials (different organizations)");
 }
 
 /// Test that critical indexes exist (performance)
@@ -685,11 +685,11 @@ async fn test_critical_indexes_exist() {
 
     // Critical indexes that MUST exist
     let required_indexes = vec![
-        "idx_flow_triggers_tenant_topic", // Webhook routing (hot path)
-        "idx_runs_tenant_time",           // Run pagination
-        "idx_steps_run_id",               // Step lookup
-        "idx_users_email_active",         // User login
-        "idx_refresh_tokens_hash_active", // Token validation
+        "idx_flow_triggers_organization_topic", // Webhook routing (hot path)
+        "idx_runs_organization_flow_status_time", // Run pagination
+        "idx_steps_run_id",                      // Step lookup
+        "idx_users_email_active",                // User login
+        "idx_refresh_tokens_hash_active",        // Token validation
     ];
 
     for required in required_indexes {
@@ -726,7 +726,7 @@ async fn test_default_timestamp_values() {
     sqlx::query(
         "INSERT INTO runs (
             id, flow_name, event, vars, status, started_at,
-            tenant_id, triggered_by_user_id
+            organization_id, triggered_by_user_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", // ← No created_at!
     )
     .bind("test_run")
@@ -735,7 +735,7 @@ async fn test_default_timestamp_values() {
     .bind("{}")
     .bind("PENDING")
     .bind(Utc::now().timestamp_millis())
-    .bind("test_tenant")
+    .bind("test_org")
     .bind("test_user")
     .execute(&pool)
     .await

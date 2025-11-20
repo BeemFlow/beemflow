@@ -565,7 +565,7 @@ fn build_router(
             ))
             .layer(axum::middleware::from_fn_with_state(
                 auth_middleware_state.clone(),
-                crate::auth::tenant_middleware,
+                crate::auth::organization_middleware,
             ))
             .layer(axum::middleware::from_fn_with_state(
                 auth_middleware_state.clone(),
@@ -573,6 +573,27 @@ fn build_router(
             ))
     };
     app = app.nest("/api", protected_oauth_routes);
+
+    // Management routes (user/org/member/audit) - PROTECTED with full middleware stack
+    let management_routes = if http_config.single_user {
+        crate::auth::create_management_routes(state.storage.clone())
+            .layer(axum::middleware::from_fn(single_user_context_middleware))
+    } else {
+        crate::auth::create_management_routes(state.storage.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::audit_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::organization_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::auth_middleware,
+            ))
+    };
+    app = app.nest("/api", management_routes);
 
     // Print warning if running in single-user mode
     if http_config.single_user {
@@ -604,7 +625,7 @@ fn build_router(
             create_mcp_routes(mcp_state)
                 .layer(axum::middleware::from_fn(single_user_context_middleware))
         } else {
-            // Multi-tenant mode: Full auth middleware stack
+            // Multi-organization mode: Full auth middleware stack
             // MCP over HTTP requires authentication just like the HTTP API
             create_mcp_routes(mcp_state)
                 .layer(axum::middleware::from_fn_with_state(
@@ -613,7 +634,7 @@ fn build_router(
                 ))
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
-                    crate::auth::tenant_middleware,
+                    crate::auth::organization_middleware,
                 ))
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
@@ -642,7 +663,7 @@ fn build_router(
             build_operation_routes(&state)
                 .layer(axum::middleware::from_fn(single_user_context_middleware))
         } else {
-            // Multi-tenant mode: Full auth + tenant + audit middleware
+            // Multi-organization mode: Full auth + organization + audit middleware
             // Note: Layers are applied in reverse order (last = first to execute)
             build_operation_routes(&state)
                 // Third: Log audit events after request completion
@@ -650,10 +671,10 @@ fn build_router(
                     auth_middleware_state.clone(),
                     crate::auth::audit_middleware,
                 ))
-                // Second: Resolve tenant and create full RequestContext
+                // Second: Resolve organization and create full RequestContext
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
-                    crate::auth::tenant_middleware,
+                    crate::auth::organization_middleware,
                 ))
                 // First: Validate JWT and create AuthContext
                 .layer(axum::middleware::from_fn_with_state(
@@ -862,20 +883,20 @@ async fn serve_static_asset(AxumPath(path): AxumPath<String>) -> impl IntoRespon
 /// Middleware that injects default RequestContext for single-user mode
 ///
 /// This bypasses authentication by providing a pre-configured context with
-/// DEFAULT_TENANT_ID and full Owner permissions for all requests.
+/// DEFAULT_ORGANIZATION_ID and full Owner permissions for all requests.
 ///
 /// Use this ONLY with the `--single-user` flag for personal/local deployments.
 async fn single_user_context_middleware(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use crate::constants::{DEFAULT_TENANT_ID, SYSTEM_USER_ID};
+    use crate::constants::{DEFAULT_ORGANIZATION_ID, SYSTEM_USER_ID};
 
     // Inject default RequestContext for single-user mode
     req.extensions_mut().insert(crate::auth::RequestContext {
         user_id: SYSTEM_USER_ID.to_string(),
-        tenant_id: DEFAULT_TENANT_ID.to_string(),
-        tenant_name: "Personal".to_string(),
+        organization_id: DEFAULT_ORGANIZATION_ID.to_string(),
+        organization_name: "Personal".to_string(),
         role: crate::auth::Role::Owner,
         client_ip: None,
         user_agent: Some("single-user-mode".to_string()),
@@ -911,9 +932,9 @@ async fn health_handler() -> Json<Value> {
 async fn readiness_handler(
     State(storage): State<Arc<dyn crate::storage::Storage>>,
 ) -> std::result::Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Check database connectivity by attempting to list active tenants
-    // This verifies database accessibility without depending on specific tenant data
-    match storage.list_active_tenants().await {
+    // Check database connectivity by attempting to list active organizations
+    // This verifies database accessibility without depending on specific organization data
+    match storage.list_active_organizations().await {
         Ok(_) => {
             // Database is accessible
             Ok(Json(json!({

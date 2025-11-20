@@ -44,7 +44,7 @@ async fn setup_executor() -> Executor {
         runs_data: None,
         max_concurrent_tasks: 1000,
         user_id: "test_user".to_string(),
-        tenant_id: "test_tenant".to_string(),
+        organization_id: "test_org".to_string(),
     })
 }
 
