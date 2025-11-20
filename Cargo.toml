@@ -36,7 +36,6 @@ pin-project = "1.1"
 axum = { version = "0.8", features = ["ws", "form"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["full"] }
-tower_governor = "0.4"  # Rate limiting middleware
 hyper = { version = "1.7", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-webpki-roots"] }
