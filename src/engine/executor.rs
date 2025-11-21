@@ -239,7 +239,12 @@ impl Executor {
                     .steps
                     .iter()
                     .position(|s| s.id.as_str() == step_id)
-                    .unwrap();
+                    .ok_or_else(|| {
+                        BeemFlowError::adapter(format!(
+                            "step '{}' not found in flow.steps during await_event handling",
+                            step_id
+                        ))
+                    })?;
                 return self
                     .handle_await_event(step, flow, step_ctx, idx, run_id)
                     .await;

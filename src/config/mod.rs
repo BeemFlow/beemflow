@@ -1150,8 +1150,19 @@ fn expand_env_value_at_config_time(value: &str) -> String {
 
     ENV_VAR_PATTERN
         .replace_all(value, |caps: &regex::Captures| {
-            let var_name = &caps[1];
-            env::var(var_name).unwrap_or_else(|_| caps[0].to_string())
+            if let Some(var_match) = caps.get(1) {
+                let var_name = var_match.as_str();
+                env::var(var_name).unwrap_or_else(|_| {
+                    caps.get(0)
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default()
+                })
+            } else {
+                // Should never happen with this regex, but be defensive
+                caps.get(0)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default()
+            }
         })
         .to_string()
 }

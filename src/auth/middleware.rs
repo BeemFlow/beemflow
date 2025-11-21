@@ -509,7 +509,7 @@ fn extract_client_ip(req: &Request) -> Option<String> {
     req.headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap().trim().to_string())
+        .and_then(|s| s.split(',').next().map(|ip| ip.trim().to_string()))
         .or_else(|| {
             // Fallback to connection info
             req.extensions()

@@ -451,10 +451,13 @@ fn verify_webhook_signature(
         // Verify timestamp age
         if let Ok(ts) = timestamp.parse::<i64>() {
             let max_age = signature_config.max_age.unwrap_or(300); // Default 5 minutes
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
+            let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(d) => d.as_secs() as i64,
+                Err(e) => {
+                    tracing::error!("System time error during webhook verification: {}", e);
+                    return false; // Fail verification if system clock is broken
+                }
+            };
 
             if now - ts > max_age {
                 return false;
@@ -476,7 +479,20 @@ fn verify_webhook_signature(
     };
 
     // Calculate expected signature
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    // HmacSha256 accepts keys of any length, but log a warning if the key seems problematic
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(
+                "Failed to create HMAC verifier with provided secret (length: {}): {}. \
+                 Webhook signature verification will fail.",
+                secret.len(),
+                e
+            );
+            // Return false early - don't panic, just fail verification gracefully
+            return false;
+        }
+    };
     mac.update(base_string.as_bytes());
     let expected_sig = hex::encode(mac.finalize().into_bytes());
 

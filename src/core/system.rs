@@ -348,19 +348,20 @@ pub mod system {
             for (op_name, meta) in metadata {
                 groups.insert(meta.group);
                 // Skip operations without HTTP endpoints
-                if meta.http_method.is_none() || meta.http_path.is_none() {
+                let (Some(http_method), Some(http_path)) = (&meta.http_method, &meta.http_path)
+                else {
                     continue;
-                }
+                };
 
-                let method = meta.http_method.unwrap().to_lowercase();
-                let path = meta.http_path.unwrap();
+                let method = http_method.to_lowercase();
+                let path = http_path;
 
                 // Get or create path item
                 let path_item = paths
                     .entry(path.to_string())
                     .or_insert_with(|| serde_json::json!({}))
                     .as_object_mut()
-                    .unwrap();
+                    .expect("just inserted a JSON object, must be an object");
 
                 // Extract path parameters
                 let parameters = extract_path_parameters(path);

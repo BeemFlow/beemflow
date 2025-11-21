@@ -77,11 +77,23 @@ impl TestEnvironment {
 
         // Create config for test environment
         let config = Arc::new(Config {
-            flows_dir: Some(beemflow_dir.join("flows").to_str().unwrap().to_string()),
+            flows_dir: Some(
+                beemflow_dir
+                    .join("flows")
+                    .to_str()
+                    .expect("test path should be valid UTF-8")
+                    .to_string(),
+            ),
             blob: Some(BlobConfig {
                 driver: Some("filesystem".to_string()),
                 bucket: None,
-                directory: Some(beemflow_dir.join("files").to_str().unwrap().to_string()),
+                directory: Some(
+                    beemflow_dir
+                        .join("files")
+                        .to_str()
+                        .expect("test path should be valid UTF-8")
+                        .to_string(),
+                ),
             }),
             ..Default::default()
         });

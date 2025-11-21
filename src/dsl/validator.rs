@@ -20,6 +20,11 @@ static SCHEMA: Lazy<jsonschema::Validator> = Lazy::new(|| {
     jsonschema::validator_for(&schema_value).expect("Failed to compile BeemFlow schema")
 });
 
+/// Cached identifier validation regex
+static IDENTIFIER_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").expect("Hardcoded identifier regex pattern is invalid")
+});
+
 pub struct Validator;
 
 impl Validator {
@@ -209,7 +214,10 @@ impl Validator {
 
             // Validate foreach expression is templated
             // Safe: We already verified step.foreach.is_some() above
-            let foreach_expr = step.foreach.as_ref().unwrap();
+            let foreach_expr = step
+                .foreach
+                .as_ref()
+                .expect("foreach field must be Some, checked above");
             if !Self::is_template_syntax(foreach_expr) {
                 return Err(BeemFlowError::validation(format!(
                     "Foreach expression in step '{}' should use template syntax: {{ }} ",
@@ -218,8 +226,12 @@ impl Validator {
             }
 
             // Validate 'as' is a valid identifier
-            // Safe: We already verified step.as_.is_some() in the check above (line 192-195)
-            Self::validate_identifier(step.as_.as_ref().unwrap())?;
+            // Safe: We already verified step.as_.is_some() in the check above
+            let as_field = step
+                .as_
+                .as_ref()
+                .expect("as_ field must be Some, checked above");
+            Self::validate_identifier(as_field)?;
 
             // Cannot have 'use' with foreach
             if step.use_.is_some() {
@@ -303,9 +315,7 @@ impl Validator {
         }
 
         // For static IDs, validate they follow identifier rules
-        // Safe: This is a valid, compile-time constant regex pattern that cannot fail
-        let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
-        if !re.is_match(id) {
+        if !IDENTIFIER_REGEX.is_match(id) {
             return Err(BeemFlowError::validation(format!(
                 "Invalid identifier '{}': must start with letter or underscore, contain only alphanumeric and underscore",
                 id

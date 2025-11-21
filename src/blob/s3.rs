@@ -76,7 +76,12 @@ impl BlobStore for S3BlobStore {
             _ => {
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .map_err(|e| {
+                        BeemFlowError::storage(format!(
+                            "System time error (clock set before 1970?): {}",
+                            e
+                        ))
+                    })?
                     .as_nanos();
                 format!("blob-{}", timestamp)
             }

@@ -172,7 +172,7 @@ pub async fn expand_value(value: &str, provider: &Arc<dyn SecretsProvider>) -> R
     // Collect all variable names to look up
     let var_names: Vec<&str> = ENV_VAR_PATTERN
         .captures_iter(value)
-        .map(|caps| caps.get(1).unwrap().as_str())
+        .filter_map(|caps| caps.get(1).map(|m| m.as_str()))
         .collect();
 
     // Fetch all secrets (future optimization: parallel fetching for cloud providers)
@@ -190,8 +190,12 @@ pub async fn expand_value(value: &str, provider: &Arc<dyn SecretsProvider>) -> R
     let mut last_match = 0;
 
     for cap in ENV_VAR_PATTERN.captures_iter(value) {
-        let full_match = cap.get(0).unwrap();
-        let var_name = cap.get(1).unwrap().as_str();
+        let Some(full_match) = cap.get(0) else {
+            continue; // Should never happen, but be defensive
+        };
+        let Some(var_name) = cap.get(1).map(|m| m.as_str()) else {
+            continue; // Should never happen, but be defensive
+        };
 
         // Append the part before this match
         result.push_str(&value[last_match..full_match.start()]);

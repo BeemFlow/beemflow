@@ -294,7 +294,15 @@ fn add_operation_commands(mut app: Command, registry: &OperationRegistry) -> Com
             if let Some(cli_pattern) = meta.cli_pattern {
                 // cli_pattern has 'static lifetime, so words do too
                 let words: Vec<&'static str> = cli_pattern.split_whitespace().collect();
-                let subcmd_name = words.get(1).copied().unwrap_or(words[0]);
+                let subcmd_name = if words.len() > 1 {
+                    words[1]
+                } else if !words.is_empty() {
+                    words[0]
+                } else {
+                    // Empty cli_pattern - use a static default
+                    // (This should never happen with valid config, but be defensive)
+                    "operation"
+                };
 
                 let cmd = build_operation_command(op_name, meta, subcmd_name);
                 group_cmd = group_cmd.subcommand(cmd);
@@ -553,7 +561,9 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
     }
 
     // Get host and port (CLI overrides config)
-    let host = matches.get_one::<String>("host").unwrap();
+    let host = matches
+        .get_one::<String>("host")
+        .expect("host argument has default value");
     let port = matches
         .get_one::<String>("port")
         .and_then(|s| s.parse::<u16>().ok())
@@ -638,7 +648,9 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
 
     match matches.subcommand() {
         Some(("create-client", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap();
+            let name = sub
+                .get_one::<String>("name")
+                .expect("name argument is required by clap");
             let grant_types = parse_comma_list(sub, "grant-types");
             let scopes = parse_comma_list(sub, "scopes");
             let json = sub.get_flag("json");
@@ -695,7 +707,9 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
             }
         }
         Some(("revoke-client", sub)) => {
-            let client_id = sub.get_one::<String>("client-id").unwrap();
+            let client_id = sub
+                .get_one::<String>("client-id")
+                .expect("client-id argument is required by clap");
             storage.delete_oauth_client(client_id).await?;
             println!("✅ Client '{}' revoked", client_id);
         }
