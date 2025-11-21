@@ -2007,5 +2007,4 @@ impl crate::storage::AuthStorage for SqliteStorage {
 
         Ok(())
     }
-
 }

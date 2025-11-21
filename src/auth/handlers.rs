@@ -12,7 +12,13 @@ use super::{
 use crate::http::AppError;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
-use axum::{Json, Router, extract::{FromRequest, Request, State}, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{
+    Json, Router,
+    extract::{FromRequest, Request, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::post,
+};
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -42,7 +48,8 @@ async fn register(
     // Extract JSON body
     let (parts, body) = request.into_parts();
     let request_for_json = Request::from_parts(parts, body);
-    let Json(req) = Json::<RegisterRequest>::from_request(request_for_json, &()).await
+    let Json(req) = Json::<RegisterRequest>::from_request(request_for_json, &())
+        .await
         .map_err(|e| BeemFlowError::validation(format!("Invalid request body: {}", e)))?;
     // 1. Validate email format
     if !is_valid_email(&req.email) {
@@ -279,7 +286,12 @@ async fn logout(
     let token_hash = hash_token(&req.refresh_token);
 
     // Revoke token if it exists
-    if state.storage.get_refresh_token(&token_hash).await?.is_some() {
+    if state
+        .storage
+        .get_refresh_token(&token_hash)
+        .await?
+        .is_some()
+    {
         state.storage.revoke_refresh_token(&token_hash).await?;
     }
 

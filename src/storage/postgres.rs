@@ -1932,5 +1932,4 @@ impl crate::storage::AuthStorage for PostgresStorage {
 
         Ok(())
     }
-
 }

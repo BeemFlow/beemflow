@@ -456,7 +456,6 @@ pub trait AuthStorage: Send + Sync {
 
     /// Update refresh token's last used timestamp
     async fn update_refresh_token_last_used(&self, token_hash: &str) -> Result<()>;
-
 }
 /// Complete storage trait combining all focused storage traits
 ///
