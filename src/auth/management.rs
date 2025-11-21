@@ -444,15 +444,20 @@ async fn update_member_role_handler(
         .parse::<Role>()
         .map_err(|e| BeemFlowError::validation(format!("Invalid role: {}", e)))?;
 
-    // Business rule: Admins cannot assign Owner role
-    if req_ctx.role == Role::Admin && new_role == Role::Owner {
-        return Err(BeemFlowError::validation("Admins cannot assign Owner role").into());
-    }
+    // Fetch target member to get their current role (SECURITY: Required to prevent privilege escalation)
+    let target_member = storage
+        .get_organization_member(&req_ctx.organization_id, &member_user_id)
+        .await?
+        .ok_or_else(|| BeemFlowError::validation("Member not found"))?;
 
-    // Business rule: Cannot change own role
-    if member_user_id == req_ctx.user_id {
-        return Err(BeemFlowError::validation("Cannot change your own role").into());
-    }
+    // Use comprehensive RBAC check (validates current role, prevents Admin from managing Owners)
+    crate::auth::rbac::check_can_update_role(
+        req_ctx.role,
+        &req_ctx.user_id,
+        &member_user_id,
+        target_member.role, // Current role - CRITICAL for security
+        new_role,
+    )?;
 
     storage
         .update_member_role(&req_ctx.organization_id, &member_user_id, new_role)
@@ -474,6 +479,17 @@ async fn remove_member_handler(
     // Business rule: Cannot remove yourself
     if member_user_id == req_ctx.user_id {
         return Err(BeemFlowError::validation("Cannot remove yourself from the organization").into());
+    }
+
+    // Fetch target member to check their role (SECURITY: Required to prevent privilege escalation)
+    let target_member = storage
+        .get_organization_member(&req_ctx.organization_id, &member_user_id)
+        .await?
+        .ok_or_else(|| BeemFlowError::validation("Member not found"))?;
+
+    // SECURITY: Only Owners can remove other Owners (prevents Admin from removing Owner)
+    if target_member.role == Role::Owner && req_ctx.role != Role::Owner {
+        return Err(BeemFlowError::validation("Only owners can remove other owners from the organization").into());
     }
 
     storage

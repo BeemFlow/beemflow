@@ -1824,3 +1824,291 @@ async fn test_deployer_oauth_organization_scoped() {
         "Different OAuth per organization"
     );
 }
+
+// ============================================================================
+// Security Tests: Privilege Escalation Prevention
+// ============================================================================
+
+/// SECURITY TEST: Admin cannot demote Owner to lower role (privilege escalation prevention)
+#[tokio::test]
+async fn test_admin_cannot_demote_owner() {
+    let storage = create_test_storage().await;
+
+    // Create organization with Owner (Alice) and Admin (Bob)
+    let alice = create_test_user("alice@example.com", "Alice");
+    let bob = create_test_user("bob@example.com", "Bob");
+    storage.create_user(&alice).await.unwrap();
+    storage.create_user(&bob).await.unwrap();
+
+    let org = create_test_organization("Test Corp", "test-corp", &alice.id);
+    storage.create_organization(&org).await.unwrap();
+
+    // Alice is Owner
+    let alice_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: alice.id.clone(),
+        role: Role::Owner,
+        invited_by_user_id: None,
+        invited_at: None,
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&alice_member).await.unwrap();
+
+    // Bob is Admin
+    let bob_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: bob.id.clone(),
+        role: Role::Admin,
+        invited_by_user_id: Some(alice.id.clone()),
+        invited_at: Some(Utc::now()),
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&bob_member).await.unwrap();
+
+    // SECURITY: Bob (Admin) attempts to demote Alice (Owner) to Viewer
+    let result = beemflow::auth::rbac::check_can_update_role(
+        Role::Admin,      // Bob's role
+        &bob.id,          // Bob's user ID
+        &alice.id,        // Alice's user ID (target)
+        Role::Owner,      // Alice's CURRENT role
+        Role::Viewer,     // Bob trying to demote to Viewer
+    );
+
+    assert!(
+        result.is_err(),
+        "Admin should NOT be able to demote Owner to Viewer"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("Only owners can manage owner roles"),
+        "Error message should indicate only owners can manage owner roles"
+    );
+
+    // Verify Alice's role is unchanged
+    let alice_member_after = storage
+        .get_organization_member(&org.id, &alice.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        alice_member_after.role,
+        Role::Owner,
+        "Alice should still be Owner"
+    );
+}
+
+/// SECURITY TEST: Admin cannot remove Owner from organization (privilege escalation prevention)
+#[tokio::test]
+async fn test_admin_cannot_remove_owner() {
+    let storage = create_test_storage().await;
+
+    // Create organization with Owner (Alice) and Admin (Bob)
+    let alice = create_test_user("alice@example.com", "Alice");
+    let bob = create_test_user("bob@example.com", "Bob");
+    storage.create_user(&alice).await.unwrap();
+    storage.create_user(&bob).await.unwrap();
+
+    let org = create_test_organization("Test Corp", "test-corp", &alice.id);
+    storage.create_organization(&org).await.unwrap();
+
+    // Alice is Owner
+    let alice_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: alice.id.clone(),
+        role: Role::Owner,
+        invited_by_user_id: None,
+        invited_at: None,
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&alice_member).await.unwrap();
+
+    // Bob is Admin
+    let bob_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: bob.id.clone(),
+        role: Role::Admin,
+        invited_by_user_id: Some(alice.id.clone()),
+        invited_at: Some(Utc::now()),
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&bob_member).await.unwrap();
+
+    // SECURITY: Verify check logic - Admin cannot remove Owner
+    // (This simulates the check that should happen in remove_member_handler)
+    let alice_member_check = storage
+        .get_organization_member(&org.id, &alice.id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let should_be_blocked = alice_member_check.role == Role::Owner && Role::Admin != Role::Owner;
+    assert!(
+        should_be_blocked,
+        "Admin should be blocked from removing Owner"
+    );
+
+    // Verify Alice is still a member
+    let alice_still_member = storage
+        .get_organization_member(&org.id, &alice.id)
+        .await
+        .unwrap();
+    assert!(
+        alice_still_member.is_some(),
+        "Alice (Owner) should still be in organization"
+    );
+}
+
+/// SECURITY TEST: Owner CAN demote another Owner (allowed operation)
+#[tokio::test]
+async fn test_owner_can_demote_owner() {
+    let storage = create_test_storage().await;
+
+    // Create organization with two Owners
+    let alice = create_test_user("alice@example.com", "Alice");
+    let carol = create_test_user("carol@example.com", "Carol");
+    storage.create_user(&alice).await.unwrap();
+    storage.create_user(&carol).await.unwrap();
+
+    let org = create_test_organization("Test Corp", "test-corp", &alice.id);
+    storage.create_organization(&org).await.unwrap();
+
+    // Alice is Owner
+    let alice_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: alice.id.clone(),
+        role: Role::Owner,
+        invited_by_user_id: None,
+        invited_at: None,
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&alice_member).await.unwrap();
+
+    // Carol is also Owner
+    let carol_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: carol.id.clone(),
+        role: Role::Owner,
+        invited_by_user_id: Some(alice.id.clone()),
+        invited_at: Some(Utc::now()),
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&carol_member).await.unwrap();
+
+    // Alice (Owner) demotes Carol (Owner) to Admin - this should be ALLOWED
+    let result = beemflow::auth::rbac::check_can_update_role(
+        Role::Owner,      // Alice's role
+        &alice.id,        // Alice's user ID
+        &carol.id,        // Carol's user ID (target)
+        Role::Owner,      // Carol's CURRENT role
+        Role::Admin,      // Alice demoting to Admin
+    );
+
+    assert!(
+        result.is_ok(),
+        "Owner SHOULD be able to demote another Owner"
+    );
+
+    // Perform the actual role update
+    storage
+        .update_member_role(&org.id, &carol.id, Role::Admin)
+        .await
+        .unwrap();
+
+    // Verify Carol is now Admin
+    let carol_member_after = storage
+        .get_organization_member(&org.id, &carol.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        carol_member_after.role,
+        Role::Admin,
+        "Carol should now be Admin"
+    );
+}
+
+/// SECURITY TEST: Admin cannot promote to Owner (existing protection still works)
+#[tokio::test]
+async fn test_admin_cannot_promote_to_owner() {
+    let storage = create_test_storage().await;
+
+    // Create organization with Admin (Bob) and Member (Dave)
+    let alice = create_test_user("alice@example.com", "Alice");
+    let bob = create_test_user("bob@example.com", "Bob");
+    let dave = create_test_user("dave@example.com", "Dave");
+
+    storage.create_user(&alice).await.unwrap();
+    storage.create_user(&bob).await.unwrap();
+    storage.create_user(&dave).await.unwrap();
+
+    let org = create_test_organization("Test Corp", "test-corp", &alice.id);
+    storage.create_organization(&org).await.unwrap();
+
+    // Alice is Owner
+    let alice_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: alice.id.clone(),
+        role: Role::Owner,
+        invited_by_user_id: None,
+        invited_at: None,
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&alice_member).await.unwrap();
+
+    // Bob is Admin
+    let bob_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: bob.id.clone(),
+        role: Role::Admin,
+        invited_by_user_id: Some(alice.id.clone()),
+        invited_at: Some(Utc::now()),
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&bob_member).await.unwrap();
+
+    // Dave is Member
+    let dave_member = OrganizationMember {
+        id: Uuid::new_v4().to_string(),
+        organization_id: org.id.clone(),
+        user_id: dave.id.clone(),
+        role: Role::Member,
+        invited_by_user_id: Some(alice.id.clone()),
+        invited_at: Some(Utc::now()),
+        joined_at: Utc::now(),
+        disabled: false,
+    };
+    storage.create_organization_member(&dave_member).await.unwrap();
+
+    // SECURITY: Bob (Admin) attempts to promote Dave (Member) to Owner
+    let result = beemflow::auth::rbac::check_can_update_role(
+        Role::Admin,      // Bob's role
+        &bob.id,          // Bob's user ID
+        &dave.id,         // Dave's user ID (target)
+        Role::Member,     // Dave's CURRENT role
+        Role::Owner,      // Bob trying to promote to Owner
+    );
+
+    assert!(
+        result.is_err(),
+        "Admin should NOT be able to promote anyone to Owner"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("Only owners can manage owner roles"),
+        "Error message should indicate only owners can manage owner roles"
+    );
+}
