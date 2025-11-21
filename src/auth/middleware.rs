@@ -5,7 +5,6 @@
 //! 2. JWT middleware (for multi-tenant auth - validates JWTs, resolves tenants)
 
 use super::{AuthContext, JwtClaims, JwtManager, RequestContext};
-use crate::audit::{AuditEvent, AuditLogger};
 use crate::model::OAuthToken;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
@@ -341,7 +340,6 @@ pub fn has_all_scopes(user: &AuthenticatedUser, scopes: &[&str]) -> bool {
 pub struct AuthMiddlewareState {
     pub storage: Arc<dyn Storage>,
     pub jwt_manager: Arc<JwtManager>,
-    pub audit_logger: Option<Arc<AuditLogger>>,
 }
 
 /// Authentication middleware - validates JWT and creates AuthContext
@@ -524,71 +522,4 @@ fn extract_user_agent(req: &Request) -> Option<String> {
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-}
-
-/// Audit logging middleware - logs all authenticated API requests
-///
-/// Automatically logs:
-/// - HTTP method, path, status code
-/// - User, organization, request ID
-/// - Client IP and user agent
-/// - Success/failure status
-///
-/// Should be applied AFTER auth_middleware and organization_middleware
-/// so RequestContext is available.
-pub async fn audit_middleware(
-    State(state): State<Arc<AuthMiddlewareState>>,
-    req: Request,
-    next: Next,
-) -> Response {
-    // Get request context (if authenticated)
-    let req_ctx = req.extensions().get::<RequestContext>().cloned();
-
-    // Extract request details before consuming the request
-    let method = req.method().to_string();
-    let path = req.uri().path().to_string();
-
-    // Execute request
-    let response = next.run(req).await;
-
-    // Log the request if we have an audit logger and request context
-    if let Some(audit_logger) = &state.audit_logger
-        && let Some(ctx) = req_ctx
-    {
-        let status_code = response.status().as_u16() as i32;
-        let success = (200..400).contains(&status_code);
-
-        // Determine action from HTTP method + path
-        let action = format!(
-            "api.{}.{}",
-            method.to_lowercase(),
-            path.trim_start_matches('/').replace('/', ".")
-        );
-
-        // Log asynchronously (don't block response)
-        let logger = audit_logger.clone();
-        tokio::spawn(async move {
-            let _ = logger
-                .log(AuditEvent {
-                    request_id: ctx.request_id.clone(),
-                    organization_id: ctx.organization_id.clone(),
-                    user_id: Some(ctx.user_id.clone()),
-                    client_ip: ctx.client_ip.clone(),
-                    user_agent: ctx.user_agent.clone(),
-                    action,
-                    resource_type: None,
-                    resource_id: None,
-                    resource_name: None,
-                    http_method: Some(method),
-                    http_path: Some(path),
-                    http_status_code: Some(status_code),
-                    success,
-                    error_message: None,
-                    metadata: None,
-                })
-                .await;
-        });
-    }
-
-    response
 }

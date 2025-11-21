@@ -35,9 +35,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
-    LatencyUnit,
     cors::CorsLayer,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    trace::{DefaultMakeSpan, OnResponse, TraceLayer},
 };
 
 /// Application state shared across handlers
@@ -49,7 +48,6 @@ pub struct AppState {
     storage: Arc<dyn crate::storage::Storage>,
     template_renderer: Arc<template::TemplateRenderer>,
     jwt_manager: Arc<crate::auth::JwtManager>,
-    audit_logger: Arc<crate::audit::AuditLogger>,
 }
 
 /// Configuration for which server interfaces to enable
@@ -78,14 +76,20 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_type, message) = match &self.0 {
             BeemFlowError::Validation(msg) => {
+                // Log validation errors (400) at WARN level - these are client errors
+                tracing::warn!("Validation error: {}", msg);
                 (StatusCode::BAD_REQUEST, "validation_error", msg.clone())
             }
             BeemFlowError::Storage(e) => match e {
-                crate::error::StorageError::NotFound { entity, id } => (
-                    StatusCode::NOT_FOUND,
-                    "not_found",
-                    format!("{} not found: {}", entity, id),
-                ),
+                crate::error::StorageError::NotFound { entity, id } => {
+                    // Log 404s at DEBUG level - normal operation
+                    tracing::debug!("{} not found: {}", entity, id);
+                    (
+                        StatusCode::NOT_FOUND,
+                        "not_found",
+                        format!("{} not found: {}", entity, id),
+                    )
+                }
                 _ => {
                     // Log full error details internally
                     tracing::error!("Storage error: {:?}", e);
@@ -105,9 +109,21 @@ impl IntoResponse for AppError {
                     "A step execution error occurred".to_string(),
                 )
             }
-            BeemFlowError::OAuth(msg) => (StatusCode::UNAUTHORIZED, "auth_error", msg.clone()),
-            BeemFlowError::Adapter(msg) => (StatusCode::BAD_GATEWAY, "adapter_error", msg.clone()),
-            BeemFlowError::Mcp(msg) => (StatusCode::BAD_GATEWAY, "mcp_error", msg.clone()),
+            BeemFlowError::OAuth(msg) => {
+                // Log auth errors (401) at WARN level - could indicate attack or misconfiguration
+                tracing::warn!("OAuth/authentication error: {}", msg);
+                (StatusCode::UNAUTHORIZED, "auth_error", msg.clone())
+            }
+            BeemFlowError::Adapter(msg) => {
+                // Log adapter errors at ERROR level - these are external service issues
+                tracing::error!("Adapter error: {}", msg);
+                (StatusCode::BAD_GATEWAY, "adapter_error", msg.clone())
+            }
+            BeemFlowError::Mcp(msg) => {
+                // Log MCP errors at ERROR level
+                tracing::error!("MCP error: {}", msg);
+                (StatusCode::BAD_GATEWAY, "mcp_error", msg.clone())
+            }
             BeemFlowError::Network(e) => {
                 // Log full error details internally
                 tracing::error!("Network error: {:?}", e);
@@ -127,14 +143,6 @@ impl IntoResponse for AppError {
                 )
             }
         };
-
-        // Log the sanitized error response
-        tracing::debug!(
-            error_type = error_type,
-            status = %status,
-            message = %message,
-            "HTTP request error response"
-        );
 
         let body = json!({
             "error": {
@@ -233,6 +241,53 @@ fn validate_frontend_url(url: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Custom response handler that logs HTTP errors with full context
+///
+/// Logs all 4xx and 5xx responses at appropriate levels with method, path, and status code.
+/// This captures routing errors (like 405 Method Not Allowed) that happen at the Axum layer.
+#[derive(Clone)]
+struct ErrorAwareResponseLogger;
+
+impl<B> OnResponse<B> for ErrorAwareResponseLogger {
+    fn on_response(
+        self,
+        response: &axum::http::Response<B>,
+        latency: std::time::Duration,
+        span: &tracing::Span,
+    ) {
+        let status = response.status();
+        let latency_micros = latency.as_micros();
+
+        // Get method and path from span context if available
+        span.in_scope(|| {
+            if status.is_client_error() {
+                // 4xx errors - log at WARN (client-side issues)
+                tracing::warn!(
+                    status = %status,
+                    status_code = status.as_u16(),
+                    latency_us = latency_micros,
+                    "HTTP client error"
+                );
+            } else if status.is_server_error() {
+                // 5xx errors - log at ERROR (our bugs/issues)
+                tracing::error!(
+                    status = %status,
+                    status_code = status.as_u16(),
+                    latency_us = latency_micros,
+                    "HTTP server error"
+                );
+            } else {
+                // Success responses - log at DEBUG to reduce noise
+                tracing::debug!(
+                    status = %status,
+                    latency_us = latency_micros,
+                    "HTTP response"
+                );
+            }
+        });
+    }
 }
 
 /// Middleware to detect HTTPS from X-Forwarded-Proto header when behind a reverse proxy
@@ -371,7 +426,6 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     ));
 
     // Initialize audit logger
-    let audit_logger = Arc::new(crate::audit::AuditLogger::new(dependencies.storage.clone()));
 
     let state = AppState {
         registry,
@@ -380,7 +434,6 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         storage: dependencies.storage.clone(),
         template_renderer,
         jwt_manager,
-        audit_logger,
     };
 
     // Create OAuth server state
@@ -523,13 +576,13 @@ fn build_router(
     }
 
     // AUTH routes (always enabled - required for multi-tenant)
+    // Nested under /api for consistency with all other API routes
     let auth_state = Arc::new(crate::auth::AuthState {
         storage: state.storage.clone(),
         jwt_manager: state.jwt_manager.clone(),
-        audit_logger: state.audit_logger.clone(),
     });
     let auth_routes = crate::auth::create_auth_routes(auth_state);
-    app = app.merge(auth_routes);
+    app = app.nest("/api", auth_routes);
 
     // OAuth CLIENT routes (split into public callbacks and protected endpoints)
     let oauth_client_state = Arc::new(OAuthClientState {
@@ -550,7 +603,6 @@ fn build_router(
     let auth_middleware_state = Arc::new(crate::auth::AuthMiddlewareState {
         storage: state.storage.clone(),
         jwt_manager: state.jwt_manager.clone(),
-        audit_logger: Some(state.audit_logger.clone()),
     });
 
     // Apply auth middleware conditionally based on single_user mode
@@ -561,10 +613,6 @@ fn build_router(
     } else {
         // Multi-tenant mode: Full auth + tenant + audit middleware
         create_protected_oauth_client_routes(oauth_client_state)
-            .layer(axum::middleware::from_fn_with_state(
-                auth_middleware_state.clone(),
-                crate::auth::audit_middleware,
-            ))
             .layer(axum::middleware::from_fn_with_state(
                 auth_middleware_state.clone(),
                 crate::auth::organization_middleware,
@@ -582,10 +630,6 @@ fn build_router(
             .layer(axum::middleware::from_fn(single_user_context_middleware))
     } else {
         crate::auth::create_management_routes(state.storage.clone())
-            .layer(axum::middleware::from_fn_with_state(
-                auth_middleware_state.clone(),
-                crate::auth::audit_middleware,
-            ))
             .layer(axum::middleware::from_fn_with_state(
                 auth_middleware_state.clone(),
                 crate::auth::organization_middleware,
@@ -632,10 +676,6 @@ fn build_router(
             create_mcp_routes(mcp_state)
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
-                    crate::auth::audit_middleware,
-                ))
-                .layer(axum::middleware::from_fn_with_state(
-                    auth_middleware_state.clone(),
                     crate::auth::organization_middleware,
                 ))
                 .layer(axum::middleware::from_fn_with_state(
@@ -669,10 +709,6 @@ fn build_router(
             // Note: Layers are applied in reverse order (last = first to execute)
             build_operation_routes(&state)
                 // Third: Log audit events after request completion
-                .layer(axum::middleware::from_fn_with_state(
-                    auth_middleware_state.clone(),
-                    crate::auth::audit_middleware,
-                ))
                 // Second: Resolve organization and create full RequestContext
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
@@ -739,15 +775,15 @@ fn build_router(
             }))
             // Session middleware for OAuth flows and authenticated requests
             .layer(axum::middleware::from_fn(session::session_middleware))
-            // Tracing layer for request/response logging
+            // Tracing layer for request/response logging with error-aware handler
             .layer(
                 TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().include_headers(true))
-                    .on_response(
-                        DefaultOnResponse::new()
+                    .make_span_with(
+                        DefaultMakeSpan::new()
                             .level(tracing::Level::INFO)
-                            .latency_unit(LatencyUnit::Micros),
-                    ),
+                            .include_headers(false) // Don't log headers by default (may contain secrets)
+                    )
+                    .on_response(ErrorAwareResponseLogger),
             )
             // CORS layer for cross-origin requests
             .layer({

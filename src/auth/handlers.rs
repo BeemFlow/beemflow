@@ -9,12 +9,10 @@ use super::{
     jwt::JwtManager,
     password::{hash_password, validate_password_strength, verify_password},
 };
-use crate::audit::{AuditEvent, AuditLogger, actions};
-use crate::constants::DEFAULT_ORGANIZATION_ID;
 use crate::http::AppError;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{Json, Router, extract::{FromRequest, Request, State}, http::StatusCode, response::IntoResponse, routing::post};
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -24,7 +22,6 @@ use uuid::Uuid;
 pub struct AuthState {
     pub storage: Arc<dyn Storage>,
     pub jwt_manager: Arc<JwtManager>,
-    pub audit_logger: Arc<AuditLogger>,
 }
 
 /// Create authentication router
@@ -40,8 +37,13 @@ pub fn create_auth_routes(state: Arc<AuthState>) -> Router {
 /// POST /auth/register - Register new user and create default organization
 async fn register(
     State(state): State<Arc<AuthState>>,
-    Json(req): Json<RegisterRequest>,
+    request: Request,
 ) -> std::result::Result<Json<LoginResponse>, AppError> {
+    // Extract JSON body
+    let (parts, body) = request.into_parts();
+    let request_for_json = Request::from_parts(parts, body);
+    let Json(req) = Json::<RegisterRequest>::from_request(request_for_json, &()).await
+        .map_err(|e| BeemFlowError::validation(format!("Invalid request body: {}", e)))?;
     // 1. Validate email format
     if !is_valid_email(&req.email) {
         return Err(BeemFlowError::validation("Invalid email address").into());
@@ -125,29 +127,7 @@ async fn register(
     let (access_token, refresh_token_str) =
         generate_tokens(&state, &user_id, &req.email, None).await?;
 
-    // 9. Log registration
-    let _ = state
-        .audit_logger
-        .log(AuditEvent {
-            request_id: Uuid::new_v4().to_string(),
-            organization_id: organization_id.clone(),
-            user_id: Some(user_id.clone()),
-            client_ip: None,
-            user_agent: None,
-            action: actions::USER_REGISTER.to_string(),
-            resource_type: Some("user".to_string()),
-            resource_id: Some(user_id.clone()),
-            resource_name: Some(req.email.clone()),
-            http_method: Some("POST".to_string()),
-            http_path: Some("/auth/register".to_string()),
-            http_status_code: Some(200),
-            success: true,
-            error_message: None,
-            metadata: None,
-        })
-        .await;
-
-    // 10. Return login response
+    // 9. Return login response
     Ok(Json(LoginResponse {
         access_token,
         refresh_token: refresh_token_str,
@@ -181,28 +161,6 @@ async fn login(
 
     // 2. Verify password
     if !verify_password(&login_req.password, &user.password_hash)? {
-        // Log failed login attempt
-        let _ = state
-            .audit_logger
-            .log(AuditEvent {
-                request_id: Uuid::new_v4().to_string(),
-                organization_id: DEFAULT_ORGANIZATION_ID.to_string(),
-                user_id: Some(user.id.clone()),
-                client_ip: None,
-                user_agent: None,
-                action: actions::USER_LOGIN.to_string(),
-                resource_type: Some("user".to_string()),
-                resource_id: Some(user.id.clone()),
-                resource_name: Some(user.email.clone()),
-                http_method: Some("POST".to_string()),
-                http_path: Some("/auth/login".to_string()),
-                http_status_code: Some(401),
-                success: false,
-                error_message: Some("Invalid credentials".to_string()),
-                metadata: None,
-            })
-            .await;
-
         return Err(BeemFlowError::OAuth("Invalid credentials".into()).into());
     }
 
@@ -229,29 +187,7 @@ async fn login(
     )
     .await?;
 
-    // 7. Log successful login
-    let _ = state
-        .audit_logger
-        .log(AuditEvent {
-            request_id: Uuid::new_v4().to_string(),
-            organization_id: organization.id.clone(),
-            user_id: Some(user.id.clone()),
-            client_ip: None,
-            user_agent: None,
-            action: actions::USER_LOGIN.to_string(),
-            resource_type: Some("user".to_string()),
-            resource_id: Some(user.id.clone()),
-            resource_name: Some(user.email.clone()),
-            http_method: Some("POST".to_string()),
-            http_path: Some("/auth/login".to_string()),
-            http_status_code: Some(200),
-            success: true,
-            error_message: None,
-            metadata: None,
-        })
-        .await;
-
-    // 9. Return response
+    // 7. Return response
     Ok(Json(LoginResponse {
         access_token,
         refresh_token: refresh_token_str,
@@ -329,28 +265,6 @@ async fn refresh(
         .update_refresh_token_last_used(&token_hash)
         .await?;
 
-    // 8. Log token refresh (organization_id empty - refresh is user-scoped, not organization-scoped)
-    let _ = state
-        .audit_logger
-        .log(AuditEvent {
-            request_id: Uuid::new_v4().to_string(),
-            organization_id: String::new(), // Refresh is user-scoped
-            user_id: Some(refresh_token.user_id.clone()),
-            client_ip: refresh_token.client_ip.clone(),
-            user_agent: refresh_token.user_agent.clone(),
-            action: actions::TOKEN_REFRESH.to_string(),
-            resource_type: Some("token".to_string()),
-            resource_id: Some(refresh_token.id),
-            resource_name: None,
-            http_method: Some("POST".to_string()),
-            http_path: Some("/auth/refresh".to_string()),
-            http_status_code: Some(200),
-            success: true,
-            error_message: None,
-            metadata: None,
-        })
-        .await;
-
     Ok(Json(json!({
         "access_token": access_token,
         "expires_in": 900,
@@ -364,32 +278,9 @@ async fn logout(
 ) -> std::result::Result<StatusCode, AppError> {
     let token_hash = hash_token(&req.refresh_token);
 
-    // Get token info before revoking (for audit log)
-    if let Ok(Some(token)) = state.storage.get_refresh_token(&token_hash).await {
-        // Revoke token
+    // Revoke token if it exists
+    if state.storage.get_refresh_token(&token_hash).await?.is_some() {
         state.storage.revoke_refresh_token(&token_hash).await?;
-
-        // Log logout
-        let _ = state
-            .audit_logger
-            .log(AuditEvent {
-                request_id: Uuid::new_v4().to_string(),
-                organization_id: String::new(), // Logout is user-scoped, not organization-specific
-                user_id: Some(token.user_id),
-                client_ip: token.client_ip,
-                user_agent: token.user_agent,
-                action: actions::USER_LOGOUT.to_string(),
-                resource_type: Some("token".to_string()),
-                resource_id: Some(token.id),
-                resource_name: None,
-                http_method: Some("POST".to_string()),
-                http_path: Some("/auth/logout".to_string()),
-                http_status_code: Some(204),
-                success: true,
-                error_message: None,
-                metadata: None,
-            })
-            .await;
     }
 
     Ok(StatusCode::NO_CONTENT)

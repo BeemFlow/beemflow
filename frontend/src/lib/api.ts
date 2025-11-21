@@ -25,7 +25,6 @@ import type {
   User,
   Organization,
   OrganizationMember,
-  AuditLog,
 } from '../types/beemflow';
 
 // API base URL - defaults to /api prefix for proxied requests
@@ -254,15 +253,6 @@ class BeemFlowAPI {
   // Audit Logs
   // ============================================================================
 
-  async listAuditLogs(params?: {
-    limit?: number;
-    offset?: number;
-    user_id?: string;
-    action?: string;
-  }): Promise<{ logs: AuditLog[]; total: number }> {
-    const response = await this.client.get<AuditLog[]>('/v1/audit-logs', { params });
-    return { logs: response.data, total: response.data.length };
-  }
 
   // ============================================================================
   // Flows

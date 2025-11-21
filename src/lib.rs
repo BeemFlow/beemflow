@@ -53,7 +53,6 @@ pub mod dsl;
 pub mod engine;
 
 // Infrastructure
-pub mod audit;
 pub mod blob;
 pub mod config;
 pub mod cron;

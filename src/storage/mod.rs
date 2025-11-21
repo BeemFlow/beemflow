@@ -457,19 +457,7 @@ pub trait AuthStorage: Send + Sync {
     /// Update refresh token's last used timestamp
     async fn update_refresh_token_last_used(&self, token_hash: &str) -> Result<()>;
 
-    // Audit log methods
-    /// Create audit log entry
-    async fn create_audit_log(&self, log: &crate::audit::AuditLog) -> Result<()>;
-
-    /// List audit logs for an organization
-    async fn list_audit_logs(
-        &self,
-        organization_id: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<crate::audit::AuditLog>>;
 }
-
 /// Complete storage trait combining all focused storage traits
 ///
 /// This trait provides the full storage interface by composing all focused traits.

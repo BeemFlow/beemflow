@@ -27,8 +27,6 @@ async fn create_test_state() -> AppState {
         chrono::Duration::minutes(15),
     ));
 
-    let audit_logger = Arc::new(crate::audit::AuditLogger::new(storage.clone()));
-
     AppState {
         registry,
         session_store,
@@ -36,7 +34,6 @@ async fn create_test_state() -> AppState {
         storage,
         template_renderer,
         jwt_manager,
-        audit_logger,
     }
 }
 

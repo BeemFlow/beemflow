@@ -381,19 +381,3 @@ export interface LoginResponse {
   organization: Organization & { role: string };
 }
 
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  action: string;
-  user_id?: string;
-  resource_type?: string;
-  resource_id?: string;
-  resource_name?: string;
-  http_method?: string;
-  http_path?: string;
-  http_status_code?: number;
-  success: boolean;
-  error_message?: string;
-  client_ip?: string;
-  user_agent?: string;
-}

@@ -8,7 +8,6 @@ use super::{
     rbac::check_permission,
 };
 use crate::BeemFlowError;
-use crate::audit::AuditLog;
 use crate::http::AppError;
 use crate::storage::Storage;
 use axum::{
@@ -523,50 +522,6 @@ async fn remove_member_handler(
 }
 
 // ============================================================================
-// Audit Log Handlers
-// ============================================================================
-
-/// GET /v1/audit-logs - List audit logs for current organization
-#[allow(dead_code)]
-async fn list_audit_logs_handler(
-    State(storage): State<Arc<dyn Storage>>,
-    req: axum::http::Request<axum::body::Body>,
-) -> Result<Json<Vec<AuditLog>>, AppError> {
-    let req_ctx = req
-        .extensions()
-        .get::<RequestContext>()
-        .cloned()
-        .ok_or_else(|| BeemFlowError::validation("Unauthorized"))?;
-
-    check_permission(&req_ctx, Permission::AuditLogsRead)?;
-
-    // Manually parse query parameters from URI
-    let uri = req.uri();
-    let query_pairs: std::collections::HashMap<_, _> = uri
-        .query()
-        .map(|v| url::form_urlencoded::parse(v.as_bytes()).collect())
-        .unwrap_or_default();
-
-    let limit = query_pairs
-        .get("limit")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(100)
-        .min(1000) as usize;
-
-    let offset = query_pairs
-        .get("offset")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0) as usize;
-
-    let logs = storage
-        .list_audit_logs(&req_ctx.organization_id, limit, offset)
-        .await?;
-
-    Ok(Json(logs))
-}
-
-// ============================================================================
-// Router Construction
 // ============================================================================
 
 /// Create management routes for user/organization/member/audit management

@@ -368,7 +368,6 @@ pub use middleware::{
     AuthenticatedUser,
     OAuthMiddlewareState,
     RequiredScopes,
-    audit_middleware,
     auth_middleware,
     has_all_scopes,
     has_any_scope,
