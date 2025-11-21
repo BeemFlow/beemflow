@@ -234,7 +234,12 @@ fn to_snake_case(s: &str) -> String {
             if !result.is_empty() {
                 result.push('_');
             }
-            result.push(ch.to_lowercase().next().unwrap());
+            // Safe: to_lowercase() always returns at least one character
+            if let Some(lowercase) = ch.to_lowercase().next() {
+                result.push(lowercase);
+            } else {
+                result.push(ch);
+            }
         } else {
             result.push(ch);
         }
@@ -246,10 +251,9 @@ fn to_snake_case(s: &str) -> String {
 /// Parse HTTP method and path from string like "GET /flows/{name}"
 fn parse_http_route(http: &str) -> (String, String) {
     let parts: Vec<&str> = http.splitn(2, ' ').collect();
-    if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        ("GET".to_string(), http.to_string())
+    match (parts.first(), parts.get(1)) {
+        (Some(&method), Some(&path)) => (method.to_string(), path.to_string()),
+        _ => ("GET".to_string(), http.to_string()),
     }
 }
 
@@ -299,6 +303,7 @@ fn generate_http_route_method(
             }
         } else if path_params.len() == 1 && (http_method == "GET" || http_method == "DELETE") {
             // Single path param with GET/DELETE - construct input from path param only
+            #[allow(clippy::indexing_slicing)] // Safe: checked path_params.len() == 1 above
             let param = &path_params[0];
             let param_ident = Ident::new(param, Span::call_site());
             (
@@ -317,7 +322,8 @@ fn generate_http_route_method(
                 .map(|p| Ident::new(p, Span::call_site()))
                 .collect();
 
-            let extractor = if path_params.len() == 1 {
+            let extractor = if param_idents.len() == 1 {
+                #[allow(clippy::indexing_slicing)] // Safe: checked param_idents.len() == 1
                 let param = &param_idents[0];
                 quote! {
                     axum::extract::Path(#param): axum::extract::Path<String>,

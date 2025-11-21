@@ -436,6 +436,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     // Set up graceful shutdown signal handler
     let shutdown_signal = async {
         // Wait for SIGTERM (Docker/Kubernetes) or SIGINT (Ctrl+C)
+        #[allow(clippy::expect_used)] // Signal handler installation should fail-fast
         let ctrl_c = async {
             tokio::signal::ctrl_c()
                 .await
@@ -443,6 +444,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         };
 
         #[cfg(unix)]
+        #[allow(clippy::expect_used)] // Signal handler installation should fail-fast
         let terminate = async {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 .expect("failed to install SIGTERM signal handler")
@@ -752,6 +754,7 @@ fn build_router(
                 use axum::http::HeaderValue;
 
                 // Build allowed origins based on deployment mode
+                #[allow(clippy::expect_used)] // Hardcoded localhost/127.0.0.1 URLs are always valid
                 let allowed_origins: Vec<HeaderValue> =
                     if let Some(origins) = &http_config.allowed_origins {
                         // Explicit origins configured - use those

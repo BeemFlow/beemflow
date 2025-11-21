@@ -87,9 +87,22 @@ impl AsRef<str> for FlowName {
     }
 }
 
+// For test/debug builds: provide From<String> for convenience (.into())
+// For production builds: provide TryFrom<String> for safety (.try_into()?)
+#[cfg(any(test, debug_assertions))]
+#[allow(clippy::expect_used)] // Test-only convenience trait
 impl From<String> for FlowName {
     fn from(name: String) -> Self {
-        Self::new(name).expect("Invalid flow name")
+        Self::new(name).expect("Invalid flow name in test code")
+    }
+}
+
+#[cfg(not(any(test, debug_assertions)))]
+impl TryFrom<String> for FlowName {
+    type Error = crate::BeemFlowError;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::new(name)
     }
 }
 
@@ -178,9 +191,22 @@ impl AsRef<str> for StepId {
     }
 }
 
+// For test/debug builds: provide From<String> for convenience (.into())
+// For production builds: provide TryFrom<String> for safety (.try_into()?)
+#[cfg(any(test, debug_assertions))]
+#[allow(clippy::expect_used)] // Test-only convenience trait
 impl From<String> for StepId {
     fn from(id: String) -> Self {
-        Self::new(id).expect("Invalid step ID")
+        Self::new(id).expect("Invalid step ID in test code")
+    }
+}
+
+#[cfg(not(any(test, debug_assertions)))]
+impl TryFrom<String> for StepId {
+    type Error = crate::BeemFlowError;
+
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        Self::new(id)
     }
 }
 
@@ -303,10 +329,12 @@ impl Flow {
 }
 
 // Allow Default for struct update syntax in tests, but with validation
+#[allow(clippy::expect_used)] // Default uses hardcoded valid flow name
 impl Default for Flow {
     fn default() -> Self {
         Self {
-            name: FlowName::from("default_flow".to_string()),
+            name: FlowName::new("default_flow".to_string())
+                .expect("hardcoded default_flow is valid"),
             description: None,
             version: None,
             on: Trigger::Single("cli.manual".to_string()),
@@ -436,10 +464,12 @@ impl Step {
 }
 
 // Allow Default for struct update syntax in tests, but with validation
+#[allow(clippy::expect_used)] // Default uses hardcoded valid step ID
 impl Default for Step {
     fn default() -> Self {
         Self {
-            id: StepId::from("default_step_id".to_string()),
+            id: StepId::new("default_step_id".to_string())
+                .expect("hardcoded default_step_id is valid"),
             use_: None,
             with: None,
             depends_on: None,

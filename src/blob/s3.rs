@@ -123,15 +123,16 @@ impl BlobStore for S3BlobStore {
         let url_parts = &url[5..]; // Remove "s3://"
         let parts: Vec<&str> = url_parts.splitn(2, '/').collect();
 
-        if parts.len() != 2 {
-            return Err(BeemFlowError::validation(format!(
-                "invalid S3 URL format: {}",
-                url
-            )));
-        }
-
-        let bucket = parts[0];
-        let key = parts[1];
+        // Use pattern matching instead of length check + indexing
+        let (bucket, key) = match parts.as_slice() {
+            [b, k] => (*b, *k),
+            _ => {
+                return Err(BeemFlowError::validation(format!(
+                    "invalid S3 URL format: {}",
+                    url
+                )));
+            }
+        };
 
         // Verify bucket matches configured bucket
         if bucket != self.bucket {

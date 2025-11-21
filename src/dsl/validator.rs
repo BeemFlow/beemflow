@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 const BEEMFLOW_SCHEMA: &str = include_str!("../../docs/beemflow.schema.json");
 
 /// Cached compiled JSON Schema
+#[allow(clippy::expect_used)] // Static schema compilation should fail-fast on invalid schema
 static SCHEMA: Lazy<jsonschema::Validator> = Lazy::new(|| {
     let schema_value: serde_json::Value =
         serde_json::from_str(BEEMFLOW_SCHEMA).expect("Failed to parse embedded BeemFlow schema");
@@ -21,6 +22,7 @@ static SCHEMA: Lazy<jsonschema::Validator> = Lazy::new(|| {
 });
 
 /// Cached identifier validation regex
+#[allow(clippy::expect_used)] // Static regex compilation should fail-fast on invalid pattern
 static IDENTIFIER_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").expect("Hardcoded identifier regex pattern is invalid")
 });
@@ -198,13 +200,13 @@ impl Validator {
         }
 
         // Foreach must have 'as' and 'do'
-        if step.foreach.is_some() {
-            if step.as_.is_none() {
+        if let Some(foreach_expr) = &step.foreach {
+            let Some(as_field) = &step.as_ else {
                 return Err(BeemFlowError::validation(format!(
                     "Foreach step '{}' must have 'as' field",
                     step.id
                 )));
-            }
+            };
             if step.do_.is_none() {
                 return Err(BeemFlowError::validation(format!(
                     "Foreach step '{}' must have 'do' field",
@@ -213,11 +215,6 @@ impl Validator {
             }
 
             // Validate foreach expression is templated
-            // Safe: We already verified step.foreach.is_some() above
-            let foreach_expr = step
-                .foreach
-                .as_ref()
-                .expect("foreach field must be Some, checked above");
             if !Self::is_template_syntax(foreach_expr) {
                 return Err(BeemFlowError::validation(format!(
                     "Foreach expression in step '{}' should use template syntax: {{ }} ",
@@ -226,11 +223,6 @@ impl Validator {
             }
 
             // Validate 'as' is a valid identifier
-            // Safe: We already verified step.as_.is_some() in the check above
-            let as_field = step
-                .as_
-                .as_ref()
-                .expect("as_ field must be Some, checked above");
             Self::validate_identifier(as_field)?;
 
             // Cannot have 'use' with foreach

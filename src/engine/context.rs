@@ -201,11 +201,10 @@ pub fn is_valid_identifier(s: &str) -> bool {
         return false;
     }
 
-    // Safe: We already checked that s is not empty above
-    let first = s
-        .chars()
-        .next()
-        .expect("string is not empty after length check");
+    // Use safe pattern matching instead of expect
+    let Some(first) = s.chars().next() else {
+        return false; // Empty string is not a valid identifier
+    };
     if !first.is_alphabetic() && first != '_' {
         return false;
     }

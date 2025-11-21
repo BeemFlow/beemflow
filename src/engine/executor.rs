@@ -215,12 +215,11 @@ impl Executor {
         let sorted_start_idx = if start_idx == 0 {
             // Fresh run - start from beginning of sorted list
             0
-        } else if start_idx < flow.steps.len() {
+        } else if let Some(start_step) = flow.steps.get(start_idx) {
             // Resumed run - find the step to resume from in sorted order
-            let start_step_id = &flow.steps[start_idx].id;
             sorted_ids
                 .iter()
-                .position(|id| id.as_str() == start_step_id.as_str())
+                .position(|id| id.as_str() == start_step.id.as_str())
                 .unwrap_or(0)
         } else {
             return Ok(step_ctx.snapshot().outputs);

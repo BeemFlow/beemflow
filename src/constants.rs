@@ -249,10 +249,10 @@ pub const HTTP_PATH_RUNS: &str = "/runs";
 pub const HTTP_PATH_RUNS_INLINE: &str = "/runs/inline";
 
 /// HTTP path: runs by ID
-pub const HTTP_PATH_RUNS_BY_ID: &str = "/runs/:id";
+pub const HTTP_PATH_RUNS_BY_ID: &str = "/runs/{id}";
 
 /// HTTP path: runs resume
-pub const HTTP_PATH_RUNS_RESUME: &str = "/runs/:id/resume";
+pub const HTTP_PATH_RUNS_RESUME: &str = "/runs/{id}/resume";
 
 /// HTTP path: events
 pub const HTTP_PATH_EVENTS: &str = "/events";

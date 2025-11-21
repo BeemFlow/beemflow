@@ -33,7 +33,7 @@ impl PostgresStorage {
     fn parse_run(row: &PgRow) -> Result<Run> {
         Ok(Run {
             id: row.try_get("id")?,
-            flow_name: row.try_get::<String, _>("flow_name")?.into(),
+            flow_name: FlowName::new(row.try_get::<String, _>("flow_name")?)?,
             event: parse_hashmap_from_jsonb(row.try_get("event")?),
             vars: parse_hashmap_from_jsonb(row.try_get("vars")?),
             status: parse_run_status(&row.try_get::<String, _>("status")?),
@@ -51,7 +51,7 @@ impl PostgresStorage {
         Ok(StepRun {
             id: row.try_get("id")?,
             run_id: row.try_get("run_id")?,
-            step_name: row.try_get::<String, _>("step_name")?.into(),
+            step_name: StepId::new(row.try_get::<String, _>("step_name")?)?,
             status: parse_step_status(&row.try_get::<String, _>("status")?),
             started_at: row.try_get("started_at")?,
             ended_at: row.try_get("ended_at")?,

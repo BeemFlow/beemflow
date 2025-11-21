@@ -84,7 +84,7 @@ impl SqliteStorage {
     fn parse_run(row: &SqliteRow) -> Result<Run> {
         Ok(Run {
             id: Uuid::parse_str(&row.try_get::<String, _>("id")?)?,
-            flow_name: row.try_get::<String, _>("flow_name")?.into(),
+            flow_name: FlowName::new(row.try_get::<String, _>("flow_name")?)?,
             event: serde_json::from_str(&row.try_get::<String, _>("event")?)?,
             vars: serde_json::from_str(&row.try_get::<String, _>("vars")?)?,
             status: parse_run_status(&row.try_get::<String, _>("status")?),
@@ -103,7 +103,7 @@ impl SqliteStorage {
         Ok(StepRun {
             id: Uuid::parse_str(&row.try_get::<String, _>("id")?)?,
             run_id: Uuid::parse_str(&row.try_get::<String, _>("run_id")?)?,
-            step_name: row.try_get::<String, _>("step_name")?.into(),
+            step_name: StepId::new(row.try_get::<String, _>("step_name")?)?,
             status: parse_step_status(&row.try_get::<String, _>("status")?),
             started_at: DateTime::from_timestamp_millis(row.try_get("started_at")?)
                 .unwrap_or_else(Utc::now),

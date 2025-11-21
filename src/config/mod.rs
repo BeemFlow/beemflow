@@ -833,6 +833,7 @@ pub fn validate_config(raw: &[u8]) -> Result<()> {
     use once_cell::sync::Lazy;
 
     // Embedded config schema - loaded once at startup
+    #[allow(clippy::expect_used)] // Static schema compilation should fail-fast on invalid schema
     static CONFIG_SCHEMA: Lazy<jsonschema::Validator> = Lazy::new(|| {
         // For config validation, we use a simplified schema that checks required fields
         // The full BeemFlow schema is used for flow validation in dsl/validator.rs
@@ -1144,6 +1145,7 @@ fn expand_env_value_at_config_time(value: &str) -> String {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
+    #[allow(clippy::expect_used)] // Static regex compilation should fail-fast on invalid pattern
     static ENV_VAR_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"\$env:([A-Za-z_][A-Za-z0-9_]*)").expect("Invalid environment variable regex")
     });

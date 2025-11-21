@@ -566,6 +566,7 @@ impl OAuthClientManager {
 /// Helper function to reduce boilerplate when creating OAuthClientManager instances
 /// in tests and test helpers (Engine::for_testing, TestEnvironment, etc).
 /// Uses standard test configuration with localhost:3000 redirect URI.
+#[allow(clippy::expect_used)] // Test helper function, expects should fail-fast
 pub fn create_test_oauth_client(
     storage: Arc<dyn Storage>,
     secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,

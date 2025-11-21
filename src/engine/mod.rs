@@ -739,6 +739,7 @@ impl Engine {
     /// which initializes the engine with proper configuration.
     ///
     /// For tests that need isolated environments, use `beemflow::utils::TestEnvironment` instead.
+    #[allow(clippy::expect_used)] // Test helper function, expects should fail-fast
     pub async fn for_testing() -> Self {
         let storage = crate::storage::SqliteStorage::new(":memory:")
             .await

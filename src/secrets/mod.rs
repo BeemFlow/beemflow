@@ -160,6 +160,7 @@ pub trait SecretsProvider: Send + Sync {
 pub async fn expand_value(value: &str, provider: &Arc<dyn SecretsProvider>) -> Result<String> {
     // Pattern matches $env:VARNAME format where VARNAME starts with letter/underscore
     // followed by alphanumeric/underscore characters
+    #[allow(clippy::expect_used)] // Static regex compilation should fail-fast on invalid pattern
     static ENV_VAR_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"\$env:([A-Za-z_][A-Za-z0-9_]*)").expect("Invalid environment variable regex")
     });

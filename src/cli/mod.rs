@@ -294,14 +294,10 @@ fn add_operation_commands(mut app: Command, registry: &OperationRegistry) -> Com
             if let Some(cli_pattern) = meta.cli_pattern {
                 // cli_pattern has 'static lifetime, so words do too
                 let words: Vec<&'static str> = cli_pattern.split_whitespace().collect();
-                let subcmd_name = if words.len() > 1 {
-                    words[1]
-                } else if !words.is_empty() {
-                    words[0]
-                } else {
-                    // Empty cli_pattern - use a static default
-                    // (This should never happen with valid config, but be defensive)
-                    "operation"
+                let subcmd_name = match words.as_slice() {
+                    [] => "operation", // Empty pattern - defensive default
+                    [single] => single,
+                    [_, second, ..] => second,
                 };
 
                 let cmd = build_operation_command(op_name, meta, subcmd_name);
@@ -561,6 +557,7 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
     }
 
     // Get host and port (CLI overrides config)
+    #[allow(clippy::expect_used)] // CLI arg has default value, this is guaranteed by clap
     let host = matches
         .get_one::<String>("host")
         .expect("host argument has default value");
@@ -648,6 +645,7 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
 
     match matches.subcommand() {
         Some(("create-client", sub)) => {
+            #[allow(clippy::expect_used)] // Required CLI arg, guaranteed by clap
             let name = sub
                 .get_one::<String>("name")
                 .expect("name argument is required by clap");
@@ -707,6 +705,7 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
             }
         }
         Some(("revoke-client", sub)) => {
+            #[allow(clippy::expect_used)] // Required CLI arg, guaranteed by clap
             let client_id = sub
                 .get_one::<String>("client-id")
                 .expect("client-id argument is required by clap");

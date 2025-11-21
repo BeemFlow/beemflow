@@ -606,7 +606,7 @@ pub fn create_management_routes(storage: Arc<dyn Storage>) -> Router {
             get(list_members_handler).post(invite_member_handler),
         )
         .route(
-            "/v1/organizations/current/members/:user_id",
+            "/v1/organizations/current/members/{user_id}",
             put(update_member_role_handler).delete(remove_member_handler),
         )
         // Audit logs (TODO: Add back after fixing handler trait issue)

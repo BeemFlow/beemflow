@@ -1,6 +1,11 @@
 //! Utility functions and helpers
 //!
 //! Common utilities used throughout BeemFlow.
+//!
+//! This module contains primarily test infrastructure, so we allow
+//! unwrap/expect for convenience in test helper functions.
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
 
 use crate::config::{BlobConfig, Config};
 use crate::storage::SqliteStorage;

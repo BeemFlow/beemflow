@@ -10,6 +10,7 @@ use prometheus::{
 };
 
 /// HTTP requests total counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_http_requests_total",
@@ -20,6 +21,7 @@ static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
 });
 
 /// HTTP request duration histogram
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new(
@@ -32,6 +34,7 @@ static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 });
 
 /// Flow execution counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static FLOW_EXECUTIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_flow_executions_total",
@@ -42,6 +45,7 @@ static FLOW_EXECUTIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
 });
 
 /// Flow execution duration histogram
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static FLOW_EXECUTION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new(
@@ -54,6 +58,7 @@ static FLOW_EXECUTION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 });
 
 /// Step execution counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static STEP_EXECUTIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_step_executions_total",

@@ -357,6 +357,7 @@ pub mod system {
                 let path = http_path;
 
                 // Get or create path item
+                #[allow(clippy::expect_used)] // Just inserted a JSON object, must be an object
                 let path_item = paths
                     .entry(path.to_string())
                     .or_insert_with(|| serde_json::json!({}))

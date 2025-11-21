@@ -521,11 +521,20 @@ impl EncryptedToken {
 
         // Validate it's valid base64 (both parts)
         let parts: Vec<&str> = s.split(':').collect();
+        let (nonce_part, ciphertext_part) = match parts.as_slice() {
+            [n, c] => (*n, *c),
+            _ => {
+                return Err(BeemFlowError::validation(
+                    "Invalid encrypted token format. Expected exactly one colon.",
+                ));
+            }
+        };
+
         BASE64
-            .decode(parts[0])
+            .decode(nonce_part)
             .map_err(|_| BeemFlowError::validation("Invalid nonce encoding"))?;
         BASE64
-            .decode(parts[1])
+            .decode(ciphertext_part)
             .map_err(|_| BeemFlowError::validation("Invalid ciphertext encoding"))?;
 
         Ok(Self(s))
@@ -612,7 +621,13 @@ impl TokenEncryption {
             )));
         }
 
-        let key: [u8; 32] = key_bytes.try_into().expect("Length validated above");
+        let key_len = key_bytes.len();
+        let key: [u8; 32] = key_bytes.try_into().map_err(|_| {
+            BeemFlowError::config(format!(
+                "OAUTH_ENCRYPTION_KEY length mismatch (got {}, expected 32 bytes)",
+                key_len
+            ))
+        })?;
 
         Ok(Self {
             cipher: Arc::new(Aes256Gcm::new(&key.into())),
@@ -728,11 +743,20 @@ impl TokenEncryption {
         }
 
         // Decode base64
+        let (nonce_part, ciphertext_part) = match parts.as_slice() {
+            [n, c] => (*n, *c),
+            _ => {
+                return Err(BeemFlowError::validation(
+                    "Invalid encrypted token format during decryption.",
+                ));
+            }
+        };
+
         let nonce_bytes = BASE64
-            .decode(parts[0])
+            .decode(nonce_part)
             .map_err(|_| BeemFlowError::validation("Invalid nonce encoding"))?;
         let ciphertext = BASE64
-            .decode(parts[1])
+            .decode(ciphertext_part)
             .map_err(|_| BeemFlowError::validation("Invalid ciphertext encoding"))?;
 
         // Validate nonce length (96 bits = 12 bytes for GCM)
@@ -743,9 +767,13 @@ impl TokenEncryption {
             )));
         }
 
-        let nonce: [u8; 12] = nonce_bytes
-            .try_into()
-            .expect("Nonce length validated above");
+        let nonce_len = nonce_bytes.len();
+        let nonce: [u8; 12] = nonce_bytes.try_into().map_err(|_| {
+            BeemFlowError::validation(format!(
+                "Nonce length mismatch (got {} bytes, expected 12)",
+                nonce_len
+            ))
+        })?;
 
         // Decrypt with authentication check
         let plaintext = self
