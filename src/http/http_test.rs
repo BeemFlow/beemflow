@@ -20,12 +20,20 @@ async fn create_test_state() -> AppState {
     );
     let template_renderer = Arc::new(template::TemplateRenderer::new("static"));
 
+    let jwt_secret = crate::auth::ValidatedJwtSecret::new().expect("JWT secret for tests");
+    let jwt_manager = Arc::new(crate::auth::JwtManager::new(
+        &jwt_secret,
+        "http://localhost:3000".to_string(),
+        chrono::Duration::minutes(15),
+    ));
+
     AppState {
         registry,
         session_store,
         oauth_client,
         storage,
         template_renderer,
+        jwt_manager,
     }
 }
 
@@ -46,7 +54,24 @@ async fn test_root_handler() {
 #[tokio::test]
 async fn test_list_flows_empty() {
     let state = create_test_state().await;
-    let result = state.registry.execute("list_flows", json!({})).await;
+
+    // Create test auth context
+    let ctx = crate::auth::RequestContext {
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
+        role: crate::auth::Role::Admin,
+        client_ip: None,
+        user_agent: None,
+        request_id: "test".to_string(),
+    };
+
+    let result = crate::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            state.registry.execute("list_flows", json!({})).await
+        })
+        .await;
+
     assert!(result.is_ok());
     let result_val = result.unwrap();
     assert!(result_val.is_object());
@@ -56,8 +81,21 @@ async fn test_list_flows_empty() {
 async fn test_save_and_get_flow() {
     let state = create_test_state().await;
 
-    // Save a flow
-    let flow_content = r#"
+    // Create test auth context
+    let ctx = crate::auth::RequestContext {
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
+        role: crate::auth::Role::Admin,
+        client_ip: None,
+        user_agent: None,
+        request_id: "test".to_string(),
+    };
+
+    let result = crate::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save a flow
+            let flow_content = r#"
 name: test-flow
 on: event
 steps:
@@ -67,23 +105,25 @@ steps:
       text: "Hello"
 "#;
 
-    let save_input = json!({
-        "name": "test-flow",
-        "content": flow_content
-    });
+            let save_input = json!({
+                "name": "test-flow",
+                "content": flow_content
+            });
 
-    let save_result = state.registry.execute("save_flow", save_input).await;
-    assert!(save_result.is_ok());
+            let save_result = state.registry.execute("save_flow", save_input).await;
+            assert!(save_result.is_ok());
 
-    // Get the flow
-    let get_input = json!({
-        "name": "test-flow"
-    });
+            // Get the flow
+            let get_input = json!({
+                "name": "test-flow"
+            });
 
-    let get_result = state.registry.execute("get_flow", get_input).await;
+            state.registry.execute("get_flow", get_input).await
+        })
+        .await;
 
-    assert!(get_result.is_ok());
-    let flow_data = get_result.unwrap();
+    assert!(result.is_ok());
+    let flow_data = result.unwrap();
     assert_eq!(
         flow_data.get("name").and_then(|v| v.as_str()),
         Some("test-flow")
@@ -94,8 +134,21 @@ steps:
 async fn test_delete_flow() {
     let state = create_test_state().await;
 
-    // Save a flow first
-    let flow_content = r#"
+    // Create test auth context
+    let ctx = crate::auth::RequestContext {
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
+        role: crate::auth::Role::Admin,
+        client_ip: None,
+        user_agent: None,
+        request_id: "test".to_string(),
+    };
+
+    crate::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            // Save a flow first
+            let flow_content = r#"
 name: delete-test
 on: event
 steps:
@@ -105,34 +158,36 @@ steps:
       text: "Hello"
 "#;
 
-    let save_input = json!({
-        "name": "delete-test",
-        "content": flow_content
-    });
+            let save_input = json!({
+                "name": "delete-test",
+                "content": flow_content
+            });
 
-    let _ = state
-        .registry
-        .execute("save_flow", save_input)
-        .await
-        .unwrap();
+            let _ = state
+                .registry
+                .execute("save_flow", save_input)
+                .await
+                .unwrap();
 
-    // Delete the flow
-    let delete_input = json!({
-        "name": "delete-test"
-    });
+            // Delete the flow
+            let delete_input = json!({
+                "name": "delete-test"
+            });
 
-    let delete_result = state.registry.execute("delete_flow", delete_input).await;
+            let delete_result = state.registry.execute("delete_flow", delete_input).await;
 
-    assert!(delete_result.is_ok());
+            assert!(delete_result.is_ok());
 
-    // Verify it's gone
-    let get_input = json!({
-        "name": "delete-test"
-    });
+            // Verify it's gone
+            let get_input = json!({
+                "name": "delete-test"
+            });
 
-    let get_result = state.registry.execute("get_flow", get_input).await;
+            let get_result = state.registry.execute("get_flow", get_input).await;
 
-    assert!(get_result.is_err());
+            assert!(get_result.is_err());
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -254,8 +309,29 @@ steps:
 #[tokio::test]
 async fn test_list_runs() {
     let state = create_test_state().await;
-    let result = state.registry.execute("list_runs", json!({})).await;
-    assert!(result.is_ok());
+
+    // Create test auth context
+    let ctx = crate::auth::RequestContext {
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
+        organization_name: "test_org".to_string(),
+        role: crate::auth::Role::Admin,
+        client_ip: None,
+        user_agent: None,
+        request_id: "test".to_string(),
+    };
+
+    let result = crate::core::REQUEST_CONTEXT
+        .scope(ctx, async {
+            state.registry.execute("list_runs", json!({})).await
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "list_runs should succeed with empty input: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]

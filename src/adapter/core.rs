@@ -2,9 +2,16 @@
 
 use super::*;
 use crate::constants::*;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// Cached regex for matching path parameters in URLs
+#[allow(clippy::expect_used)] // Static regex compilation should fail-fast on invalid pattern
+static PATH_PARAM_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\{[^}]+\}").expect("Hardcoded path parameter regex pattern is invalid")
+});
 
 /// Core adapter handles built-in BeemFlow utilities
 pub struct CoreAdapter;
@@ -188,8 +195,11 @@ impl CoreAdapter {
             .collect();
 
         // Only auto-configure if exactly one HTTP scheme (unambiguous)
-        if http_schemes.len() == 1 {
-            let scheme = http_schemes[0];
+        if let Some(&scheme) = http_schemes.first() {
+            if http_schemes.len() != 1 {
+                // Multiple HTTP schemes - ambiguous, skip auto-config
+                return None;
+            }
             // api_name is already clean (slugified or user-provided), just uppercase it
             let env_name = api_name.to_uppercase();
 
@@ -316,9 +326,9 @@ impl CoreAdapter {
         clean_path = clean_path.replace('/', "_");
 
         // Replace path parameters {param} with _by_id
-        // Safe: This is a valid, compile-time constant regex pattern that cannot fail
-        let re = Regex::new(r"\{[^}]+\}").unwrap();
-        clean_path = re.replace_all(&clean_path, "_by_id").to_string();
+        clean_path = PATH_PARAM_REGEX
+            .replace_all(&clean_path, "_by_id")
+            .to_string();
 
         // Remove non-alphanumeric characters except underscores
         clean_path = clean_path

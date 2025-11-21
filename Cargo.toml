@@ -104,6 +104,8 @@ urlencoding = "2.1"
 # Cryptography
 sha2 = "0.10"
 hmac = "0.12"
+bcrypt = "0.15"
+aes-gcm = "0.10"  # OAuth token encryption (AES-256-GCM)
 
 # Utilities
 itertools = "0.14"

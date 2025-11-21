@@ -241,14 +241,19 @@ pub mod system {
         type Output = DashboardStats;
 
         async fn execute(&self, _input: Self::Input) -> Result<Self::Output> {
+            // Extract authenticated context - dashboard shows organization-specific stats
+            let ctx = super::super::get_auth_context_or_default();
+
             let storage = &self.deps.storage;
 
-            // Get total flows (deployed flows)
-            let flows = storage.list_all_deployed_flows().await?;
+            // Get total flows (deployed flows) for this organization
+            let flows = storage
+                .list_all_deployed_flows(&ctx.organization_id)
+                .await?;
             let total_flows = flows.len();
 
-            // Get all runs with a reasonable limit for stats
-            let all_runs = storage.list_runs(1000, 0).await?;
+            // Get all runs with a reasonable limit for stats (organization-scoped)
+            let all_runs = storage.list_runs(&ctx.organization_id, 1000, 0).await?;
             let total_runs = all_runs.len();
 
             // Count active runs (running or pending)
@@ -343,19 +348,21 @@ pub mod system {
             for (op_name, meta) in metadata {
                 groups.insert(meta.group);
                 // Skip operations without HTTP endpoints
-                if meta.http_method.is_none() || meta.http_path.is_none() {
+                let (Some(http_method), Some(http_path)) = (&meta.http_method, &meta.http_path)
+                else {
                     continue;
-                }
+                };
 
-                let method = meta.http_method.unwrap().to_lowercase();
-                let path = meta.http_path.unwrap();
+                let method = http_method.to_lowercase();
+                let path = http_path;
 
                 // Get or create path item
+                #[allow(clippy::expect_used)] // Just inserted a JSON object, must be an object
                 let path_item = paths
                     .entry(path.to_string())
                     .or_insert_with(|| serde_json::json!({}))
                     .as_object_mut()
-                    .unwrap();
+                    .expect("just inserted a JSON object, must be an object");
 
                 // Extract path parameters
                 let parameters = extract_path_parameters(path);

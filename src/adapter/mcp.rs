@@ -39,15 +39,16 @@ impl McpAdapter {
         let stripped = tool_use.trim_start_matches(ADAPTER_PREFIX_MCP);
         let parts: Vec<&str> = stripped.splitn(2, '/').collect();
 
-        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-            return Err(crate::BeemFlowError::adapter(format!(
-                "invalid mcp:// format: {} (expected mcp://server/tool)",
-                tool_use
-            )));
-        }
-
-        let server_name = parts[0];
-        let tool_name = parts[1];
+        // Use pattern matching instead of length check + indexing
+        let (server_name, tool_name) = match parts.as_slice() {
+            [server, tool] if !server.is_empty() && !tool.is_empty() => (*server, *tool),
+            _ => {
+                return Err(crate::BeemFlowError::adapter(format!(
+                    "invalid mcp:// format: {} (expected mcp://server/tool)",
+                    tool_use
+                )));
+            }
+        };
 
         if tool_name.contains('/') {
             return Err(crate::BeemFlowError::adapter(format!(

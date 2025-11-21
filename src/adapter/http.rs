@@ -50,8 +50,7 @@ impl HttpAdapter {
         };
 
         // Expand OAuth tokens in headers with automatic refresh
-        self.expand_oauth_in_headers(&mut headers, &ctx.oauth_client)
-            .await;
+        self.expand_oauth_in_headers(&mut headers, ctx).await;
 
         // Create request
         let method_str = method.clone(); // Keep for error messages
@@ -239,7 +238,7 @@ impl HttpAdapter {
     async fn expand_oauth_in_headers(
         &self,
         headers: &mut HashMap<String, String>,
-        oauth_client: &Arc<crate::auth::OAuthClientManager>,
+        ctx: &ExecutionContext,
     ) {
         let oauth_headers: Vec<_> = headers
             .iter()
@@ -248,7 +247,7 @@ impl HttpAdapter {
             .collect();
 
         for (key, value) in oauth_headers {
-            if let Some(token) = self.expand_oauth_token(&value, oauth_client).await {
+            if let Some(token) = self.expand_oauth_token(&value, ctx).await {
                 headers.insert(key, format!("Bearer {}", token));
             }
         }
@@ -263,22 +262,38 @@ impl HttpAdapter {
     /// - Returns the valid (possibly refreshed) access token
     ///
     /// This ensures OAuth API calls always use fresh tokens without manual intervention.
-    async fn expand_oauth_token(
-        &self,
-        value: &str,
-        oauth_client: &Arc<crate::auth::OAuthClientManager>,
-    ) -> Option<String> {
+    async fn expand_oauth_token(&self, value: &str, ctx: &ExecutionContext) -> Option<String> {
         let oauth_ref = value.trim_start_matches("$oauth:");
         let mut parts = oauth_ref.split(':');
         let (provider, integration) = (parts.next()?, parts.next()?);
 
-        match oauth_client.get_token(provider, integration).await {
+        // Get user_id and organization_id from context - REQUIRED for per-user OAuth
+        let (user_id, organization_id) = match (&ctx.user_id, &ctx.organization_id) {
+            (Some(uid), Some(oid)) => (uid.as_str(), oid.as_str()),
+            _ => {
+                tracing::error!(
+                    "OAuth token expansion requires user context. \
+                    Workflow triggered without authentication (user_id={:?}, organization_id={:?})",
+                    ctx.user_id,
+                    ctx.organization_id
+                );
+                return None;
+            }
+        };
+
+        match ctx
+            .oauth_client
+            .get_token(provider, integration, user_id, organization_id)
+            .await
+        {
             Ok(token) => Some(token),
             Err(e) => {
                 tracing::error!(
-                    "Failed to get OAuth token for {}:{} - {}",
+                    "Failed to get OAuth token for {}:{} (user: {}, organization: {}) - {}",
                     provider,
                     integration,
+                    user_id,
+                    organization_id,
                     e
                 );
                 None
