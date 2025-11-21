@@ -380,7 +380,7 @@ pub async fn auth_middleware(
     let auth_ctx = AuthContext {
         user_id: claims.sub.clone(),
         organization_id: String::new(), // Filled by organization_middleware
-        role: super::Role::Viewer, // Filled by organization_middleware
+        role: super::Role::Viewer,      // Filled by organization_middleware
         token_exp: claims.exp,
     };
 

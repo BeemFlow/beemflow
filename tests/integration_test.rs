@@ -267,12 +267,7 @@ async fn test_storage_operations() {
     };
 
     env.deps.storage.save_run(&run).await.unwrap();
-    let retrieved_run = env
-        .deps
-        .storage
-        .get_run(run.id, "test_org")
-        .await
-        .unwrap();
+    let retrieved_run = env.deps.storage.get_run(run.id, "test_org").await.unwrap();
     assert!(retrieved_run.is_some());
     assert_eq!(retrieved_run.unwrap().flow_name.as_str(), "test");
 }

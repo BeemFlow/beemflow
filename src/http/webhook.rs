@@ -63,13 +63,20 @@ async fn handle_webhook(
     let organization_id = &path.organization_id;
     let topic = &path.topic;
 
-    tracing::debug!("Webhook received: organization_id={}, topic={}", organization_id, topic);
+    tracing::debug!(
+        "Webhook received: organization_id={}, topic={}",
+        organization_id,
+        topic
+    );
 
     // Verify organization exists before processing webhook
     let organization = match state.storage.get_organization(organization_id).await {
         Ok(Some(organization)) => organization,
         Ok(None) => {
-            tracing::warn!("Webhook rejected: organization not found: {}", organization_id);
+            tracing::warn!(
+                "Webhook rejected: organization not found: {}",
+                organization_id
+            );
             return (StatusCode::NOT_FOUND, "Organization not found").into_response();
         }
         Err(e) => {
@@ -78,7 +85,11 @@ async fn handle_webhook(
         }
     };
 
-    tracing::debug!("Organization verified: {} ({})", organization.name, organization.id);
+    tracing::debug!(
+        "Organization verified: {} ({})",
+        organization.name,
+        organization.id
+    );
 
     // Find webhook configuration from registry (topic maps to provider name)
     let webhook_config = match find_webhook_config(&state.registry_manager, topic).await {

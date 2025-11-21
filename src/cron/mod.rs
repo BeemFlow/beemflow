@@ -256,7 +256,11 @@ impl CronManager {
             .get_deployed_version(organization_id, flow_name)
             .await?;
         let Some(version) = version else {
-            tracing::debug!(organization_id = organization_id, flow = flow_name, "Flow not deployed");
+            tracing::debug!(
+                organization_id = organization_id,
+                flow = flow_name,
+                "Flow not deployed"
+            );
             return Ok(());
         };
 
@@ -317,7 +321,11 @@ impl CronManager {
     pub async fn remove_schedule(&self, organization_id: &str, flow_name: &str) -> Result<()> {
         self.remove_job(organization_id, flow_name).await?;
 
-        tracing::info!(organization_id = organization_id, flow = flow_name, "Flow unscheduled");
+        tracing::info!(
+            organization_id = organization_id,
+            flow = flow_name,
+            "Flow unscheduled"
+        );
         Ok(())
     }
 

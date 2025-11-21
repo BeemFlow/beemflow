@@ -3,14 +3,14 @@
 //! Provides HTTP handlers for profile, organization, team member, and audit log management.
 
 use super::{
-    Permission, RequestContext, Role, Organization, OrganizationMember, User,
+    Organization, OrganizationMember, Permission, RequestContext, Role, User,
     password::{hash_password, validate_password_strength, verify_password},
     rbac::check_permission,
 };
+use crate::BeemFlowError;
 use crate::audit::AuditLog;
 use crate::http::AppError;
 use crate::storage::Storage;
-use crate::BeemFlowError;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -129,7 +129,11 @@ fn user_to_response(user: &User) -> UserResponse {
 }
 
 /// Convert Organization + role to OrganizationResponse (DRY)
-fn organization_to_response(organization: &Organization, role: Role, current_organization_id: &str) -> OrganizationResponse {
+fn organization_to_response(
+    organization: &Organization,
+    role: Role,
+    current_organization_id: &str,
+) -> OrganizationResponse {
     OrganizationResponse {
         id: organization.id.clone(),
         name: organization.name.clone(),
@@ -274,7 +278,11 @@ async fn get_current_organization_handler(
         .await?
         .ok_or_else(|| BeemFlowError::validation("Organization not found"))?;
 
-    Ok(Json(organization_to_response(&organization, req_ctx.role, &req_ctx.organization_id)))
+    Ok(Json(organization_to_response(
+        &organization,
+        req_ctx.role,
+        &req_ctx.organization_id,
+    )))
 }
 
 /// PUT /v1/organizations/current - Update current organization
@@ -310,7 +318,11 @@ async fn update_organization_handler(
     organization.updated_at = chrono::Utc::now();
     storage.update_organization(&organization).await?;
 
-    Ok(Json(organization_to_response(&organization, req_ctx.role, &req_ctx.organization_id)))
+    Ok(Json(organization_to_response(
+        &organization,
+        req_ctx.role,
+        &req_ctx.organization_id,
+    )))
 }
 
 // ============================================================================
@@ -326,7 +338,9 @@ async fn list_members_handler(
 
     check_permission(&req_ctx, Permission::MembersRead)?;
 
-    let members = storage.list_organization_members(&req_ctx.organization_id).await?;
+    let members = storage
+        .list_organization_members(&req_ctx.organization_id)
+        .await?;
 
     let response: Vec<MemberResponse> = members
         .into_iter()
@@ -380,7 +394,9 @@ async fn invite_member_handler(
         .get_user_by_email(&payload.email)
         .await?
         .ok_or_else(|| {
-            BeemFlowError::validation("User with that email does not exist. User must register first.")
+            BeemFlowError::validation(
+                "User with that email does not exist. User must register first.",
+            )
         })?;
 
     // Check if already a member
@@ -389,7 +405,9 @@ async fn invite_member_handler(
         .await
         .is_ok()
     {
-        return Err(BeemFlowError::validation("User is already a member of this organization").into());
+        return Err(
+            BeemFlowError::validation("User is already a member of this organization").into(),
+        );
     }
 
     // Create membership
@@ -478,7 +496,9 @@ async fn remove_member_handler(
 
     // Business rule: Cannot remove yourself
     if member_user_id == req_ctx.user_id {
-        return Err(BeemFlowError::validation("Cannot remove yourself from the organization").into());
+        return Err(
+            BeemFlowError::validation("Cannot remove yourself from the organization").into(),
+        );
     }
 
     // Fetch target member to check their role (SECURITY: Required to prevent privilege escalation)
@@ -489,7 +509,10 @@ async fn remove_member_handler(
 
     // SECURITY: Only Owners can remove other Owners (prevents Admin from removing Owner)
     if target_member.role == Role::Owner && req_ctx.role != Role::Owner {
-        return Err(BeemFlowError::validation("Only owners can remove other owners from the organization").into());
+        return Err(BeemFlowError::validation(
+            "Only owners can remove other owners from the organization",
+        )
+        .into());
     }
 
     storage
@@ -509,7 +532,9 @@ async fn list_audit_logs_handler(
     State(storage): State<Arc<dyn Storage>>,
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<Json<Vec<AuditLog>>, AppError> {
-    let req_ctx = req.extensions().get::<RequestContext>()
+    let req_ctx = req
+        .extensions()
+        .get::<RequestContext>()
         .cloned()
         .ok_or_else(|| BeemFlowError::validation("Unauthorized"))?;
 

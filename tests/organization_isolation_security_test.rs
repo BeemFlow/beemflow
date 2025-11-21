@@ -405,55 +405,25 @@ async fn test_flow_version_history_isolated() {
 
     // OrganizationA deploys v1.0, v1.1, v1.2
     storage
-        .deploy_flow_version(
-            &org_a.id,
-            flow_name,
-            "v1.0",
-            "content-a-v1.0",
-            &user_a.id,
-        )
+        .deploy_flow_version(&org_a.id, flow_name, "v1.0", "content-a-v1.0", &user_a.id)
         .await
         .unwrap();
     storage
-        .deploy_flow_version(
-            &org_a.id,
-            flow_name,
-            "v1.1",
-            "content-a-v1.1",
-            &user_a.id,
-        )
+        .deploy_flow_version(&org_a.id, flow_name, "v1.1", "content-a-v1.1", &user_a.id)
         .await
         .unwrap();
     storage
-        .deploy_flow_version(
-            &org_a.id,
-            flow_name,
-            "v1.2",
-            "content-a-v1.2",
-            &user_a.id,
-        )
+        .deploy_flow_version(&org_a.id, flow_name, "v1.2", "content-a-v1.2", &user_a.id)
         .await
         .unwrap();
 
     // OrganizationB deploys v2.0, v2.1
     storage
-        .deploy_flow_version(
-            &org_b.id,
-            flow_name,
-            "v2.0",
-            "content-b-v2.0",
-            &user_b.id,
-        )
+        .deploy_flow_version(&org_b.id, flow_name, "v2.0", "content-b-v2.0", &user_b.id)
         .await
         .unwrap();
     storage
-        .deploy_flow_version(
-            &org_b.id,
-            flow_name,
-            "v2.1",
-            "content-b-v2.1",
-            &user_b.id,
-        )
+        .deploy_flow_version(&org_b.id, flow_name, "v2.1", "content-b-v2.1", &user_b.id)
         .await
         .unwrap();
 
@@ -580,7 +550,10 @@ async fn test_deployed_version_pointers_isolated() {
         .await
         .unwrap()
         .expect("OrganizationA should have deployed version");
-    assert_eq!(deployed_a, "v1.0", "OrganizationA should have v1.0 deployed");
+    assert_eq!(
+        deployed_a, "v1.0",
+        "OrganizationA should have v1.0 deployed"
+    );
 
     // ✅ CRITICAL TEST: OrganizationB's deployed version is v2.0 (NOT affected by OrganizationA)
     let deployed_b = storage
@@ -620,7 +593,9 @@ async fn test_deployed_version_pointers_isolated() {
         "OrganizationB's deployment should be UNAFFECTED by OrganizationA's disable"
     );
 
-    println!("✅ Deployment pointer isolation verified: Each organization manages their own deployments");
+    println!(
+        "✅ Deployment pointer isolation verified: Each organization manages their own deployments"
+    );
 }
 
 // ============================================================================

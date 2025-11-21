@@ -111,7 +111,12 @@ impl RunStorage for PostgresStorage {
         }
     }
 
-    async fn list_runs(&self, organization_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>> {
+    async fn list_runs(
+        &self,
+        organization_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Run>> {
         // Cap limit at 10,000 to prevent unbounded queries
         let capped_limit = limit.min(10_000);
 
@@ -588,7 +593,10 @@ impl FlowStorage for PostgresStorage {
         Ok(())
     }
 
-    async fn list_all_deployed_flows(&self, organization_id: &str) -> Result<Vec<(String, String)>> {
+    async fn list_all_deployed_flows(
+        &self,
+        organization_id: &str,
+    ) -> Result<Vec<(String, String)>> {
         let rows = sqlx::query(
             "SELECT d.flow_name, v.content
              FROM deployed_flows d
@@ -612,7 +620,11 @@ impl FlowStorage for PostgresStorage {
         Ok(result)
     }
 
-    async fn find_flow_names_by_topic(&self, organization_id: &str, topic: &str) -> Result<Vec<String>> {
+    async fn find_flow_names_by_topic(
+        &self,
+        organization_id: &str,
+        topic: &str,
+    ) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT DISTINCT ft.flow_name
              FROM flow_triggers ft
@@ -667,7 +679,11 @@ impl FlowStorage for PostgresStorage {
             .collect()
     }
 
-    async fn get_deployed_by(&self, organization_id: &str, flow_name: &str) -> Result<Option<String>> {
+    async fn get_deployed_by(
+        &self,
+        organization_id: &str,
+        flow_name: &str,
+    ) -> Result<Option<String>> {
         let row = sqlx::query(
             "SELECT fv.deployed_by_user_id
              FROM deployed_flows df
@@ -865,11 +881,12 @@ impl OAuthStorage for PostgresStorage {
 
     async fn delete_oauth_credential(&self, id: &str, organization_id: &str) -> Result<()> {
         // Defense in depth: Verify organization ownership at storage layer
-        let result = sqlx::query("DELETE FROM oauth_credentials WHERE id = $1 AND organization_id = $2")
-            .bind(id)
-            .bind(organization_id)
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM oauth_credentials WHERE id = $1 AND organization_id = $2")
+                .bind(id)
+                .bind(organization_id)
+                .execute(&self.pool)
+                .await?;
 
         if result.rows_affected() == 0 {
             return Err(BeemFlowError::not_found("OAuth credential", id));
@@ -1523,7 +1540,10 @@ impl crate::storage::AuthStorage for PostgresStorage {
         }
     }
 
-    async fn get_organization_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Organization>> {
+    async fn get_organization_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<crate::auth::Organization>> {
         let row = sqlx::query("SELECT * FROM organizations WHERE slug = $1")
             .bind(slug)
             .fetch_optional(&self.pool)
@@ -1585,10 +1605,11 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     async fn list_active_organizations(&self) -> Result<Vec<crate::auth::Organization>> {
-        let rows =
-            sqlx::query("SELECT * FROM organizations WHERE disabled = FALSE ORDER BY created_at ASC")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query(
+            "SELECT * FROM organizations WHERE disabled = FALSE ORDER BY created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut organizations = Vec::new();
         for row in rows {
@@ -1620,7 +1641,10 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     // Organization membership methods
-    async fn create_organization_member(&self, member: &crate::auth::OrganizationMember) -> Result<()> {
+    async fn create_organization_member(
+        &self,
+        member: &crate::auth::OrganizationMember,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             INSERT INTO organization_members (
@@ -1794,12 +1818,14 @@ impl crate::storage::AuthStorage for PostgresStorage {
         user_id: &str,
         role: crate::auth::Role,
     ) -> Result<()> {
-        sqlx::query("UPDATE organization_members SET role = $1 WHERE organization_id = $2 AND user_id = $3")
-            .bind(role.as_str())
-            .bind(organization_id)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE organization_members SET role = $1 WHERE organization_id = $2 AND user_id = $3",
+        )
+        .bind(role.as_str())
+        .bind(organization_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }

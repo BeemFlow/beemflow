@@ -45,7 +45,12 @@ pub trait RunStorage: Send + Sync {
     /// # Multi-organization isolation
     /// Only returns runs belonging to the specified organization.
     /// Returns runs ordered by started_at DESC.
-    async fn list_runs(&self, organization_id: &str, limit: usize, offset: usize) -> Result<Vec<Run>>;
+    async fn list_runs(
+        &self,
+        organization_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Run>>;
 
     /// List runs filtered by flow name and status, ordered by most recent first
     ///
@@ -207,7 +212,8 @@ pub trait FlowStorage: Send + Sync {
     ///
     /// # Multi-organization isolation
     /// Only returns flows belonging to the specified organization.
-    async fn list_all_deployed_flows(&self, organization_id: &str) -> Result<Vec<(String, String)>>;
+    async fn list_all_deployed_flows(&self, organization_id: &str)
+    -> Result<Vec<(String, String)>>;
 
     /// Find deployed flow names by webhook topic for an organization
     ///
@@ -219,7 +225,11 @@ pub trait FlowStorage: Send + Sync {
     ///
     /// # Multi-organization isolation
     /// Only searches within the specified organization's flows.
-    async fn find_flow_names_by_topic(&self, organization_id: &str, topic: &str) -> Result<Vec<String>>;
+    async fn find_flow_names_by_topic(
+        &self,
+        organization_id: &str,
+        topic: &str,
+    ) -> Result<Vec<String>>;
 
     /// Get content for multiple deployed flows by name (batch query)
     ///
@@ -248,7 +258,11 @@ pub trait FlowStorage: Send + Sync {
     ///
     /// # Performance
     /// Single indexed query joining deployed_flows → flow_versions
-    async fn get_deployed_by(&self, organization_id: &str, flow_name: &str) -> Result<Option<String>>;
+    async fn get_deployed_by(
+        &self,
+        organization_id: &str,
+        flow_name: &str,
+    ) -> Result<Option<String>>;
 }
 
 /// OAuth storage for credentials, providers, clients, and tokens
@@ -376,7 +390,10 @@ pub trait AuthStorage: Send + Sync {
     async fn get_organization(&self, id: &str) -> Result<Option<crate::auth::Organization>>;
 
     /// Get organization by slug
-    async fn get_organization_by_slug(&self, slug: &str) -> Result<Option<crate::auth::Organization>>;
+    async fn get_organization_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<crate::auth::Organization>>;
 
     /// Update organization
     async fn update_organization(&self, organization: &crate::auth::Organization) -> Result<()>;
@@ -386,7 +403,10 @@ pub trait AuthStorage: Send + Sync {
 
     // Organization membership methods
     /// Create a new organization member (user-organization relationship)
-    async fn create_organization_member(&self, member: &crate::auth::OrganizationMember) -> Result<()>;
+    async fn create_organization_member(
+        &self,
+        member: &crate::auth::OrganizationMember,
+    ) -> Result<()>;
 
     /// Get organization member
     async fn get_organization_member(

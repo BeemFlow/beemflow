@@ -658,7 +658,10 @@ async fn test_oauth_credentials_unique_includes_organization_id() {
         .await
         .unwrap();
 
-    assert_eq!(count, 2, "Should have 2 credentials (different organizations)");
+    assert_eq!(
+        count, 2,
+        "Should have 2 credentials (different organizations)"
+    );
 }
 
 /// Test that critical indexes exist (performance)
@@ -687,9 +690,9 @@ async fn test_critical_indexes_exist() {
     let required_indexes = vec![
         "idx_flow_triggers_organization_topic", // Webhook routing (hot path)
         "idx_runs_organization_flow_status_time", // Run pagination
-        "idx_steps_run_id",                      // Step lookup
-        "idx_users_email_active",                // User login
-        "idx_refresh_tokens_hash_active",        // Token validation
+        "idx_steps_run_id",                     // Step lookup
+        "idx_users_email_active",               // User login
+        "idx_refresh_tokens_hash_active",       // Token validation
     ];
 
     for required in required_indexes {

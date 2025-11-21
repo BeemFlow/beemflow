@@ -2,11 +2,10 @@
 //!
 //! Provides registration, login, token refresh, and logout endpoints.
 use super::{
-    LoginRequest, LoginResponse, RefreshRequest, RegisterRequest, Role,
-    OrganizationInfo, UserInfo,
+    LoginRequest, LoginResponse, OrganizationInfo, RefreshRequest, RegisterRequest, Role, UserInfo,
 };
 use super::{
-    RefreshToken, Organization, OrganizationMember, User,
+    Organization, OrganizationMember, RefreshToken, User,
     jwt::JwtManager,
     password::{hash_password, validate_password_strength, verify_password},
 };
@@ -223,7 +222,10 @@ async fn login(
 
     // 6. Generate tokens (JWT includes ALL memberships, not just default organization)
     let (access_token, refresh_token_str) = generate_tokens(
-        &state, &user.id, &user.email, None, // Client info captured by audit middleware
+        &state,
+        &user.id,
+        &user.email,
+        None, // Client info captured by audit middleware
     )
     .await?;
 
@@ -311,7 +313,10 @@ async fn refresh(
         &state,
         &refresh_token.user_id,
         &user.email,
-        Some((refresh_token.client_ip.clone(), refresh_token.user_agent.clone())),
+        Some((
+            refresh_token.client_ip.clone(),
+            refresh_token.user_agent.clone(),
+        )),
     )
     .await?;
 
@@ -482,7 +487,11 @@ async fn generate_unique_slug(storage: &Arc<dyn Storage>, email: &str) -> Result
         .to_lowercase();
 
     // Try base slug first
-    if storage.get_organization_by_slug(&base_slug).await?.is_none() {
+    if storage
+        .get_organization_by_slug(&base_slug)
+        .await?
+        .is_none()
+    {
         return Ok(base_slug);
     }
 

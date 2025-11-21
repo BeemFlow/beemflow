@@ -247,7 +247,9 @@ pub mod system {
             let storage = &self.deps.storage;
 
             // Get total flows (deployed flows) for this organization
-            let flows = storage.list_all_deployed_flows(&ctx.organization_id).await?;
+            let flows = storage
+                .list_all_deployed_flows(&ctx.organization_id)
+                .await?;
             let total_flows = flows.len();
 
             // Get all runs with a reasonable limit for stats (organization-scoped)

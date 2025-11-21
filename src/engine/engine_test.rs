@@ -162,9 +162,7 @@ async fn test_execute_with_event_data() {
     let mut event = HashMap::new();
     event.insert("name".to_string(), serde_json::json!("TestEvent"));
 
-    let result = engine
-        .execute(&flow, event, "test_user", "test_org")
-        .await;
+    let result = engine.execute(&flow, event, "test_user", "test_org").await;
     assert!(result.is_ok(), "Flow with event data should succeed");
 }
 
@@ -446,9 +444,7 @@ async fn test_execute_secrets_injection() {
         }),
     );
 
-    let result = engine
-        .execute(&flow, event, "test_user", "test_org")
-        .await;
+    let result = engine.execute(&flow, event, "test_user", "test_org").await;
     assert!(result.is_ok(), "Secrets injection should work");
 
     let outputs = result.unwrap();
@@ -491,9 +487,7 @@ async fn test_execute_secrets_dot_access() {
         }),
     );
 
-    let result = engine
-        .execute(&flow, event, "test_user", "test_org")
-        .await;
+    let result = engine.execute(&flow, event, "test_user", "test_org").await;
     assert!(result.is_ok(), "Secrets dot access should work");
 
     let outputs = result.unwrap();
@@ -548,9 +542,7 @@ async fn test_execute_array_access_in_template() {
         ]),
     );
 
-    let result = engine
-        .execute(&flow, event, "test_user", "test_org")
-        .await;
+    let result = engine.execute(&flow, event, "test_user", "test_org").await;
     assert!(result.is_ok(), "Array access should work");
 
     let outputs = result.unwrap();

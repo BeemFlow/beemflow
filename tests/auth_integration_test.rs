@@ -4,8 +4,8 @@
 
 use beemflow::audit::{AuditEvent, AuditLogger};
 use beemflow::auth::{
-    JwtManager, Membership, Role, Organization, OrganizationMember, User, ValidatedJwtSecret, hash_password,
-    validate_password_strength, verify_password,
+    JwtManager, Membership, Organization, OrganizationMember, Role, User, ValidatedJwtSecret,
+    hash_password, validate_password_strength, verify_password,
 };
 use beemflow::model::OAuthCredential;
 use beemflow::storage::{AuthStorage, OAuthStorage, SqliteStorage, Storage};
@@ -453,9 +453,14 @@ async fn test_jwt_generate_and_validate() {
 
     // Generate token
     let token = jwt_manager
-        .generate_access_token("user123", "user@example.com", vec![
-            Membership { organization_id: "org456".to_string(), role: Role::Admin }
-        ])
+        .generate_access_token(
+            "user123",
+            "user@example.com",
+            vec![Membership {
+                organization_id: "org456".to_string(),
+                role: Role::Admin,
+            }],
+        )
         .expect("Failed to generate token");
 
     // Validate token
@@ -490,9 +495,14 @@ async fn test_jwt_expired_token_rejected() {
     );
 
     let token = jwt_manager
-        .generate_access_token("user123", "user@example.com", vec![
-            Membership { organization_id: "org456".to_string(), role: Role::Owner }
-        ])
+        .generate_access_token(
+            "user123",
+            "user@example.com",
+            vec![Membership {
+                organization_id: "org456".to_string(),
+                role: Role::Owner,
+            }],
+        )
         .expect("Failed to generate token");
 
     // Token should be rejected as expired
@@ -533,9 +543,14 @@ async fn test_jwt_invalid_signature_rejected() {
     );
 
     let token = manager1
-        .generate_access_token("user123", "user@example.com", vec![
-            Membership { organization_id: "org456".to_string(), role: Role::Member }
-        ])
+        .generate_access_token(
+            "user123",
+            "user@example.com",
+            vec![Membership {
+                organization_id: "org456".to_string(),
+                role: Role::Member,
+            }],
+        )
         .expect("Failed to generate token");
 
     // Should fail with different key
@@ -1233,9 +1248,14 @@ async fn test_complete_user_registration_flow() {
     );
 
     let token = jwt_manager
-        .generate_access_token(&user.id, &user.email, vec![
-            Membership { organization_id: organization.id.clone(), role: Role::Owner }
-        ])
+        .generate_access_token(
+            &user.id,
+            &user.email,
+            vec![Membership {
+                organization_id: organization.id.clone(),
+                role: Role::Owner,
+            }],
+        )
         .expect("Failed to generate token");
 
     // 9. Validate JWT
@@ -1632,7 +1652,13 @@ async fn test_get_deployed_by_returns_deployer_user_id() {
     storage.create_organization(&organization).await.unwrap();
 
     storage
-        .deploy_flow_version(&organization.id, "daily_report", "1.0.0", "content", &alice.id)
+        .deploy_flow_version(
+            &organization.id,
+            "daily_report",
+            "1.0.0",
+            "content",
+            &alice.id,
+        )
         .await
         .unwrap();
 
@@ -1650,7 +1676,13 @@ async fn test_get_deployed_by_returns_deployer_user_id() {
     storage.create_user(&bob).await.unwrap();
 
     storage
-        .deploy_flow_version(&organization.id, "daily_report", "1.0.1", "content-v2", &bob.id)
+        .deploy_flow_version(
+            &organization.id,
+            "daily_report",
+            "1.0.1",
+            "content-v2",
+            &bob.id,
+        )
         .await
         .unwrap();
 
@@ -1854,7 +1886,10 @@ async fn test_admin_cannot_demote_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&alice_member).await.unwrap();
+    storage
+        .create_organization_member(&alice_member)
+        .await
+        .unwrap();
 
     // Bob is Admin
     let bob_member = OrganizationMember {
@@ -1867,15 +1902,18 @@ async fn test_admin_cannot_demote_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&bob_member).await.unwrap();
+    storage
+        .create_organization_member(&bob_member)
+        .await
+        .unwrap();
 
     // SECURITY: Bob (Admin) attempts to demote Alice (Owner) to Viewer
     let result = beemflow::auth::rbac::check_can_update_role(
-        Role::Admin,      // Bob's role
-        &bob.id,          // Bob's user ID
-        &alice.id,        // Alice's user ID (target)
-        Role::Owner,      // Alice's CURRENT role
-        Role::Viewer,     // Bob trying to demote to Viewer
+        Role::Admin,  // Bob's role
+        &bob.id,      // Bob's user ID
+        &alice.id,    // Alice's user ID (target)
+        Role::Owner,  // Alice's CURRENT role
+        Role::Viewer, // Bob trying to demote to Viewer
     );
 
     assert!(
@@ -1883,7 +1921,10 @@ async fn test_admin_cannot_demote_owner() {
         "Admin should NOT be able to demote Owner to Viewer"
     );
     assert!(
-        result.unwrap_err().to_string().contains("Only owners can manage owner roles"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Only owners can manage owner roles"),
         "Error message should indicate only owners can manage owner roles"
     );
 
@@ -1925,7 +1966,10 @@ async fn test_admin_cannot_remove_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&alice_member).await.unwrap();
+    storage
+        .create_organization_member(&alice_member)
+        .await
+        .unwrap();
 
     // Bob is Admin
     let bob_member = OrganizationMember {
@@ -1938,7 +1982,10 @@ async fn test_admin_cannot_remove_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&bob_member).await.unwrap();
+    storage
+        .create_organization_member(&bob_member)
+        .await
+        .unwrap();
 
     // SECURITY: Verify check logic - Admin cannot remove Owner
     // (This simulates the check that should happen in remove_member_handler)
@@ -1990,7 +2037,10 @@ async fn test_owner_can_demote_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&alice_member).await.unwrap();
+    storage
+        .create_organization_member(&alice_member)
+        .await
+        .unwrap();
 
     // Carol is also Owner
     let carol_member = OrganizationMember {
@@ -2003,15 +2053,18 @@ async fn test_owner_can_demote_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&carol_member).await.unwrap();
+    storage
+        .create_organization_member(&carol_member)
+        .await
+        .unwrap();
 
     // Alice (Owner) demotes Carol (Owner) to Admin - this should be ALLOWED
     let result = beemflow::auth::rbac::check_can_update_role(
-        Role::Owner,      // Alice's role
-        &alice.id,        // Alice's user ID
-        &carol.id,        // Carol's user ID (target)
-        Role::Owner,      // Carol's CURRENT role
-        Role::Admin,      // Alice demoting to Admin
+        Role::Owner, // Alice's role
+        &alice.id,   // Alice's user ID
+        &carol.id,   // Carol's user ID (target)
+        Role::Owner, // Carol's CURRENT role
+        Role::Admin, // Alice demoting to Admin
     );
 
     assert!(
@@ -2066,7 +2119,10 @@ async fn test_admin_cannot_promote_to_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&alice_member).await.unwrap();
+    storage
+        .create_organization_member(&alice_member)
+        .await
+        .unwrap();
 
     // Bob is Admin
     let bob_member = OrganizationMember {
@@ -2079,7 +2135,10 @@ async fn test_admin_cannot_promote_to_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&bob_member).await.unwrap();
+    storage
+        .create_organization_member(&bob_member)
+        .await
+        .unwrap();
 
     // Dave is Member
     let dave_member = OrganizationMember {
@@ -2092,15 +2151,18 @@ async fn test_admin_cannot_promote_to_owner() {
         joined_at: Utc::now(),
         disabled: false,
     };
-    storage.create_organization_member(&dave_member).await.unwrap();
+    storage
+        .create_organization_member(&dave_member)
+        .await
+        .unwrap();
 
     // SECURITY: Bob (Admin) attempts to promote Dave (Member) to Owner
     let result = beemflow::auth::rbac::check_can_update_role(
-        Role::Admin,      // Bob's role
-        &bob.id,          // Bob's user ID
-        &dave.id,         // Dave's user ID (target)
-        Role::Member,     // Dave's CURRENT role
-        Role::Owner,      // Bob trying to promote to Owner
+        Role::Admin,  // Bob's role
+        &bob.id,      // Bob's user ID
+        &dave.id,     // Dave's user ID (target)
+        Role::Member, // Dave's CURRENT role
+        Role::Owner,  // Bob trying to promote to Owner
     );
 
     assert!(
@@ -2108,7 +2170,10 @@ async fn test_admin_cannot_promote_to_owner() {
         "Admin should NOT be able to promote anyone to Owner"
     );
     assert!(
-        result.unwrap_err().to_string().contains("Only owners can manage owner roles"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Only owners can manage owner roles"),
         "Error message should indicate only owners can manage owner roles"
     );
 }

@@ -152,10 +152,7 @@ async fn test_all_operations_comprehensive() {
 
     // Test GetRun with non-existent ID
     let non_existent_id = Uuid::new_v4();
-    let missing_run = storage
-        .get_run(non_existent_id, "test_org")
-        .await
-        .unwrap();
+    let missing_run = storage.get_run(non_existent_id, "test_org").await.unwrap();
     assert!(missing_run.is_none(), "Should not find non-existent run");
 
     // Test SaveStep and GetSteps
@@ -206,10 +203,7 @@ async fn test_get_non_existent_run() {
     let storage = SqliteStorage::new(":memory:").await.unwrap();
     let non_existent_id = Uuid::new_v4();
 
-    let result = storage
-        .get_run(non_existent_id, "test_org")
-        .await
-        .unwrap();
+    let result = storage.get_run(non_existent_id, "test_org").await.unwrap();
     assert!(result.is_none(), "Should return None for non-existent run");
 }
 

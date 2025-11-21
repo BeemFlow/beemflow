@@ -408,7 +408,9 @@ pub mod flows {
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
+                && let Err(e) = cron_manager
+                    .add_schedule(&ctx.organization_id, &input.name)
+                    .await
             {
                 // Rare failure (scheduler crash) - rollback deployment
                 if let Err(rollback_err) = self
@@ -516,7 +518,9 @@ pub mod flows {
 
             // Update cron schedule (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
+                && let Err(e) = cron_manager
+                    .add_schedule(&ctx.organization_id, &input.name)
+                    .await
             {
                 // Rare failure (scheduler crash) - rollback to previous version
                 let rollback_result = if let Some(prev_version) = &current_version {
@@ -733,7 +737,9 @@ pub mod flows {
 
             // Add to cron scheduler (should succeed - we pre-validated)
             if let Some(cron_manager) = &self.deps.cron_manager
-                && let Err(e) = cron_manager.add_schedule(&ctx.organization_id, &input.name).await
+                && let Err(e) = cron_manager
+                    .add_schedule(&ctx.organization_id, &input.name)
+                    .await
             {
                 // Rare failure (scheduler crash) - rollback enable
                 if let Err(rollback_err) = self
@@ -803,7 +809,10 @@ pub mod flows {
                         // If no deployed version, get latest from history (for disabled flows)
                         self.deps
                             .storage
-                            .get_latest_deployed_version_from_history(&ctx.organization_id, &input.name)
+                            .get_latest_deployed_version_from_history(
+                                &ctx.organization_id,
+                                &input.name,
+                            )
                             .await?
                             .ok_or_else(|| {
                                 BeemFlowError::not_found(

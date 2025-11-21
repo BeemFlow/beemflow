@@ -424,9 +424,7 @@ async fn test_null_values_in_context() {
         ..Default::default()
     };
 
-    let result = engine
-        .execute(&flow, event, "test_user", "test_org")
-        .await;
+    let result = engine.execute(&flow, event, "test_user", "test_org").await;
     // Should handle null values in templates
     assert!(result.is_ok());
 }

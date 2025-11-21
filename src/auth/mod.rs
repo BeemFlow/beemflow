@@ -295,7 +295,6 @@ pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
-
 /// System permissions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Permission {

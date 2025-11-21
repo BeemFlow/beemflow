@@ -8,9 +8,9 @@
 //!
 //! - JWT: Uses validated secrets (enforced at type level via ValidatedJwtSecret)
 //! - OAuth: AES-256-GCM authenticated encryption with separate encryption key
-use super::{JwtClaims, Membership};
 #[cfg(test)]
 use super::Role;
+use super::{JwtClaims, Membership};
 use crate::{BeemFlowError, Result};
 use aes_gcm::{
     Aes256Gcm,
@@ -359,12 +359,10 @@ mod tests {
     fn test_generate_and_validate_token() {
         let manager = create_test_manager();
 
-        let memberships = vec![
-            Membership {
-                organization_id: "org456".to_string(),
-                role: Role::Admin,
-            },
-        ];
+        let memberships = vec![Membership {
+            organization_id: "org456".to_string(),
+            role: Role::Admin,
+        }];
 
         let token = manager
             .generate_access_token("user123", "user@example.com", memberships.clone())
