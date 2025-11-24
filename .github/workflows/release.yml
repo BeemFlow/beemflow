@@ -15,7 +15,7 @@ jobs:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -62,7 +62,7 @@ jobs:
             asset_name: flow-darwin-arm64
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
