@@ -86,7 +86,9 @@ async fn test_check_constraint_rejects_invalid_status() {
 ///
 /// OLD SCHEMA (SQLite): No trigger (DELETE would succeed)
 /// NEW SCHEMA: Trigger prevents DELETE
+// Audit module removed - will be reimplemented in separate PR
 #[tokio::test]
+#[ignore]
 async fn test_audit_log_delete_prevented_by_trigger() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:?mode=rwc")
         .await
@@ -170,7 +172,9 @@ async fn test_audit_log_delete_prevented_by_trigger() {
 ///
 /// OLD SCHEMA (SQLite): No trigger (UPDATE would succeed)
 /// NEW SCHEMA: Trigger prevents UPDATE
+// Audit module removed - will be reimplemented in separate PR
 #[tokio::test]
+#[ignore]
 async fn test_audit_log_update_prevented_by_trigger() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:?mode=rwc")
         .await
@@ -704,9 +708,10 @@ async fn test_critical_indexes_exist() {
     }
 
     println!("Total indexes created: {}", indexes.len());
+    // Reduced from 25 to 20 after removing audit_logs table (had 5 indexes)
     assert!(
-        indexes.len() >= 25,
-        "Should have at least 25 indexes, got: {}",
+        indexes.len() >= 20,
+        "Should have at least 20 indexes, got: {}",
         indexes.len()
     );
 }

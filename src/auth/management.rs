@@ -564,7 +564,5 @@ pub fn create_management_routes(storage: Arc<dyn Storage>) -> Router {
             "/v1/organizations/current/members/{user_id}",
             put(update_member_role_handler).delete(remove_member_handler),
         )
-        // Audit logs (TODO: Add back after fixing handler trait issue)
-        // .route("/v1/audit-logs", get(list_audit_logs_handler))
         .with_state(storage)
 }

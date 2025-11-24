@@ -2,7 +2,6 @@
 //!
 //! Tests multi-tenant auth, RBAC, JWT, and organization isolation.
 
-use beemflow::audit::{AuditEvent, AuditLogger};
 use beemflow::auth::{
     JwtManager, Membership, Organization, OrganizationMember, Role, User, ValidatedJwtSecret,
     hash_password, validate_password_strength, verify_password,
@@ -861,173 +860,12 @@ async fn test_user_can_belong_to_multiple_organizations() {
 }
 
 // ============================================================================
-// Audit Logging Tests
+// Audit Logging Tests - REMOVED (audit module removed, will be reimplemented)
 // ============================================================================
 
-#[tokio::test]
-async fn test_audit_log_creation_and_retrieval() {
-    let storage = create_test_storage().await;
+// Audit tests removed - audit module will be reimplemented in separate PR
 
-    let user = create_test_user("user@example.com", "User");
-    let organization = create_test_organization("Org", "org", &user.id);
-
-    storage
-        .create_user(&user)
-        .await
-        .expect("Failed to create user");
-    storage
-        .create_organization(&organization)
-        .await
-        .expect("Failed to create organization");
-
-    // Create audit logger
-    let audit_logger = AuditLogger::new(storage.clone() as std::sync::Arc<dyn Storage>);
-
-    // Log some events
-    for i in 0..5 {
-        audit_logger
-            .log(AuditEvent {
-                request_id: format!("req-{}", i),
-                organization_id: organization.id.clone(),
-                user_id: Some(user.id.clone()),
-                client_ip: Some("192.168.1.1".to_string()),
-                user_agent: Some("TestAgent/1.0".to_string()),
-                action: format!("test.action.{}", i),
-                resource_type: Some("test".to_string()),
-                resource_id: Some(format!("resource-{}", i)),
-                resource_name: None,
-                http_method: Some("POST".to_string()),
-                http_path: Some("/api/test".to_string()),
-                http_status_code: Some(200),
-                success: true,
-                error_message: None,
-                metadata: None,
-            })
-            .await
-            .expect("Failed to log audit event");
-    }
-
-    // Retrieve logs
-    let logs = storage
-        .list_audit_logs(&organization.id, 10, 0)
-        .await
-        .expect("Failed to list audit logs");
-
-    assert_eq!(logs.len(), 5, "Should have 5 audit logs");
-
-    // Logs should be in reverse chronological order (timestamps descending)
-    for i in 0..logs.len() - 1 {
-        assert!(
-            logs[i].timestamp >= logs[i + 1].timestamp,
-            "Logs should be in reverse chronological order"
-        );
-    }
-
-    // Verify all logs belong to correct organization
-    for log in &logs {
-        assert_eq!(log.organization_id, organization.id);
-        assert_eq!(log.user_id, Some(user.id.clone()));
-        assert!(log.success);
-    }
-
-    // Verify actions are present (order may vary slightly due to timing)
-    let actions: Vec<String> = logs.iter().map(|l| l.action.clone()).collect();
-    assert!(actions.contains(&"test.action.0".to_string()));
-    assert!(actions.contains(&"test.action.4".to_string()));
-}
-
-#[tokio::test]
-async fn test_audit_logs_organization_isolation() {
-    let storage = create_test_storage().await;
-
-    // Create two organizations
-    let user_a = create_test_user("usera@example.com", "User A");
-    let user_b = create_test_user("userb@example.com", "User B");
-    let org_a = create_test_organization("Organization A", "org-a", &user_a.id);
-    let org_b = create_test_organization("Organization B", "org-b", &user_b.id);
-
-    storage
-        .create_user(&user_a)
-        .await
-        .expect("Failed to create user A");
-    storage
-        .create_user(&user_b)
-        .await
-        .expect("Failed to create user B");
-    storage
-        .create_organization(&org_a)
-        .await
-        .expect("Failed to create organization A");
-    storage
-        .create_organization(&org_b)
-        .await
-        .expect("Failed to create organization B");
-
-    let audit_logger = AuditLogger::new(storage.clone() as std::sync::Arc<dyn Storage>);
-
-    // Log events for both organizations
-    audit_logger
-        .log(AuditEvent {
-            request_id: "req-a".to_string(),
-            organization_id: org_a.id.clone(),
-            user_id: Some(user_a.id.clone()),
-            client_ip: None,
-            user_agent: None,
-            action: "org_a.action".to_string(),
-            resource_type: None,
-            resource_id: None,
-            resource_name: None,
-            http_method: None,
-            http_path: None,
-            http_status_code: None,
-            success: true,
-            error_message: None,
-            metadata: None,
-        })
-        .await
-        .expect("Failed to log");
-
-    audit_logger
-        .log(AuditEvent {
-            request_id: "req-b".to_string(),
-            organization_id: org_b.id.clone(),
-            user_id: Some(user_b.id.clone()),
-            client_ip: None,
-            user_agent: None,
-            action: "org_b.action".to_string(),
-            resource_type: None,
-            resource_id: None,
-            resource_name: None,
-            http_method: None,
-            http_path: None,
-            http_status_code: None,
-            success: true,
-            error_message: None,
-            metadata: None,
-        })
-        .await
-        .expect("Failed to log");
-
-    // Organization A should only see its own logs
-    let logs_a = storage
-        .list_audit_logs(&org_a.id, 10, 0)
-        .await
-        .expect("Failed to list logs");
-
-    assert_eq!(logs_a.len(), 1);
-    assert_eq!(logs_a[0].action, "org_a.action");
-    assert_eq!(logs_a[0].organization_id, org_a.id);
-
-    // Organization B should only see its own logs
-    let logs_b = storage
-        .list_audit_logs(&org_b.id, 10, 0)
-        .await
-        .expect("Failed to list logs");
-
-    assert_eq!(logs_b.len(), 1);
-    assert_eq!(logs_b[0].action, "org_b.action");
-    assert_eq!(logs_b[0].organization_id, org_b.id);
-}
+// Audit test removed - audit module will be reimplemented in separate PR
 
 // ============================================================================
 // RBAC Permission Tests

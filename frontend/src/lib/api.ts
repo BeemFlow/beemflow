@@ -49,12 +49,15 @@ class BeemFlowAPI {
     // Request interceptor to inject auth token and org header
     this.client.interceptors.request.use(
       (config) => {
-        if (this.accessToken && !config.url?.startsWith('/auth/')) {
+        // Don't add auth headers to auth endpoints (login, register, refresh, logout)
+        const isAuthEndpoint = config.url?.includes('/auth/');
+
+        if (this.accessToken && !isAuthEndpoint) {
           config.headers.Authorization = `Bearer ${this.accessToken}`;
         }
 
-        // Add organization header for all protected API calls
-        if (this.currentOrganizationId && !config.url?.startsWith('/auth/')) {
+        // Add organization header for all protected API calls (not auth endpoints)
+        if (this.currentOrganizationId && !isAuthEndpoint) {
           config.headers['X-Organization-ID'] = this.currentOrganizationId;
         }
 

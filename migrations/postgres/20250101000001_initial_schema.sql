@@ -288,5 +288,102 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     CONSTRAINT refresh_tokens_time_check CHECK (created_at <= expires_at)
 );
 
+-- Organization secrets table
+CREATE TABLE IF NOT EXISTS organization_secrets (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,  -- Encrypted by application
+    description TEXT,
+
+    created_by_user_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+    updated_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+
+    UNIQUE(organization_id, key),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+);
+
+-- ============================================================================
+-- PERFORMANCE INDEXES
+-- ============================================================================
+
+-- Core execution indexes
+CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_runs_organization_time ON runs(organization_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_organization_flow_status_time ON runs(organization_id, flow_name, status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(triggered_by_user_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status_time ON runs(status, started_at DESC) WHERE status IN ('PENDING', 'RUNNING');
+
+-- Flow management indexes
+CREATE INDEX IF NOT EXISTS idx_flows_organization_name ON flows(organization_id, name);
+CREATE INDEX IF NOT EXISTS idx_flows_user ON flows(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_flow_versions_organization_name ON flow_versions(organization_id, flow_name, deployed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deployed_flows_organization ON deployed_flows(organization_id);
+
+-- Webhook routing indexes (HOT PATH - critical for performance)
+CREATE INDEX IF NOT EXISTS idx_flow_triggers_organization_topic ON flow_triggers(organization_id, topic, flow_name, version);
+CREATE INDEX IF NOT EXISTS idx_deployed_flows_join ON deployed_flows(organization_id, flow_name, deployed_version);
+
+-- OAuth indexes
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_user_organization ON oauth_credentials(user_id, organization_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_organization ON oauth_credentials(organization_id);
+
+-- Paused runs indexes
+CREATE INDEX IF NOT EXISTS idx_paused_runs_organization ON paused_runs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_paused_runs_source ON paused_runs(source) WHERE source IS NOT NULL;
+
+-- User indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_active ON users(email) WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_users_disabled ON users(disabled, disabled_at) WHERE disabled = TRUE;
+
+-- Organization indexes
+CREATE INDEX IF NOT EXISTS idx_organizations_created_by ON organizations(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_organizations_disabled ON organizations(disabled) WHERE disabled = TRUE;
+
+-- Organization membership indexes
+CREATE INDEX IF NOT EXISTS idx_organization_members_organization_role ON organization_members(organization_id, role) WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_organization_members_user ON organization_members(user_id) WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_organization_members_invited_by ON organization_members(invited_by_user_id) WHERE invited_by_user_id IS NOT NULL;
+
+-- Refresh token indexes (with partial indexes for active tokens)
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id) WHERE revoked = FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_hash_active ON refresh_tokens(token_hash) WHERE revoked = FALSE;
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at) WHERE revoked = FALSE;
+
+-- Organization secrets indexes
+CREATE INDEX IF NOT EXISTS idx_organization_secrets_organization ON organization_secrets(organization_id);
+CREATE INDEX IF NOT EXISTS idx_organization_secrets_created_by ON organization_secrets(created_by_user_id);
+
+-- ============================================================================
+-- JSONB INDEXES (GIN - for fast JSON queries)
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_runs_event_gin ON runs USING GIN(event);
+CREATE INDEX IF NOT EXISTS idx_runs_vars_gin ON runs USING GIN(vars);
+CREATE INDEX IF NOT EXISTS idx_steps_outputs_gin ON steps USING GIN(outputs);
+CREATE INDEX IF NOT EXISTS idx_flows_tags_gin ON flows USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_organizations_settings_gin ON organizations USING GIN(settings);
+
+
+-- ============================================================================
+-- QUERY OPTIMIZATION HINTS
+-- ============================================================================
+
+-- Increase statistics target for high-cardinality columns
+ALTER TABLE runs ALTER COLUMN organization_id SET STATISTICS 1000;
+ALTER TABLE flows ALTER COLUMN organization_id SET STATISTICS 1000;
+ALTER TABLE flow_triggers ALTER COLUMN topic SET STATISTICS 1000;
+ALTER TABLE users ALTER COLUMN email SET STATISTICS 1000;
+
+-- ============================================================================
+-- COMMENTS (Documentation)
+-- ============================================================================
+
+COMMENT ON TABLE runs IS 'Workflow execution tracking with multi-organization isolation';
+COMMENT ON COLUMN users.mfa_secret IS 'TOTP secret - must be encrypted at application layer';
+COMMENT ON COLUMN oauth_credentials.access_token IS 'OAuth access token - encrypted at application layer before storage';
 COMMENT ON COLUMN organization_secrets.value IS 'Secret value - encrypted at application layer before storage';
 COMMENT ON COLUMN oauth_providers.client_secret IS 'OAuth provider secret - encrypted at application layer before storage';

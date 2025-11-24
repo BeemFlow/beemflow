@@ -425,8 +425,6 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         chrono::Duration::minutes(15), // 15-minute access tokens
     ));
 
-    // Initialize audit logger
-
     let state = AppState {
         registry,
         session_store: session_store.clone(),
@@ -611,7 +609,7 @@ fn build_router(
         create_protected_oauth_client_routes(oauth_client_state)
             .layer(axum::middleware::from_fn(single_user_context_middleware))
     } else {
-        // Multi-tenant mode: Full auth + tenant + audit middleware
+        // Multi-tenant mode: Full auth + tenant middleware
         create_protected_oauth_client_routes(oauth_client_state)
             .layer(axum::middleware::from_fn_with_state(
                 auth_middleware_state.clone(),
@@ -624,7 +622,7 @@ fn build_router(
     };
     app = app.nest("/api", protected_oauth_routes);
 
-    // Management routes (user/org/member/audit) - PROTECTED with full middleware stack
+    // Management routes (user/org/member) - PROTECTED with full middleware stack
     let management_routes = if http_config.single_user {
         crate::auth::create_management_routes(state.storage.clone())
             .layer(axum::middleware::from_fn(single_user_context_middleware))
@@ -705,10 +703,9 @@ fn build_router(
             build_operation_routes(&state)
                 .layer(axum::middleware::from_fn(single_user_context_middleware))
         } else {
-            // Multi-organization mode: Full auth + organization + audit middleware
+            // Multi-organization mode: Full auth + organization middleware
             // Note: Layers are applied in reverse order (last = first to execute)
             build_operation_routes(&state)
-                // Third: Log audit events after request completion
                 // Second: Resolve organization and create full RequestContext
                 .layer(axum::middleware::from_fn_with_state(
                     auth_middleware_state.clone(),
