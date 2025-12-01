@@ -36,7 +36,7 @@ pin-project = "1.1"
 axum = { version = "0.8", features = ["ws", "form"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["full"] }
-hyper = { version = "1.7", features = ["full"] }
+hyper = { version = "1.8", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-webpki-roots"] }
 
@@ -51,7 +51,7 @@ serde_yaml = "0.9"
 serde_with = "3"
 
 # Templating
-minijinja = { version = "2.12", features = ["builtins"] }
+minijinja = { version = "2.13", features = ["builtins"] }
 
 # MCP - Official Rust SDK
 rmcp = { version = "0.8", features = [
@@ -84,7 +84,7 @@ thiserror = "2.0"
 # Validation
 jsonschema = "0.33"
 validator = { version = "0.20", features = ["derive"] }
-schemars = "1.0"
+schemars = "1.1"
 
 # UUID & Time
 uuid = { version = "1.8", features = ["v4", "v5", "serde"] }
@@ -92,7 +92,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # OAuth
 oauth2 = "5.0"
-jsonwebtoken = { version = "10.1", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.2", default-features = false, features = ["rust_crypto"] }
 rand = "0.9"
 base64 = "0.22"
 url = "2"
@@ -107,7 +107,7 @@ hmac = "0.12"
 
 # Utilities
 itertools = "0.14"
-bytes = "1.8"
+bytes = "1.11"
 parking_lot = "0.12"
 dashmap = "6.1"
 regex = "1.12"
