@@ -2,17 +2,22 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../lib/api';
+import { Permission } from '../../types/beemflow';
 import type { Organization } from '../../types/beemflow';
 
 export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, organization, logout, switchOrganization } = useAuth();
+  const { user, organization, role, logout, switchOrganization, hasPermission } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showOrgMenu, setShowOrgMenu] = useState(false);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [isSwitchingOrg, setIsSwitchingOrg] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const orgMenuRef = useRef<HTMLDivElement>(null);
+
+  // Permission checks
+  const canCreateFlows = hasPermission(Permission.FlowsCreate);
 
   // Load organizations for switcher
   useEffect(() => {
@@ -40,8 +45,24 @@ export function Layout() {
     navigate('/login');
   };
 
-  const handleSwitchOrg = (orgId: string) => {
-    switchOrganization(orgId); // Now just local state update
+  const handleSwitchOrg = async (orgId: string) => {
+    // Prevent switching to same org
+    if (orgId === organization?.id) {
+      setShowOrgMenu(false);
+      return;
+    }
+
+    setIsSwitchingOrg(true);
+    try {
+      await switchOrganization(orgId);
+    } catch (error) {
+      console.error('Failed to switch organization:', error);
+      // Keep menu open so user can try again
+      return;
+    } finally {
+      setIsSwitchingOrg(false);
+    }
+
     setShowOrgMenu(false);
   };
 
@@ -68,16 +89,18 @@ export function Layout() {
                 >
                   Dashboard
                 </Link>
-                <Link
-                  to="/flows/new"
-                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    location.pathname.startsWith('/flows')
-                      ? 'bg-primary-50 text-primary-700'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
-                >
-                  Create Flow
-                </Link>
+                {canCreateFlows && (
+                  <Link
+                    to="/flows/new"
+                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      location.pathname.startsWith('/flows')
+                        ? 'bg-primary-50 text-primary-700'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    Create Flow
+                  </Link>
+                )}
               </nav>
             </div>
 
@@ -103,40 +126,60 @@ export function Layout() {
                 Settings
               </Link>
 
-              {/* Organization Switcher */}
-              {organizations.length > 1 && (
-                <div className="relative" ref={orgMenuRef}>
-                  <button
-                    onClick={() => setShowOrgMenu(!showOrgMenu)}
-                    className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
-                  >
-                    <span>{organization?.name}</span>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {showOrgMenu && (
-                    <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
-                      <div className="py-1">
-                        {organizations.map((org) => (
-                          <button
-                            key={org.id}
-                            onClick={() => handleSwitchOrg(org.id)}
-                            className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-100 ${
-                              org.id === organization?.id ? 'bg-gray-50 font-medium' : ''
-                            }`}
-                          >
-                            {org.name}
-                            {org.id === organization?.id && (
-                              <span className="ml-2 text-xs text-gray-500">(current)</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+              {/* Organization Switcher - Always show to allow creation */}
+              <div className="relative" ref={orgMenuRef}>
+                <button
+                  onClick={() => setShowOrgMenu(!showOrgMenu)}
+                  disabled={isSwitchingOrg}
+                  className="flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={`${organization?.name} - ${role}`}
+                >
+                  {isSwitchingOrg ? (
+                    <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+                  ) : (
+                    <>
+                      <span className="max-w-[150px] truncate">{organization?.name}</span>
+                      {role && (
+                        <span className="text-xs text-gray-500 capitalize">({role})</span>
+                      )}
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </>
                   )}
-                </div>
-              )}
+                </button>
+                {showOrgMenu && (
+                  <div className="absolute right-0 mt-2 w-64 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                    <div className="py-1">
+                      <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+                        Organizations
+                      </div>
+                      {organizations.map((org) => (
+                        <button
+                          key={org.id}
+                          onClick={() => handleSwitchOrg(org.id)}
+                          disabled={isSwitchingOrg}
+                          className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            org.id === organization?.id ? 'bg-gray-50' : ''
+                          }`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className={org.id === organization?.id ? 'font-medium text-gray-900' : 'text-gray-700'}>
+                              {org.name}
+                              {org.id === organization?.id && (
+                                <span className="ml-2 text-xs text-gray-500">(current)</span>
+                              )}
+                            </span>
+                            <span className="text-xs text-gray-500 capitalize px-2 py-0.5 bg-gray-100 rounded">
+                              {org.role}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* User Menu */}
               <div className="relative" ref={userMenuRef}>

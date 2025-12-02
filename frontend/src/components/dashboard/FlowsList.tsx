@@ -1,13 +1,22 @@
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import { useFlows, useDeleteFlow, useDeployFlow } from '../../hooks/useFlows';
 import { useStartRun } from '../../hooks/useRuns';
 import { formatDistanceToNow } from 'date-fns';
+import { Permission } from '../../types/beemflow';
 
 export function FlowsList() {
+  const { hasPermission } = useAuth();
   const { data: flows, isLoading, error } = useFlows();
   const deleteFlow = useDeleteFlow();
   const deployFlow = useDeployFlow();
   const startRun = useStartRun();
+
+  // Permission checks
+  const canTriggerRuns = hasPermission(Permission.RunsTrigger);
+  const canDeploy = hasPermission(Permission.FlowsDeploy);
+  const canDelete = hasPermission(Permission.FlowsDelete);
+  const canCreate = hasPermission(Permission.FlowsCreate);
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -69,14 +78,18 @@ export function FlowsList() {
         <div className="text-6xl mb-4">📋</div>
         <h3 className="text-lg font-semibold text-gray-900 mb-2">No flows yet</h3>
         <p className="text-gray-600 mb-4">
-          Create your first workflow to get started
+          {canCreate
+            ? 'Create your first workflow to get started'
+            : 'No workflows have been created yet'}
         </p>
-        <Link
-          to="/flows/new"
-          className="inline-block px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          Create Flow
-        </Link>
+        {canCreate && (
+          <Link
+            to="/flows/new"
+            className="inline-block px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Create Flow
+          </Link>
+        )}
       </div>
     );
   }
@@ -138,34 +151,40 @@ export function FlowsList() {
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex items-center justify-end space-x-2">
-                  <button
-                    onClick={(e) => handleRun(flow.name, e)}
-                    className="text-green-600 hover:text-green-900"
-                    title="Run"
-                  >
-                    ▶️
-                  </button>
+                  {canTriggerRuns && (
+                    <button
+                      onClick={(e) => handleRun(flow.name, e)}
+                      className="text-green-600 hover:text-green-900 p-1"
+                      title="Run flow"
+                    >
+                      ▶️
+                    </button>
+                  )}
                   <Link
                     to={`/flows/${flow.name}`}
-                    className="text-primary-600 hover:text-primary-900"
-                    title="Edit"
+                    className="text-primary-600 hover:text-primary-900 p-1"
+                    title="View/Edit flow"
                   >
                     ✏️
                   </Link>
-                  <button
-                    onClick={(e) => handleDeploy(flow.name, e)}
-                    className="text-blue-600 hover:text-blue-900"
-                    title="Deploy"
-                  >
-                    🚀
-                  </button>
-                  <button
-                    onClick={(e) => handleDelete(flow.name, e)}
-                    className="text-red-600 hover:text-red-900"
-                    title="Delete"
-                  >
-                    🗑️
-                  </button>
+                  {canDeploy && (
+                    <button
+                      onClick={(e) => handleDeploy(flow.name, e)}
+                      className="text-blue-600 hover:text-blue-900 p-1"
+                      title="Deploy flow"
+                    >
+                      🚀
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={(e) => handleDelete(flow.name, e)}
+                      className="text-red-600 hover:text-red-900 p-1"
+                      title="Delete flow"
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>

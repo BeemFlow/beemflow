@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../lib/api';
-import type { OrganizationMember } from '../../types/beemflow';
+import { Permission } from '../../types/beemflow';
+import type { Role, OrganizationMember } from '../../types/beemflow';
+import { getAssignableRoles, canAssignRole, getRoleLabel } from '../../lib/permissions';
 
 export function TeamPage() {
-  const { user, organization } = useAuth();
+  const { user, role, hasPermission } = useAuth();
   const [members, setMembers] = useState<OrganizationMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -12,10 +14,12 @@ export function TeamPage() {
   // Invite member state
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'viewer' | 'member' | 'admin'>('member');
+  const [inviteRole, setInviteRole] = useState<Role>('member');
   const [isInviting, setIsInviting] = useState(false);
 
-  const canManageMembers = organization?.role === 'owner' || organization?.role === 'admin';
+  // Permission checks
+  const canManage = hasPermission(Permission.MembersInvite);
+  const assignableRoles = getAssignableRoles(role);
 
   useEffect(() => {
     loadMembers();
@@ -53,6 +57,20 @@ export function TeamPage() {
   };
 
   const handleChangeRole = async (userId: string, newRole: string) => {
+    // Security checks to prevent privilege escalation
+
+    // 1. Prevent users from changing their own role
+    if (userId === user?.id) {
+      setError('You cannot change your own role');
+      return;
+    }
+
+    // 2. Validate the new role is one the current user can assign
+    if (!canAssignRole(role, newRole as Role)) {
+      setError(`You do not have permission to assign the ${newRole} role`);
+      return;
+    }
+
     try {
       await api.updateMemberRole(userId, newRole);
       await loadMembers();
@@ -83,8 +101,15 @@ export function TeamPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-medium text-gray-900">Team Members</h2>
-        {canManageMembers && (
+        <div>
+          <h2 className="text-lg font-medium text-gray-900">Team Members</h2>
+          {role && (
+            <p className="text-sm text-gray-500 mt-1">
+              Your role: <span className="font-medium capitalize">{role}</span>
+            </p>
+          )}
+        </div>
+        {canManage && (
           <button
             onClick={() => setShowInviteForm(!showInviteForm)}
             className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
@@ -101,7 +126,7 @@ export function TeamPage() {
       )}
 
       {/* Invite Form */}
-      {showInviteForm && canManageMembers && (
+      {showInviteForm && canManage && (
         <form onSubmit={handleInvite} className="bg-gray-50 p-4 rounded-md space-y-4">
           <div>
             <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700">
@@ -124,13 +149,18 @@ export function TeamPage() {
             <select
               id="invite-role"
               value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as 'viewer' | 'member' | 'admin')}
+              onChange={(e) => setInviteRole(e.target.value as Role)}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
             >
-              <option value="viewer">Viewer</option>
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
+              {assignableRoles.map((r) => (
+                <option key={r} value={r}>
+                  {getRoleLabel(r)}
+                </option>
+              ))}
             </select>
+            {assignableRoles.length === 0 && (
+              <p className="mt-1 text-xs text-red-500">You do not have permission to invite members</p>
+            )}
           </div>
 
           <div className="flex space-x-2">
@@ -179,25 +209,28 @@ export function TeamPage() {
                 </div>
 
                 <div className="flex items-center space-x-3">
-                  {canManageMembers && member.role !== 'owner' ? (
+                  {canManage && assignableRoles.length > 0 && member.user.id !== user?.id ? (
                     <select
                       value={member.role}
                       onChange={(e) => handleChangeRole(member.user.id, e.target.value)}
-                      disabled={member.user.id === user?.id}
-                      className="text-sm border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-sm border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                     >
-                      <option value="viewer">Viewer</option>
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                      <option value="owner">Owner</option>
+                      {assignableRoles.map((r) => (
+                        <option key={r} value={r}>
+                          {getRoleLabel(r)}
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 capitalize">
                       {member.role}
+                      {member.user.id === user?.id && (
+                        <span className="ml-1 text-gray-500">(you)</span>
+                      )}
                     </span>
                   )}
 
-                  {canManageMembers && member.role !== 'owner' && member.user.id !== user?.id && (
+                  {canManage && member.user.id !== user?.id && member.role !== 'owner' && (
                     <button
                       onClick={() => handleRemove(member.user.id)}
                       className="text-sm text-red-600 hover:text-red-900"

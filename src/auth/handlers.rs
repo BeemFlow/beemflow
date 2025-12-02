@@ -31,16 +31,23 @@ pub struct AuthState {
 }
 
 /// Create authentication router
+///
+/// All auth routes are versioned under `/v1/auth/*` for API consistency.
+/// When nested under `/api`, the full paths become:
+/// - POST `/api/v1/auth/register`
+/// - POST `/api/v1/auth/login`
+/// - POST `/api/v1/auth/refresh`
+/// - POST `/api/v1/auth/logout`
 pub fn create_auth_routes(state: Arc<AuthState>) -> Router {
     Router::new()
-        .route("/auth/register", post(register))
-        .route("/auth/login", post(login))
-        .route("/auth/refresh", post(refresh))
-        .route("/auth/logout", post(logout))
+        .route("/v1/auth/register", post(register))
+        .route("/v1/auth/login", post(login))
+        .route("/v1/auth/refresh", post(refresh))
+        .route("/v1/auth/logout", post(logout))
         .with_state(state)
 }
 
-/// POST /auth/register - Register new user and create default organization
+/// POST /v1/auth/register - Register new user and create default organization
 async fn register(
     State(state): State<Arc<AuthState>>,
     request: Request,
@@ -154,7 +161,7 @@ async fn register(
     }))
 }
 
-/// POST /auth/login - Authenticate user
+/// POST /v1/auth/login - Authenticate user
 async fn login(
     State(state): State<Arc<AuthState>>,
     Json(login_req): Json<LoginRequest>,
@@ -214,7 +221,7 @@ async fn login(
     }))
 }
 
-/// POST /auth/refresh - Refresh access token using refresh token
+/// POST /v1/auth/refresh - Refresh access token using refresh token
 async fn refresh(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<RefreshRequest>,
@@ -278,7 +285,7 @@ async fn refresh(
     })))
 }
 
-/// POST /auth/logout - Revoke refresh token
+/// POST /v1/auth/logout - Revoke refresh token
 async fn logout(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<RefreshRequest>,

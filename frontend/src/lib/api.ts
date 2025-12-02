@@ -50,7 +50,7 @@ class BeemFlowAPI {
     this.client.interceptors.request.use(
       (config) => {
         // Don't add auth headers to auth endpoints (login, register, refresh, logout)
-        const isAuthEndpoint = config.url?.includes('/auth/');
+        const isAuthEndpoint = config.url?.includes('/v1/auth/');
 
         if (this.accessToken && !isAuthEndpoint) {
           config.headers.Authorization = `Bearer ${this.accessToken}`;
@@ -73,7 +73,7 @@ class BeemFlowAPI {
         const originalRequest = error.config;
 
         // Handle 401 unauthorized - attempt token refresh
-        if (error.response?.status === 401 && this.refreshToken && originalRequest && !originalRequest.url?.includes('/auth/refresh')) {
+        if (error.response?.status === 401 && this.refreshToken && originalRequest && !originalRequest.url?.includes('/v1/auth/refresh')) {
           try {
             // Prevent multiple simultaneous refresh requests
             if (!this.refreshPromise) {
@@ -117,7 +117,7 @@ class BeemFlowAPI {
       throw new Error('No refresh token available');
     }
 
-    const response = await this.client.post<LoginResponse>('/auth/refresh', {
+    const response = await this.client.post<LoginResponse>('/v1/auth/refresh', {
       refresh_token: this.refreshToken,
     });
 
@@ -151,7 +151,7 @@ class BeemFlowAPI {
   // ============================================================================
 
   async login(credentials: LoginRequest): Promise<LoginResponse> {
-    const response = await this.client.post<LoginResponse>('/auth/login', credentials);
+    const response = await this.client.post<LoginResponse>('/v1/auth/login', credentials);
     this.setTokens(response.data.access_token, response.data.refresh_token);
 
     // Set default organization (from login response)
@@ -163,7 +163,7 @@ class BeemFlowAPI {
   }
 
   async register(data: RegisterRequest): Promise<LoginResponse> {
-    const response = await this.client.post<LoginResponse>('/auth/register', data);
+    const response = await this.client.post<LoginResponse>('/v1/auth/register', data);
     this.setTokens(response.data.access_token, response.data.refresh_token);
 
     // Set default organization (from registration response)
@@ -176,7 +176,7 @@ class BeemFlowAPI {
 
   async logout(): Promise<void> {
     try {
-      await this.client.post('/auth/logout');
+      await this.client.post('/v1/auth/logout');
     } finally {
       this.clearTokens();
       this.currentOrganizationId = null;
@@ -437,24 +437,24 @@ class BeemFlowAPI {
   // ============================================================================
 
   async listOAuthProviders(): Promise<OAuthProviderInfo[]> {
-    const response = await this.client.get<{ providers: OAuthProviderInfo[] }>('/oauth/providers');
+    const response = await this.client.get<{ providers: OAuthProviderInfo[] }>('/v1/oauth/providers');
     return response.data.providers;
   }
 
   async connectOAuthProvider(providerId: string, scopes?: string[]): Promise<ConnectOAuthProviderResponse> {
     const response = await this.client.post<ConnectOAuthProviderResponse>(
-      `/oauth/providers/${providerId}/connect`,
+      `/v1/oauth/providers/${providerId}/connect`,
       { scopes }
     );
     return response.data;
   }
 
   async disconnectOAuthProvider(providerId: string): Promise<void> {
-    await this.client.delete(`/oauth/providers/${providerId}/disconnect`);
+    await this.client.delete(`/v1/oauth/providers/${providerId}/disconnect`);
   }
 
   async listOAuthConnections(): Promise<OAuthConnection[]> {
-    const response = await this.client.get<{ connections: OAuthConnection[] }>('/oauth/connections');
+    const response = await this.client.get<{ connections: OAuthConnection[] }>('/v1/oauth/connections');
     return response.data.connections;
   }
 

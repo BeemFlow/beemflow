@@ -22,8 +22,8 @@ export function LoginPage() {
     try {
       await login({ email, password });
       navigate(from, { replace: true });
-    } catch (err) {
-      // Error is handled by AuthContext
+    } catch {
+      // Error is handled by AuthContext and displayed in UI
     } finally {
       setIsLoading(false);
     }

@@ -599,7 +599,10 @@ pub struct OAuthClientState {
 
 /// Create public OAuth client routes (callbacks - no auth required)
 ///
-/// These routes must remain public because OAuth providers redirect to them.
+/// These routes are intentionally NOT versioned and mounted at the root level:
+/// - `/oauth/callback` - Browser-based OAuth callback
+/// - `/oauth/callback/api` - API-based OAuth callback
+///
 /// The callbacks validate CSRF tokens and retrieve user context from session.
 ///
 /// Note: No /oauth/success route needed - success page served by frontend (React)
@@ -612,27 +615,39 @@ pub fn create_public_oauth_client_routes(state: Arc<OAuthClientState>) -> Router
 
 /// Create protected OAuth client routes (requires authentication)
 ///
-/// These routes initiate OAuth flows and manage credentials.
+/// All protected OAuth routes are versioned under `/v1/oauth/*` for API consistency.
+/// When nested under `/api`, the full paths become:
+/// - GET  `/api/v1/oauth/providers`
+/// - GET  `/api/v1/oauth/providers/{provider}`
+/// - POST `/api/v1/oauth/providers/{provider}/connect`
+/// - GET  `/api/v1/oauth/credentials`
+/// - DELETE `/api/v1/oauth/credentials/{id}`
+/// - GET  `/api/v1/oauth/connections`
+/// - DELETE `/api/v1/oauth/providers/{provider}/disconnect`
+///
 /// Protected by auth_middleware and organization_middleware.
 pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
     Router::new()
         // Provider browsing (HTML + JSON)
-        .route("/oauth/providers", get(oauth_providers_handler))
-        .route("/oauth/providers/{provider}", get(oauth_provider_handler))
+        .route("/v1/oauth/providers", get(oauth_providers_handler))
+        .route(
+            "/v1/oauth/providers/{provider}",
+            get(oauth_provider_handler),
+        )
         // OAuth flow initiation
         .route(
-            "/oauth/providers/{provider}/connect",
+            "/v1/oauth/providers/{provider}/connect",
             post(connect_oauth_provider_post_handler),
         )
         // Credential management (RESTful)
-        .route("/oauth/credentials", get(list_oauth_credentials_handler))
+        .route("/v1/oauth/credentials", get(list_oauth_credentials_handler))
         .route(
-            "/oauth/credentials/{id}",
+            "/v1/oauth/credentials/{id}",
             delete(delete_oauth_credential_handler),
         )
-        .route("/oauth/connections", get(list_oauth_connections_handler))
+        .route("/v1/oauth/connections", get(list_oauth_connections_handler))
         .route(
-            "/oauth/providers/{provider}/disconnect",
+            "/v1/oauth/providers/{provider}/disconnect",
             delete(disconnect_oauth_provider_handler),
         )
         .with_state(state)

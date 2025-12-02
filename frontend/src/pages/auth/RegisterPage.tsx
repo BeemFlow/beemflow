@@ -35,8 +35,8 @@ export function RegisterPage() {
     try {
       await register({ email, password, name: name || undefined });
       navigate('/', { replace: true });
-    } catch (err) {
-      // Error is handled by AuthContext
+    } catch {
+      // Error is handled by AuthContext and displayed in UI
     } finally {
       setIsLoading(false);
     }

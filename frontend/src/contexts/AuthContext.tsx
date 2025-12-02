@@ -1,11 +1,17 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
-import type { User, Organization, LoginRequest, RegisterRequest } from '../types/beemflow';
+import { hasPermission as checkPermission, safeExtractRole } from '../lib/permissions';
+import type { User, Organization, LoginRequest, RegisterRequest, Role, Permission } from '../types/beemflow';
 
 interface AuthState {
   user: User | null;
   organization: Organization | null;
+  /**
+   * User's role in the current organization
+   * Extracted from organization.role for convenience
+   */
+  role: Role | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   error: string | null;
@@ -15,9 +21,20 @@ interface AuthContextValue extends AuthState {
   login: (credentials: LoginRequest) => Promise<void>;
   register: (data: RegisterRequest) => Promise<void>;
   logout: () => Promise<void>;
-  switchOrganization: (organizationId: string) => void;
+  /**
+   * Switch to a different organization
+   * @param organizationId - ID of organization to switch to
+   * @returns Promise that resolves when the switch is complete
+   */
+  switchOrganization: (organizationId: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   clearError: () => void;
+  /**
+   * Check if the current user has a specific permission
+   * @param permission - Permission to check
+   * @returns true if user has the permission
+   */
+  hasPermission: (permission: Permission) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -30,6 +47,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({
     user: null,
     organization: null,
+    role: null,
     isLoading: true,
     isAuthenticated: false,
     error: null,
@@ -45,6 +63,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setState({
           user: null,
           organization: null,
+          role: null,
           isLoading: false,
           isAuthenticated: false,
           error: null,
@@ -60,6 +79,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState({
         user,
         organization,
+        // Validate role from API response to prevent runtime errors
+        // If backend returns invalid role, fall back to null (no permissions)
+        role: safeExtractRole(organization.role),
         isLoading: false,
         isAuthenticated: true,
         error: null,
@@ -69,6 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState({
         user: null,
         organization: null,
+        role: null,
         isLoading: false,
         isAuthenticated: false,
         error: error instanceof Error ? error.message : 'Failed to refresh user',
@@ -84,6 +107,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState({
         user: response.user,
         organization: response.organization,
+        role: safeExtractRole(response.organization.role),
         isLoading: false,
         isAuthenticated: true,
         error: null,
@@ -106,6 +130,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState({
         user: response.user,
         organization: response.organization,
+        role: safeExtractRole(response.organization.role),
         isLoading: false,
         isAuthenticated: true,
         error: null,
@@ -127,6 +152,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState({
         user: null,
         organization: null,
+        role: null,
         isLoading: false,
         isAuthenticated: false,
         error: null,
@@ -134,18 +160,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
-  const switchOrganization = useCallback((organizationId: string) => {
-    // Update API client header (no server call needed!)
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    // Update API client header for subsequent requests
     api.setOrganization(organizationId);
 
     // Refresh user data to get new organization info
-    refreshUser();
+    // IMPORTANT: Must await to prevent race conditions with stale role data
+    await refreshUser();
   }, [refreshUser]);
 
   // Auto-refresh user on mount if authenticated
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
+
+  /**
+   * Memoized permission checker to avoid unnecessary recalculations
+   * Only recomputes when the user's role changes
+   */
+  const hasPermissionMemo = useMemo(
+    () => (permission: Permission) => checkPermission(state.role, permission),
+    [state.role]
+  );
 
   const value: AuthContextValue = {
     ...state,
@@ -155,11 +191,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     switchOrganization,
     refreshUser,
     clearError,
+    hasPermission: hasPermissionMemo,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (context === undefined) {
