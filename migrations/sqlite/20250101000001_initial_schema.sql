@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS runs (
     CHECK (ended_at IS NULL OR started_at <= ended_at)
 );
 
--- Steps table (step execution tracking)
+-- Steps table (step execution tracking) - Multi-organization
 CREATE TABLE IF NOT EXISTS steps (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,  -- Denormalized for direct isolation queries
     step_name TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'WAITING', 'SKIPPED')),
     started_at BIGINT NOT NULL,
@@ -311,6 +312,8 @@ CREATE TABLE IF NOT EXISTS organization_secrets (
 
 -- Core execution indexes
 CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_steps_organization ON steps(organization_id);
+CREATE INDEX IF NOT EXISTS idx_steps_run_org ON steps(run_id, organization_id);
 CREATE INDEX IF NOT EXISTS idx_runs_organization_time ON runs(organization_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_organization_flow_status_time ON runs(organization_id, flow_name, status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(triggered_by_user_id, started_at DESC);

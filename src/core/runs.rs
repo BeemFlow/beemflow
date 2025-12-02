@@ -137,7 +137,11 @@ pub mod runs {
                 .ok_or_else(|| not_found("Run", &input.run_id))?;
 
             // Fetch step execution details
-            let steps = self.deps.storage.get_steps(run_id).await?;
+            let steps = self
+                .deps
+                .storage
+                .get_steps(run_id, &ctx.organization_id)
+                .await?;
             run.steps = if steps.is_empty() { None } else { Some(steps) };
 
             Ok(serde_json::to_value(run)?)

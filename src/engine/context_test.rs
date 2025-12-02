@@ -77,6 +77,7 @@ async fn test_runs_access_previous() {
     let step = StepRun {
         id: Uuid::new_v4(),
         run_id: prev_run.id,
+        organization_id: "test_org".to_string(),
         step_name: "step1".to_string().into(),
         status: StepStatus::Succeeded,
         started_at: Utc::now(),

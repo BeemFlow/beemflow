@@ -455,7 +455,7 @@ steps:
     let paused_runs = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .expect("Should find paused runs");
     assert_eq!(paused_runs.len(), 1, "Should have one paused run");
@@ -504,7 +504,7 @@ steps:
     let after_resume = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .expect("Should query");
     assert_eq!(after_resume.len(), 0, "Paused run should be deleted");
@@ -544,7 +544,7 @@ steps:
     let paused = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     let (token, _) = &paused[0];
@@ -566,7 +566,7 @@ steps:
     let still_paused = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     assert_eq!(still_paused.len(), 1, "Should still be paused");
@@ -583,7 +583,7 @@ steps:
     let cleaned = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     assert_eq!(cleaned.len(), 0, "Should be cleaned up");

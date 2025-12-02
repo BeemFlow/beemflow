@@ -197,7 +197,7 @@ pub mod flows {
             crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
 
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
-            let flows = crate::storage::flows::list_flows(&flows_dir).await?;
+            let flows = crate::storage::flows::list_flows(&flows_dir, &ctx.organization_id).await?;
             Ok(ListOutput { flows })
         }
     }
@@ -224,9 +224,10 @@ pub mod flows {
             crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsRead)?;
 
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
-            let content = crate::storage::flows::get_flow(&flows_dir, &input.name)
-                .await?
-                .ok_or_else(|| not_found("Flow", &input.name))?;
+            let content =
+                crate::storage::flows::get_flow(&flows_dir, &ctx.organization_id, &input.name)
+                    .await?
+                    .ok_or_else(|| not_found("Flow", &input.name))?;
 
             // Parse to get version
             let flow = parse_string(&content, None)?;
@@ -286,7 +287,9 @@ pub mod flows {
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
 
             // Save flow (returns true if file was updated, false if created new)
-            let was_updated = crate::storage::flows::save_flow(&flows_dir, &name, &content).await?;
+            let was_updated =
+                crate::storage::flows::save_flow(&flows_dir, &ctx.organization_id, &name, &content)
+                    .await?;
 
             let status = if was_updated { "updated" } else { "created" };
             let version = flow.version.unwrap_or_else(|| "1.0.0".to_string());
@@ -321,7 +324,8 @@ pub mod flows {
             crate::auth::check_permission(&ctx, crate::auth::Permission::FlowsDelete)?;
 
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
-            crate::storage::flows::delete_flow(&flows_dir, &input.name).await?;
+            crate::storage::flows::delete_flow(&flows_dir, &ctx.organization_id, &input.name)
+                .await?;
 
             Ok(DeleteOutput {
                 status: "deleted".to_string(),
@@ -362,9 +366,10 @@ pub mod flows {
 
             // Get flow content from filesystem (draft)
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
-            let content = crate::storage::flows::get_flow(&flows_dir, &input.name)
-                .await?
-                .ok_or_else(|| not_found("Flow", &input.name))?;
+            let content =
+                crate::storage::flows::get_flow(&flows_dir, &ctx.organization_id, &input.name)
+                    .await?
+                    .ok_or_else(|| not_found("Flow", &input.name))?;
 
             // Parse to get version
             let flow = parse_string(&content, None)?;
@@ -839,7 +844,13 @@ pub mod flows {
 
             // Write to filesystem
             let flows_dir = crate::config::get_flows_dir(&self.deps.config);
-            crate::storage::flows::save_flow(&flows_dir, &input.name, &content).await?;
+            crate::storage::flows::save_flow(
+                &flows_dir,
+                &ctx.organization_id,
+                &input.name,
+                &content,
+            )
+            .await?;
 
             let message = format!(
                 "Flow '{}' v{} restored from deployment history to filesystem",
@@ -921,6 +932,7 @@ pub mod flows {
 
             let flow = super::load_flow_from_config(
                 &self.deps.config,
+                &ctx.organization_id,
                 Some(&input.name),
                 input.file.as_deref(),
             )

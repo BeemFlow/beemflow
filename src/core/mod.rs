@@ -290,6 +290,7 @@ where
 // Helper function for loading flows from name or file
 async fn load_flow_from_config(
     config: &Config,
+    organization_id: &str,
     name: Option<&str>,
     file: Option<&str>,
 ) -> Result<crate::model::Flow> {
@@ -298,7 +299,7 @@ async fn load_flow_from_config(
         (Some(f), _) => parse_file(f, None),
         (None, Some(n)) => {
             let flows_dir = crate::config::get_flows_dir(config);
-            let content = crate::storage::flows::get_flow(&flows_dir, n)
+            let content = crate::storage::flows::get_flow(&flows_dir, organization_id, n)
                 .await?
                 .ok_or_else(|| not_found("Flow", n))?;
             parse_string(&content, None)

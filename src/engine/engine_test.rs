@@ -366,7 +366,7 @@ async fn test_execute_catch_block() {
 
     // Fetch steps separately (they're in a separate table)
     let steps = storage
-        .get_steps(catch_run.id)
+        .get_steps(catch_run.id, "test_org")
         .await
         .expect("Failed to get steps");
 
@@ -739,7 +739,7 @@ async fn test_await_event_resume_roundtrip() {
     // Verify we can query by source (webhook architecture)
     // The flow uses source: test (not webhook.test)
     let source_runs = storage
-        .find_paused_runs_by_source("test")
+        .find_paused_runs_by_source("test", "test_org")
         .await
         .expect("Should query by source");
     assert_eq!(source_runs.len(), 1, "Should find paused run by source");
@@ -769,7 +769,7 @@ async fn test_await_event_resume_roundtrip() {
 
     // Verify source query returns empty after resume
     let source_after = storage
-        .find_paused_runs_by_source("test")
+        .find_paused_runs_by_source("test", "test_org")
         .await
         .expect("Should query by source");
     assert_eq!(

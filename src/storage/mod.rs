@@ -80,10 +80,16 @@ pub trait RunStorage: Send + Sync {
 
     // Step methods
     /// Save a step execution
+    ///
+    /// The step's organization_id field is stored for isolation queries.
     async fn save_step(&self, step: &StepRun) -> Result<()>;
 
     /// Get steps for a run
-    async fn get_steps(&self, run_id: Uuid) -> Result<Vec<StepRun>>;
+    ///
+    /// # Multi-organization isolation
+    /// Verifies steps belong to the specified organization. Returns empty if
+    /// the run exists but belongs to a different organization.
+    async fn get_steps(&self, run_id: Uuid, organization_id: &str) -> Result<Vec<StepRun>>;
 }
 
 /// State storage for durable execution (paused runs, wait tokens)
@@ -112,9 +118,13 @@ pub trait StateStorage: Send + Sync {
 
     /// Find paused runs by source (for webhook processing)
     /// Returns list of (token, data) tuples
+    ///
+    /// # Multi-organization isolation
+    /// Only returns paused runs belonging to the specified organization.
     async fn find_paused_runs_by_source(
         &self,
         source: &str,
+        organization_id: &str,
     ) -> Result<Vec<(String, serde_json::Value)>>;
 
     /// Delete a paused run
@@ -305,9 +315,13 @@ pub trait OAuthStorage: Send + Sync {
     async fn delete_oauth_credential(&self, id: &str, organization_id: &str) -> Result<()>;
 
     /// Refresh OAuth credential token
+    ///
+    /// # Multi-organization isolation
+    /// Only refreshes if credential belongs to the specified organization.
     async fn refresh_oauth_credential(
         &self,
         id: &str,
+        organization_id: &str,
         new_token: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()>;

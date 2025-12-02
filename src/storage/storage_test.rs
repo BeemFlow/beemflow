@@ -48,6 +48,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
     let step = StepRun {
         id: step_id,
         run_id,
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Succeeded,
         outputs: Some({
@@ -66,7 +67,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
         .expect("SaveStep should succeed");
 
     let steps = storage
-        .get_steps(run_id)
+        .get_steps(run_id, "test_org")
         .await
         .expect("GetSteps should succeed");
     assert_eq!(steps.len(), 1, "Expected 1 step");
@@ -184,7 +185,12 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
     // Refresh credential
     let new_expires = Utc::now() + chrono::Duration::hours(2);
     storage
-        .refresh_oauth_credential("test_cred", "new_access_token", Some(new_expires))
+        .refresh_oauth_credential(
+            "test_cred",
+            "test_org",
+            "new_access_token",
+            Some(new_expires),
+        )
         .await
         .expect("RefreshOAuthCredential should succeed");
 
@@ -357,6 +363,7 @@ async fn test_multiple_steps<S: Storage>(storage: Arc<S>) {
         let step = StepRun {
             id: Uuid::new_v4(),
             run_id,
+            organization_id: "test_org".to_string(),
             step_name: format!("step_{}", i).into(),
             status: if i % 2 == 0 {
                 StepStatus::Succeeded
@@ -383,7 +390,7 @@ async fn test_multiple_steps<S: Storage>(storage: Arc<S>) {
     }
 
     let steps = storage
-        .get_steps(run_id)
+        .get_steps(run_id, "test_org")
         .await
         .expect("GetSteps should succeed");
     assert_eq!(steps.len(), 10, "Expected 10 steps");
@@ -595,9 +602,9 @@ async fn test_find_paused_runs_by_source() {
         .await
         .expect("Failed to save paused run 3");
 
-    // Query by source
+    // Query by source - now requires organization_id for multi-tenant isolation
     let airtable_runs = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -611,7 +618,7 @@ async fn test_find_paused_runs_by_source() {
 
     // Query by different source
     let github_runs = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -620,7 +627,7 @@ async fn test_find_paused_runs_by_source() {
 
     // Query non-existent source
     let empty_runs = storage
-        .find_paused_runs_by_source("webhook.nonexistent")
+        .find_paused_runs_by_source("webhook.nonexistent", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -653,7 +660,7 @@ async fn test_source_persists_after_save() {
 
     // Query by source
     let runs = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
 
@@ -682,7 +689,7 @@ async fn test_fetch_and_delete_removes_from_source_query() {
 
     // Verify it's queryable by source
     let runs_before = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(runs_before.len(), 1);
@@ -696,7 +703,7 @@ async fn test_fetch_and_delete_removes_from_source_query() {
 
     // Verify it's no longer queryable by source
     let runs_after = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(runs_after.len(), 0, "Should be deleted");
@@ -734,14 +741,14 @@ async fn test_update_source_for_existing_token() {
 
     // Old source should have no results
     let old_runs = storage
-        .find_paused_runs_by_source("webhook.old")
+        .find_paused_runs_by_source("webhook.old", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(old_runs.len(), 0);
 
     // New source should have the run
     let new_runs = storage
-        .find_paused_runs_by_source("webhook.new")
+        .find_paused_runs_by_source("webhook.new", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(new_runs.len(), 1);
@@ -783,13 +790,13 @@ async fn test_multiple_sources_isolation() {
 
     // Verify isolation
     let airtable = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(airtable.len(), 3);
 
     let github = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(github.len(), 2);
@@ -802,13 +809,13 @@ async fn test_multiple_sources_isolation() {
 
     // Verify airtable count decreased but github unchanged
     let airtable_after = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(airtable_after.len(), 2);
 
     let github_after = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(github_after.len(), 2);

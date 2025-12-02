@@ -618,6 +618,13 @@ pub struct StepRun {
     /// Parent run identifier
     pub run_id: RunId,
 
+    /// Organization identifier for multi-tenant isolation
+    ///
+    /// Denormalized from the parent run for efficient org-scoped queries
+    /// without requiring a JOIN. This is critical for security - queries
+    /// should always filter by organization_id.
+    pub organization_id: String,
+
     /// Step name/ID
     pub step_name: StepId,
 

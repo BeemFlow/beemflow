@@ -152,7 +152,12 @@ async fn test_mcp_manager_unconfigured_server_error() {
 
     // Try to call tool on unconfigured server
     let result = manager
-        .call_tool("nonexistent-server", "some_tool", json!({"arg": "value"}))
+        .call_tool(
+            "nonexistent-server",
+            "some_tool",
+            json!({"arg": "value"}),
+            "test_org",
+        )
         .await;
 
     assert!(result.is_err());
@@ -203,7 +208,9 @@ async fn test_mcp_manager_invalid_command_error() {
     );
 
     // Try to call a tool - should fail when trying to start the server
-    let result = manager.call_tool("bad-server", "any_tool", json!({})).await;
+    let result = manager
+        .call_tool("bad-server", "any_tool", json!({}), "test_org")
+        .await;
 
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();

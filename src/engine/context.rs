@@ -293,7 +293,7 @@ impl RunsAccess {
         );
 
         // Get step outputs for this run
-        let steps = match self.storage.get_steps(run.id).await {
+        let steps = match self.storage.get_steps(run.id, &self.organization_id).await {
             Ok(steps) => steps,
             Err(e) => {
                 tracing::warn!("Failed to get steps for run {}: {}", run.id, e);

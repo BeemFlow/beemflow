@@ -433,7 +433,12 @@ impl OAuthClientManager {
 
         // Use storage's dedicated refresh method (more efficient than full save)
         self.storage
-            .refresh_oauth_credential(&cred.id, &new_access_token, new_expires_at)
+            .refresh_oauth_credential(
+                &cred.id,
+                &cred.organization_id,
+                &new_access_token,
+                new_expires_at,
+            )
             .await
             .map_err(|e| {
                 BeemFlowError::OAuth(format!("Failed to save refreshed credential: {}", e))

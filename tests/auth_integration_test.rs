@@ -7,7 +7,7 @@ use beemflow::auth::{
     hash_password, validate_password_strength, verify_password,
 };
 use beemflow::model::OAuthCredential;
-use beemflow::storage::{AuthStorage, OAuthStorage, SqliteStorage, Storage};
+use beemflow::storage::{AuthStorage, OAuthStorage, SqliteStorage};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 

@@ -28,6 +28,7 @@ impl McpAdapter {
         &self,
         tool_use: &str,
         inputs: HashMap<String, Value>,
+        organization_id: &str,
     ) -> Result<HashMap<String, Value>> {
         if !tool_use.starts_with(ADAPTER_PREFIX_MCP) {
             return Err(crate::BeemFlowError::adapter(format!(
@@ -57,9 +58,15 @@ impl McpAdapter {
             )));
         }
 
+        // Pass organization_id for per-tenant MCP server isolation
         let result = self
             .manager
-            .call_tool(server_name, tool_name, serde_json::to_value(&inputs)?)
+            .call_tool(
+                server_name,
+                tool_name,
+                serde_json::to_value(&inputs)?,
+                organization_id,
+            )
             .await?;
 
         let mut outputs = HashMap::new();
@@ -82,13 +89,12 @@ impl Adapter for McpAdapter {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _ctx: &super::ExecutionContext,
+        ctx: &super::ExecutionContext,
     ) -> Result<HashMap<String, Value>> {
-        // McpAdapter doesn't currently use ExecutionContext, but it's available for
-        // future features like:
-        // - Passing OAuth credentials to MCP servers
-        // - User-specific server instances (multi-tenancy)
-        // - Rate limiting per user
+        // Extract organization_id for per-tenant MCP server isolation
+        let organization_id = ctx.organization_id.as_ref().ok_or_else(|| {
+            crate::BeemFlowError::adapter("MCP execution requires organization context")
+        })?;
 
         let tool_use = inputs
             .get(PARAM_SPECIAL_USE)
@@ -96,7 +102,8 @@ impl Adapter for McpAdapter {
             .ok_or_else(|| crate::BeemFlowError::adapter("missing __use for MCPAdapter"))?
             .to_string();
 
-        self.execute_mcp_call(&tool_use, inputs).await
+        self.execute_mcp_call(&tool_use, inputs, organization_id)
+            .await
     }
 
     fn manifest(&self) -> Option<ToolManifest> {

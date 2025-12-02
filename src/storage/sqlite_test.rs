@@ -160,6 +160,7 @@ async fn test_all_operations_comprehensive() {
     let step = StepRun {
         id: step_id,
         run_id,
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Succeeded,
         outputs: Some({
@@ -174,7 +175,7 @@ async fn test_all_operations_comprehensive() {
 
     storage.save_step(&step).await.unwrap();
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(steps.len(), 1, "Expected 1 step");
     assert_eq!(steps[0].id, step_id);
     assert_eq!(steps[0].step_name.as_str(), "test_step");
@@ -214,6 +215,7 @@ async fn test_save_step_for_non_existent_run() {
     let step = StepRun {
         id: Uuid::new_v4(),
         run_id: Uuid::new_v4(), // Non-existent run
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Running,
         outputs: Some(HashMap::new()),
@@ -372,7 +374,7 @@ async fn test_oauth_credential_refresh() {
     // Refresh with new token
     let new_expires = Utc::now() + chrono::Duration::hours(1);
     storage
-        .refresh_oauth_credential("refresh_test", "new_token", Some(new_expires))
+        .refresh_oauth_credential("refresh_test", "test_org", "new_token", Some(new_expires))
         .await
         .unwrap();
 
@@ -391,7 +393,7 @@ async fn test_get_steps_empty() {
     let storage = SqliteStorage::new(":memory:").await.unwrap();
     let run_id = Uuid::new_v4();
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(
         steps.len(),
         0,
@@ -423,6 +425,7 @@ async fn test_multiple_steps_same_run() {
         let step = StepRun {
             id: Uuid::new_v4(),
             run_id,
+            organization_id: "test_org".to_string(),
             step_name: format!("step_{}", i).into(),
             status: StepStatus::Succeeded,
             outputs: Some(HashMap::new()),
@@ -433,7 +436,7 @@ async fn test_multiple_steps_same_run() {
         storage.save_step(&step).await.unwrap();
     }
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(steps.len(), 3, "Expected 3 steps");
 }
 

@@ -51,6 +51,7 @@ impl PostgresStorage {
         Ok(StepRun {
             id: row.try_get("id")?,
             run_id: row.try_get("run_id")?,
+            organization_id: row.try_get("organization_id")?,
             step_name: StepId::new(row.try_get::<String, _>("step_name")?)?,
             status: parse_step_status(&row.try_get::<String, _>("status")?),
             started_at: row.try_get("started_at")?,
@@ -233,10 +234,11 @@ impl RunStorage for PostgresStorage {
     // Step methods
     async fn save_step(&self, step: &StepRun) -> Result<()> {
         sqlx::query(
-            "INSERT INTO steps (id, run_id, step_name, status, started_at, ended_at, outputs, error)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "INSERT INTO steps (id, run_id, organization_id, step_name, status, started_at, ended_at, outputs, error)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT(id) DO UPDATE SET
                 run_id = EXCLUDED.run_id,
+                organization_id = EXCLUDED.organization_id,
                 step_name = EXCLUDED.step_name,
                 status = EXCLUDED.status,
                 started_at = EXCLUDED.started_at,
@@ -246,6 +248,7 @@ impl RunStorage for PostgresStorage {
         )
         .bind(step.id)
         .bind(step.run_id)
+        .bind(&step.organization_id)
         .bind(step.step_name.as_str())
         .bind(step_status_to_str(step.status))
         .bind(step.started_at)
@@ -258,12 +261,13 @@ impl RunStorage for PostgresStorage {
         Ok(())
     }
 
-    async fn get_steps(&self, run_id: Uuid) -> Result<Vec<StepRun>> {
+    async fn get_steps(&self, run_id: Uuid, organization_id: &str) -> Result<Vec<StepRun>> {
         let rows = sqlx::query(
-            "SELECT id, run_id, step_name, status, started_at, ended_at, outputs, error 
-             FROM steps WHERE run_id = $1",
+            "SELECT id, run_id, organization_id, step_name, status, started_at, ended_at, outputs, error
+             FROM steps WHERE run_id = $1 AND organization_id = $2",
         )
         .bind(run_id)
+        .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -345,11 +349,15 @@ impl StateStorage for PostgresStorage {
     async fn find_paused_runs_by_source(
         &self,
         source: &str,
+        organization_id: &str,
     ) -> Result<Vec<(String, serde_json::Value)>> {
-        let rows = sqlx::query("SELECT token, data FROM paused_runs WHERE source = $1")
-            .bind(source)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT token, data FROM paused_runs WHERE source = $1 AND organization_id = $2",
+        )
+        .bind(source)
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -898,6 +906,7 @@ impl OAuthStorage for PostgresStorage {
     async fn refresh_oauth_credential(
         &self,
         id: &str,
+        organization_id: &str,
         new_token: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
@@ -908,12 +917,13 @@ impl OAuthStorage for PostgresStorage {
         let result = sqlx::query(
             "UPDATE oauth_credentials
              SET access_token = $1, expires_at = $2, updated_at = $3
-             WHERE id = $4",
+             WHERE id = $4 AND organization_id = $5",
         )
         .bind(encrypted_token.as_str()) // Store encrypted
         .bind(expires_at)
         .bind(Utc::now())
         .bind(id)
+        .bind(organization_id)
         .execute(&self.pool)
         .await?;
 

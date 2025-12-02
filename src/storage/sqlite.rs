@@ -103,6 +103,7 @@ impl SqliteStorage {
         Ok(StepRun {
             id: Uuid::parse_str(&row.try_get::<String, _>("id")?)?,
             run_id: Uuid::parse_str(&row.try_get::<String, _>("run_id")?)?,
+            organization_id: row.try_get("organization_id")?,
             step_name: StepId::new(row.try_get::<String, _>("step_name")?)?,
             status: parse_step_status(&row.try_get::<String, _>("status")?),
             started_at: DateTime::from_timestamp_millis(row.try_get("started_at")?)
@@ -290,10 +291,11 @@ impl RunStorage for SqliteStorage {
     // Step methods
     async fn save_step(&self, step: &StepRun) -> Result<()> {
         sqlx::query(
-            "INSERT INTO steps (id, run_id, step_name, status, started_at, ended_at, outputs, error)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO steps (id, run_id, organization_id, step_name, status, started_at, ended_at, outputs, error)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 run_id = excluded.run_id,
+                organization_id = excluded.organization_id,
                 step_name = excluded.step_name,
                 status = excluded.status,
                 started_at = excluded.started_at,
@@ -303,6 +305,7 @@ impl RunStorage for SqliteStorage {
         )
         .bind(step.id.to_string())
         .bind(step.run_id.to_string())
+        .bind(&step.organization_id)
         .bind(step.step_name.as_str())
         .bind(step_status_to_str(step.status))
         .bind(step.started_at.timestamp_millis())
@@ -315,12 +318,13 @@ impl RunStorage for SqliteStorage {
         Ok(())
     }
 
-    async fn get_steps(&self, run_id: Uuid) -> Result<Vec<StepRun>> {
+    async fn get_steps(&self, run_id: Uuid, organization_id: &str) -> Result<Vec<StepRun>> {
         let rows = sqlx::query(
-            "SELECT id, run_id, step_name, status, started_at, ended_at, outputs, error 
-             FROM steps WHERE run_id = ?",
+            "SELECT id, run_id, organization_id, step_name, status, started_at, ended_at, outputs, error
+             FROM steps WHERE run_id = ? AND organization_id = ?",
         )
         .bind(run_id.to_string())
+        .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -406,11 +410,15 @@ impl StateStorage for SqliteStorage {
     async fn find_paused_runs_by_source(
         &self,
         source: &str,
+        organization_id: &str,
     ) -> Result<Vec<(String, serde_json::Value)>> {
-        let rows = sqlx::query("SELECT token, data FROM paused_runs WHERE source = ?")
-            .bind(source)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT token, data FROM paused_runs WHERE source = ? AND organization_id = ?",
+        )
+        .bind(source)
+        .bind(organization_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -972,6 +980,7 @@ impl OAuthStorage for SqliteStorage {
     async fn refresh_oauth_credential(
         &self,
         id: &str,
+        organization_id: &str,
         new_token: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
@@ -983,12 +992,13 @@ impl OAuthStorage for SqliteStorage {
         let result = sqlx::query(
             "UPDATE oauth_credentials
              SET access_token = ?, expires_at = ?, updated_at = ?
-             WHERE id = ?",
+             WHERE id = ? AND organization_id = ?",
         )
         .bind(encrypted.as_str()) // Store encrypted
         .bind(expires_at.map(|dt| dt.timestamp_millis()))
         .bind(now)
         .bind(id)
+        .bind(organization_id)
         .execute(&self.pool)
         .await?;
 

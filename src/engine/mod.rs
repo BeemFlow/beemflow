@@ -274,10 +274,10 @@ impl Engine {
         organization_id: &str,
     ) -> Result<String> {
         if is_draft {
-            // Draft mode: load from filesystem
+            // Draft mode: load from filesystem (organization-isolated)
             let flows_dir = crate::config::get_flows_dir(&self.config);
 
-            crate::storage::flows::get_flow(&flows_dir, flow_name)
+            crate::storage::flows::get_flow(&flows_dir, organization_id, flow_name)
                 .await?
                 .ok_or_else(|| {
                     crate::BeemFlowError::not_found("Flow", format!("{} (filesystem)", flow_name))
@@ -567,6 +567,7 @@ impl Engine {
                     step_records.push(crate::model::StepRun {
                         id: Uuid::new_v4(),
                         run_id,
+                        organization_id: organization_id.to_string(),
                         step_name: step.id.clone(),
                         status: crate::model::StepStatus::Succeeded,
                         started_at: step_start,
@@ -588,6 +589,7 @@ impl Engine {
                     step_records.push(crate::model::StepRun {
                         id: Uuid::new_v4(),
                         run_id,
+                        organization_id: organization_id.to_string(),
                         step_name: step.id.clone(),
                         status: crate::model::StepStatus::Failed,
                         started_at: step_start,

@@ -200,7 +200,7 @@ async fn handle_webhook(
         }
 
         // Use Case 2: Resume paused workflow executions
-        match resume_paused_runs_for_event(&state, event).await {
+        match resume_paused_runs_for_event(&state, organization_id, event).await {
             Ok(count) => {
                 resumed_count += count;
                 tracing::info!("Event {} resumed {} paused run(s)", event.topic, count);
@@ -298,12 +298,13 @@ async fn trigger_flows_for_event(
 /// Resume paused runs for matching paused workflows (Use Case 2)
 async fn resume_paused_runs_for_event(
     state: &WebhookManagerState,
+    organization_id: &str,
     event: &ParsedEvent,
 ) -> Result<usize> {
-    // Query paused runs by source (event topic)
+    // Query paused runs by source (event topic) - organization-scoped
     let paused_runs = state
         .storage
-        .find_paused_runs_by_source(&event.topic)
+        .find_paused_runs_by_source(&event.topic, organization_id)
         .await?;
 
     if paused_runs.is_empty() {
@@ -328,6 +329,18 @@ async fn resume_paused_runs_for_event(
                 continue;
             }
         };
+
+        // Defense-in-depth: Verify organization even though SQL already filtered by org
+        // This catches bugs or race conditions that could leak data across organizations
+        if paused.organization_id != organization_id {
+            tracing::error!(
+                paused_org = %paused.organization_id,
+                webhook_org = %organization_id,
+                token = %token,
+                "SECURITY: Paused run organization mismatch - possible data leak attempt"
+            );
+            continue;
+        }
 
         // Get await_event spec from the current step
         let step = match paused.flow.steps.get(paused.step_idx) {

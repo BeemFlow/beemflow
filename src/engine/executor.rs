@@ -808,6 +808,7 @@ impl Executor {
         let step_run = crate::model::StepRun {
             id: Uuid::new_v4(),
             run_id,
+            organization_id: self.organization_id.clone(),
             step_name: step.id.clone(),
             status: crate::model::StepStatus::Succeeded,
             started_at: chrono::Utc::now(),
