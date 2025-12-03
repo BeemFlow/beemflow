@@ -12,6 +12,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::process::Command;
 
+/// Server pool key: (organization_id, server_name)
+/// Each organization gets isolated server instances for multi-org security.
+type ServerKey = (String, String);
+
+/// Per-organization MCP server pool with thread-safe access
+type ServerPool = HashMap<ServerKey, Arc<McpServer>>;
+
 pub struct McpServer {
     service: RunningService<RoleClient, ()>,
     tools: Arc<RwLock<HashMap<String, Tool>>>,
@@ -123,8 +130,8 @@ impl McpServer {
 /// - Organization-specific environment variables injected into servers
 /// - Separate process pools per organization
 pub struct McpManager {
-    /// Per-organization server instances: (organization_id, server_name) -> server
-    servers: Arc<RwLock<HashMap<(String, String), Arc<McpServer>>>>,
+    /// Per-organization server instances: ServerKey -> server
+    servers: Arc<RwLock<ServerPool>>,
     /// Server configurations (shared across organizations)
     configs: Arc<RwLock<HashMap<String, McpServerConfig>>>,
     secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
