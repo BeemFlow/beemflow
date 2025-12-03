@@ -160,9 +160,10 @@ impl Templater {
         path: &str,
     ) -> Option<&'a JsonValue> {
         let parts: Vec<&str> = path.split('.').collect();
-        let mut current = data.get(parts[0])?;
+        let (first, rest) = parts.split_first()?;
+        let mut current = data.get(*first)?;
 
-        for part in &parts[1..] {
+        for part in rest {
             // Try as object key
             if let Some(obj) = current.as_object()
                 && let Some(val) = obj.get(*part)

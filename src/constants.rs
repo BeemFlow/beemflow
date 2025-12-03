@@ -206,6 +206,9 @@ pub const FORMAT_FIVE_COLUMNS: &str = "%-10s %-20s %-30s %-10s %s";
 // HTTP & API
 // ============================================================================
 
+/// Maximum request body size (5MB) - prevents DoS via large payloads
+pub const MAX_REQUEST_BODY_SIZE: usize = 5 * 1024 * 1024;
+
 /// HTTP method: GET
 pub const HTTP_METHOD_GET: &str = "GET";
 
@@ -246,10 +249,10 @@ pub const HTTP_PATH_RUNS: &str = "/runs";
 pub const HTTP_PATH_RUNS_INLINE: &str = "/runs/inline";
 
 /// HTTP path: runs by ID
-pub const HTTP_PATH_RUNS_BY_ID: &str = "/runs/:id";
+pub const HTTP_PATH_RUNS_BY_ID: &str = "/runs/{id}";
 
 /// HTTP path: runs resume
-pub const HTTP_PATH_RUNS_RESUME: &str = "/runs/:id/resume";
+pub const HTTP_PATH_RUNS_RESUME: &str = "/runs/{id}/resume";
 
 /// HTTP path: events
 pub const HTTP_PATH_EVENTS: &str = "/events";
@@ -691,3 +694,16 @@ pub const OUTPUT_PREFIX_HTTP: &str = "🌐 ";
 
 /// Output prefix: JSON (clipboard emoji)
 pub const OUTPUT_PREFIX_JSON: &str = "📋 ";
+
+// ============================================================================
+// AUTHENTICATION & MULTI-ORGANIZATION CONSTANTS
+// ============================================================================
+
+/// System user ID for automated/unauthenticated operations (cron, webhooks)
+pub const SYSTEM_USER_ID: &str = "system";
+
+/// Default user ID for fallback when deployer is unknown
+pub const DEFAULT_USER_ID: &str = "default";
+
+/// Default organization ID for local development and single-user mode
+pub const DEFAULT_ORGANIZATION_ID: &str = "default";

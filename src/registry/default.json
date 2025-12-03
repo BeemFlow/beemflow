@@ -1808,6 +1808,127 @@
     }
   },
   {
+    "type": "oauth_provider",
+    "name": "digikey",
+    "display_name": "Digi-Key",
+    "description": "Access Digi-Key's electronic component catalog with product search, pricing, and availability data",
+    "icon": "🔌",
+    "authorization_url": "https://api.digikey.com/v1/oauth2/authorize",
+    "token_url": "https://api.digikey.com/v1/oauth2/token",
+    "scopes": [],
+    "auth_params": {
+      "access_type": "offline"
+    },
+    "required_scopes": [],
+    "client_id": "$env:DIGIKEY_CLIENT_ID",
+    "client_secret": "$env:DIGIKEY_CLIENT_SECRET"
+  },
+  {
+    "type": "tool",
+    "name": "digikey.search.keyword",
+    "description": "Search Digi-Key's product catalog by keyword, part number, or manufacturer. Returns products with pricing and availability.",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["Keywords"],
+      "properties": {
+        "Keywords": {
+          "type": "string",
+          "description": "Search keywords - can be part number, manufacturer name, or product description"
+        },
+        "RecordCount": {
+          "type": "integer",
+          "description": "Maximum number of products to return",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 10
+        },
+        "RecordStartPosition": {
+          "type": "integer",
+          "description": "Starting position for pagination (0-based)",
+          "minimum": 0,
+          "default": 0
+        },
+        "Filters": {
+          "type": "object",
+          "description": "Optional filters for search refinement",
+          "properties": {
+            "ManufacturerFilter": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by manufacturer names"
+            },
+            "MinimumQuantityAvailable": {
+              "type": "integer",
+              "description": "Filter by minimum quantity in stock"
+            }
+          }
+        },
+        "Sort": {
+          "type": "object",
+          "description": "Sort options for results",
+          "properties": {
+            "Option": {
+              "type": "string",
+              "enum": ["SortByUnitPrice", "SortByQuantityAvailableRanking", "SortByManufacturerPartNumber"],
+              "description": "Field to sort by"
+            },
+            "Direction": {
+              "type": "string",
+              "enum": ["Ascending", "Descending"],
+              "description": "Sort direction"
+            }
+          }
+        }
+      }
+    },
+    "endpoint": "https://api.digikey.com/products/v4/search/keyword",
+    "method": "POST",
+    "headers": {
+      "Authorization": "$oauth:digikey:default",
+      "X-DIGIKEY-Client-Id": "$env:DIGIKEY_CLIENT_ID",
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    }
+  },
+  {
+    "type": "tool",
+    "name": "digikey.product.details",
+    "description": "Get detailed product information including specifications, pricing, datasheets, and availability for a specific Digi-Key or manufacturer part number",
+    "kind": "task",
+    "version": "1.0.0",
+    "registry": "default",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["partNumber"],
+      "properties": {
+        "partNumber": {
+          "type": "string",
+          "description": "Digi-Key part number or manufacturer part number (Digi-Key part numbers recommended for accuracy)"
+        },
+        "Includes": {
+          "type": "string",
+          "description": "Comma-separated list of fields to include in response (e.g., 'StandardPricing,ProductDescription,QuantityAvailable')"
+        }
+      }
+    },
+    "endpoint": "https://api.digikey.com/products/v4/search/{partNumber}/productdetails",
+    "method": "GET",
+    "headers": {
+      "Authorization": "$oauth:digikey:default",
+      "X-DIGIKEY-Client-Id": "$env:DIGIKEY_CLIENT_ID",
+      "Accept": "application/json"
+    }
+  },
+  {
     "type": "tool",
     "name": "twilio.send_sms",
     "description": "Send an SMS message via Twilio",

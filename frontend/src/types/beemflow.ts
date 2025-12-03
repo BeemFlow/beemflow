@@ -7,6 +7,76 @@ export type RunId = string;
 
 export type Trigger = string | string[];
 
+// ============================================================================
+// RBAC Types
+// ============================================================================
+
+/**
+ * User role within an organization
+ * Matches backend Role enum from src/auth/mod.rs:63-68
+ */
+export type Role = 'owner' | 'admin' | 'member' | 'viewer';
+
+/**
+ * System permissions matching backend Permission enum from src/auth/mod.rs:300-341
+ *
+ * Permission model:
+ * - Owner: All permissions (including OrgDelete)
+ * - Admin: All permissions except OrgDelete
+ * - Member: Limited permissions (flows, runs, oauth, read-only members)
+ * - Viewer: Read-only permissions only
+ *
+ * Using const object pattern instead of enum for better TypeScript compatibility
+ */
+export const Permission = {
+  // Flow permissions
+  FlowsRead: 'flows:read',
+  FlowsCreate: 'flows:create',
+  FlowsUpdate: 'flows:update',
+  FlowsDelete: 'flows:delete',
+  FlowsDeploy: 'flows:deploy',
+
+  // Run permissions
+  RunsRead: 'runs:read',
+  RunsTrigger: 'runs:trigger',
+  RunsCancel: 'runs:cancel',
+  RunsDelete: 'runs:delete',
+
+  // OAuth permissions
+  OAuthConnect: 'oauth:connect',
+  OAuthDisconnect: 'oauth:disconnect',
+
+  // Secret permissions
+  SecretsRead: 'secrets:read',
+  SecretsCreate: 'secrets:create',
+  SecretsUpdate: 'secrets:update',
+  SecretsDelete: 'secrets:delete',
+
+  // Tool permissions
+  ToolsRead: 'tools:read',
+  ToolsInstall: 'tools:install',
+
+  // Organization permissions
+  OrgRead: 'org:read',
+  OrgUpdate: 'org:update',
+  OrgDelete: 'org:delete',
+
+  // Member management permissions
+  MembersRead: 'members:read',
+  MembersInvite: 'members:invite',
+  MembersUpdateRole: 'members:update_role',
+  MembersRemove: 'members:remove',
+
+  // Audit log permissions
+  AuditLogsRead: 'audit_logs:read',
+} as const;
+
+/**
+ * Permission type derived from the Permission const object
+ * This gives us type-safe permission values
+ */
+export type Permission = typeof Permission[keyof typeof Permission];
+
 // Generic JSON value type for dynamic flow data
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -323,3 +393,64 @@ export interface ConnectOAuthProviderResponse {
   auth_url: string;
   provider_id: string;
 }
+
+// ============================================================================
+// Authentication & Authorization Types
+// ============================================================================
+
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  avatar_url?: string;
+  email_verified: boolean;
+  mfa_enabled: boolean;
+  created_at: string;
+  last_login_at?: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+  /**
+   * User's role in this organization
+   * Always present when returned from backend (src/auth/management.rs:48)
+   */
+  role: Role;
+  /**
+   * True if this is the organization in current JWT context
+   */
+  current?: boolean;
+}
+
+export interface OrganizationMember {
+  user: {
+    id: string;
+    email: string;
+    name?: string;
+    avatar_url?: string;
+  };
+  role: Role;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name?: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  user: User;
+  organization: Organization;
+}
+

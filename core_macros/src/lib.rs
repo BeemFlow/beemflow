@@ -234,7 +234,12 @@ fn to_snake_case(s: &str) -> String {
             if !result.is_empty() {
                 result.push('_');
             }
-            result.push(ch.to_lowercase().next().unwrap());
+            // Safe: to_lowercase() always returns at least one character
+            if let Some(lowercase) = ch.to_lowercase().next() {
+                result.push(lowercase);
+            } else {
+                result.push(ch);
+            }
         } else {
             result.push(ch);
         }
@@ -246,10 +251,9 @@ fn to_snake_case(s: &str) -> String {
 /// Parse HTTP method and path from string like "GET /flows/{name}"
 fn parse_http_route(http: &str) -> (String, String) {
     let parts: Vec<&str> = http.splitn(2, ' ').collect();
-    if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        ("GET".to_string(), http.to_string())
+    match (parts.first(), parts.get(1)) {
+        (Some(&method), Some(&path)) => (method.to_string(), path.to_string()),
+        _ => ("GET".to_string(), http.to_string()),
     }
 }
 
@@ -299,6 +303,7 @@ fn generate_http_route_method(
             }
         } else if path_params.len() == 1 && (http_method == "GET" || http_method == "DELETE") {
             // Single path param with GET/DELETE - construct input from path param only
+            #[allow(clippy::indexing_slicing)] // Safe: checked path_params.len() == 1 above
             let param = &path_params[0];
             let param_ident = Ident::new(param, Span::call_site());
             (
@@ -317,7 +322,8 @@ fn generate_http_route_method(
                 .map(|p| Ident::new(p, Span::call_site()))
                 .collect();
 
-            let extractor = if path_params.len() == 1 {
+            let extractor = if param_idents.len() == 1 {
+                #[allow(clippy::indexing_slicing)] // Safe: checked param_idents.len() == 1
                 let param = &param_idents[0];
                 quote! {
                     axum::extract::Path(#param): axum::extract::Path<String>,
@@ -359,17 +365,40 @@ fn generate_http_route_method(
         (quote! {}, quote! { () })
     };
 
+    // Generate handler parameters with Extension extractor for RequestContext
+    // Extension<T> extracts per-request state inserted by middleware
+    // HTTP API routes are protected by auth middleware, so RequestContext is always present
+    let handler_params = if !matches!(extractors.to_string().as_str(), "") {
+        quote! {
+            axum::extract::Extension(req_ctx): axum::extract::Extension<crate::auth::RequestContext>,
+            #extractors
+        }
+    } else {
+        quote! {
+            axum::extract::Extension(req_ctx): axum::extract::Extension<crate::auth::RequestContext>
+        }
+    };
+
     quote! {
         /// Auto-generated HTTP route registration for this operation
         pub fn http_route(deps: std::sync::Arc<super::Dependencies>) -> axum::Router {
             axum::Router::new().route(
                 Self::HTTP_PATH.unwrap(),
                 axum::routing::#method_ident({
-                    move |#extractors| async move {
+                    move |#handler_params| async move {
                         let op = Self::new(deps.clone());
-                        let result = op.execute(#input_construction).await
-                            .map_err(|e| crate::http::AppError::from(e))?;
-                        Ok::<axum::Json<_>, crate::http::AppError>(axum::Json(result))
+
+                        // Construct input (may fail with validation errors)
+                        let input = #input_construction;
+
+                        // Execute with RequestContext in task-local storage
+                        // This makes the context available to the operation via REQUEST_CONTEXT.try_with()
+                        crate::core::REQUEST_CONTEXT.scope(req_ctx, async move {
+                            op.execute(input).await
+                        })
+                        .await
+                        .map(|output| axum::Json(output))
+                        .map_err(|e| crate::http::AppError::from(e))
                     }
                 })
             )

@@ -97,12 +97,26 @@ fmt-check:
 	cargo fmt -- --check
 
 lint:
-	cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy --lib --all-features -- \
+		-D warnings \
+		-D clippy::unwrap_used \
+		-D clippy::expect_used \
+		-D clippy::panic \
+		-D clippy::indexing_slicing \
+		-D clippy::unwrap_in_result
+	cargo clippy --bins --all-features -- -D warnings
 
 # Auto-fix all issues (format + clippy --fix)
 fix:
 	cargo fix --allow-dirty --allow-staged
-	cargo clippy --fix --allow-dirty --allow-staged
+	cargo clippy --fix --allow-dirty --allow-staged --lib --all-features -- \
+		-D warnings \
+		-D clippy::unwrap_used \
+		-D clippy::expect_used \
+		-D clippy::panic \
+		-D clippy::indexing_slicing \
+		-D clippy::unwrap_in_result
+	cargo clippy --fix --allow-dirty --allow-staged --bins --all-features -- -D warnings
 	$(MAKE) fmt
 
 # ────────────────────────────────────────────────────────────────────────────

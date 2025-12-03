@@ -1,13 +1,15 @@
-//! OAuth middleware for authentication, authorization, and rate limiting
+//! Authentication middleware for both OAuth and JWT
 //!
-//! Provides type-safe extractors and middleware leveraging Rust's trait system
-//! for production-grade OAuth security.
+//! Provides two types of authentication:
+//! 1. OAuth 2.0 middleware (for OAuth client - validates OAuth tokens)
+//! 2. JWT middleware (for multi-tenant auth - validates JWTs, resolves tenants)
 
+use super::{AuthContext, JwtClaims, JwtManager, RequestContext};
 use crate::model::OAuthToken;
 use crate::storage::Storage;
 use crate::{BeemFlowError, Result};
 use axum::{
-    extract::{FromRequestParts, Request},
+    extract::{FromRequestParts, Request, State},
     http::{StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -17,6 +19,11 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, SystemTime};
+use uuid::Uuid;
+
+// ============================================================================
+// OAuth 2.0 Middleware (for OAuth client)
+// ============================================================================
 
 /// Authenticated user extracted from valid Bearer token
 #[derive(Debug, Clone)]
@@ -323,4 +330,196 @@ pub fn has_any_scope(user: &AuthenticatedUser, scopes: &[&str]) -> bool {
 /// Check if user has all of the required scopes
 pub fn has_all_scopes(user: &AuthenticatedUser, scopes: &[&str]) -> bool {
     scopes.iter().all(|scope| has_scope(user, scope))
+}
+
+// ============================================================================
+// JWT Middleware (for multi-tenant auth)
+// ============================================================================
+
+/// Shared state for JWT auth middleware
+pub struct AuthMiddlewareState {
+    pub storage: Arc<dyn Storage>,
+    pub jwt_manager: Arc<JwtManager>,
+}
+
+/// Authentication middleware - validates JWT and creates AuthContext
+///
+/// Extracts Bearer token, validates JWT signature and expiration,
+/// and inserts AuthContext into request extensions.
+///
+/// Returns 401 if:
+/// - No Authorization header
+/// - Invalid Bearer format
+/// - Invalid or expired JWT
+pub async fn auth_middleware(
+    State(state): State<Arc<AuthMiddlewareState>>,
+    mut req: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    // Extract Authorization header
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Extract Bearer token
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Validate JWT
+    let claims = state.jwt_manager.validate_token(token).map_err(|e| {
+        tracing::warn!("JWT validation failed: {}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    // Create simplified auth context (organization/role determined by organization_middleware)
+    let auth_ctx = AuthContext {
+        user_id: claims.sub.clone(),
+        organization_id: String::new(), // Filled by organization_middleware
+        role: super::Role::Viewer,      // Filled by organization_middleware
+        token_exp: claims.exp,
+    };
+
+    // Insert both Claims and AuthContext
+    req.extensions_mut().insert(claims);
+    req.extensions_mut().insert(auth_ctx);
+
+    Ok(next.run(req).await)
+}
+
+/// Organization middleware - validates organization header and creates RequestContext
+///
+/// HEADER-BASED ORGANIZATION SELECTION (Stripe/Twilio pattern):
+/// 1. Client sends X-Organization-ID header with each request
+/// 2. Middleware validates user is a member (checks JWT's memberships array)
+/// 3. Creates RequestContext with organization_id and role from validated membership
+///
+/// Returns:
+/// - 400 if X-Organization-ID header missing
+/// - 401 if no JWT Claims (must run after auth_middleware)
+/// - 403 if user is not a member of requested organization
+/// - 403 if organization or membership is disabled
+pub async fn organization_middleware(
+    State(state): State<Arc<AuthMiddlewareState>>,
+    mut req: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    // Get JWT claims from previous auth middleware
+    let claims = req
+        .extensions()
+        .get::<JwtClaims>()
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .clone();
+
+    // Extract requested organization from header
+    let requested_organization = req
+        .headers()
+        .get("X-Organization-ID")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            tracing::warn!("Missing X-Organization-ID header");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    // Validate user is member of requested organization
+    let membership = claims
+        .memberships
+        .iter()
+        .find(|m| m.organization_id == requested_organization)
+        .ok_or_else(|| {
+            tracing::warn!(
+                "User {} not a member of organization {}",
+                claims.sub,
+                requested_organization
+            );
+            StatusCode::FORBIDDEN
+        })?;
+
+    // Get organization info to check if disabled
+    let organization = state
+        .storage
+        .get_organization(requested_organization)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get organization: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!("Organization not found: {}", requested_organization);
+            StatusCode::NOT_FOUND
+        })?;
+
+    // Verify user membership status in database (in case it changed since JWT issued)
+    let member = state
+        .storage
+        .get_organization_member(requested_organization, &claims.sub)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get organization member: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(
+                "User {} membership in organization {} not found in database",
+                claims.sub,
+                requested_organization
+            );
+            StatusCode::FORBIDDEN
+        })?;
+
+    // Check if organization or membership is disabled
+    if organization.disabled || member.disabled {
+        tracing::warn!(
+            "Access denied: organization_disabled={}, member_disabled={}",
+            organization.disabled,
+            member.disabled
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Extract client metadata
+    let client_ip = extract_client_ip(&req);
+    let user_agent = extract_user_agent(&req);
+    let request_id = Uuid::new_v4().to_string();
+
+    // Create full request context with validated org and role from membership
+    let req_ctx = RequestContext {
+        user_id: claims.sub.clone(),
+        organization_id: requested_organization.to_string(),
+        organization_name: organization.name.clone(),
+        role: membership.role, // Role from JWT membership (validated above)
+        client_ip,
+        user_agent,
+        request_id,
+    };
+
+    // Insert full context into request
+    req.extensions_mut().insert(req_ctx);
+
+    Ok(next.run(req).await)
+}
+
+/// Extract client IP from request headers or connection info
+fn extract_client_ip(req: &Request) -> Option<String> {
+    // Try X-Forwarded-For header first (for reverse proxy setups)
+    req.headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next().map(|ip| ip.trim().to_string()))
+        .or_else(|| {
+            // Fallback to connection info
+            req.extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|info| info.0.ip().to_string())
+        })
+}
+
+/// Extract user agent from request headers
+fn extract_user_agent(req: &Request) -> Option<String> {
+    req.headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
 }

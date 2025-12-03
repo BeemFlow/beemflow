@@ -224,6 +224,8 @@ impl OAuthClientManager {
         code: &str,
         code_verifier: &str,
         integration: &str,
+        user_id: &str,
+        organization_id: &str,
     ) -> Result<OAuthCredential> {
         // Get provider configuration from registry or storage
         let config = self.get_provider(provider_id).await?;
@@ -275,6 +277,8 @@ impl OAuthClientManager {
             }),
             created_at: now,
             updated_at: now,
+            user_id: user_id.to_string(),
+            organization_id: organization_id.to_string(),
         };
 
         // Save credential
@@ -311,15 +315,21 @@ impl OAuthClientManager {
     ///     "http://localhost:3000/oauth/callback".to_string()
     /// )?;
     ///
-    /// let token = client.get_token("google", "sheets").await?;
+    /// let token = client.get_token("google", "sheets", "user123", "org456").await?;
     /// println!("Access token: {}", token);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_token(&self, provider: &str, integration: &str) -> Result<String> {
+    pub async fn get_token(
+        &self,
+        provider: &str,
+        integration: &str,
+        user_id: &str,
+        organization_id: &str,
+    ) -> Result<String> {
         let cred = self
             .storage
-            .get_oauth_credential(provider, integration)
+            .get_oauth_credential(provider, integration, user_id, organization_id)
             .await
             .map_err(|e| {
                 BeemFlowError::OAuth(format!(
@@ -423,13 +433,121 @@ impl OAuthClientManager {
 
         // Use storage's dedicated refresh method (more efficient than full save)
         self.storage
-            .refresh_oauth_credential(&cred.id, &new_access_token, new_expires_at)
+            .refresh_oauth_credential(
+                &cred.id,
+                &cred.organization_id,
+                &new_access_token,
+                new_expires_at,
+            )
             .await
             .map_err(|e| {
                 BeemFlowError::OAuth(format!("Failed to save refreshed credential: {}", e))
             })?;
 
         Ok(())
+    }
+
+    /// Exchange client credentials for access token (2-legged OAuth)
+    ///
+    /// This is for machine-to-machine authentication without user interaction.
+    /// Instead of authorization code flow, directly exchanges client ID and secret
+    /// for an access token.
+    ///
+    /// # Use Cases
+    /// - Automated workflows (e.g., scheduled tasks)
+    /// - Server-to-server API calls
+    /// - Service accounts
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use beemflow::auth::OAuthClientManager;
+    /// # use std::sync::Arc;
+    /// # async fn example(client: Arc<OAuthClientManager>) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Get token using client credentials (no user interaction)
+    /// let token = client.get_client_credentials_token(
+    ///     "digikey",
+    ///     "default",
+    ///     &[],
+    ///     "user123",
+    ///     "org456"
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_client_credentials_token(
+        &self,
+        provider_id: &str,
+        integration: &str,
+        scopes: &[&str],
+        user_id: &str,
+        organization_id: &str,
+    ) -> Result<OAuthCredential> {
+        // Get provider configuration from registry or storage
+        let config = self.get_provider(provider_id).await?;
+
+        // Build OAuth client using oauth2 crate
+        let client = BasicClient::new(ClientId::new(config.client_id))
+            .set_client_secret(ClientSecret::new(config.client_secret))
+            .set_auth_uri(
+                AuthUrl::new(config.auth_url)
+                    .map_err(|e| BeemFlowError::auth(format!("Invalid auth URL: {}", e)))?,
+            )
+            .set_token_uri(
+                TokenUrl::new(config.token_url)
+                    .map_err(|e| BeemFlowError::auth(format!("Invalid token URL: {}", e)))?,
+            );
+
+        // Exchange client credentials for token
+        let mut request = client.exchange_client_credentials();
+
+        // Add scopes if provided
+        for scope in scopes {
+            request = request.add_scope(Scope::new(scope.to_string()));
+        }
+
+        let token_result = request
+            .request_async(&self.http_client)
+            .await
+            .map_err(|e| {
+                BeemFlowError::auth(format!("Client credentials exchange failed: {}", e))
+            })?;
+
+        // Extract token details
+        let now = Utc::now();
+        let expires_at = token_result
+            .expires_in()
+            .map(|duration| now + Duration::seconds(duration.as_secs() as i64));
+
+        let credential = OAuthCredential {
+            id: Uuid::new_v4().to_string(),
+            provider: provider_id.to_string(),
+            integration: integration.to_string(),
+            access_token: token_result.access_token().secret().clone(),
+            refresh_token: token_result.refresh_token().map(|t| t.secret().clone()),
+            expires_at,
+            scope: token_result.scopes().map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
+            created_at: now,
+            updated_at: now,
+            user_id: user_id.to_string(),
+            organization_id: organization_id.to_string(),
+        };
+
+        // Save credential
+        self.storage.save_oauth_credential(&credential).await?;
+
+        tracing::info!(
+            "Successfully obtained client credentials token for {}:{}",
+            provider_id,
+            integration
+        );
+
+        Ok(credential)
     }
 
     /// Check if a credential needs token refresh
@@ -453,6 +571,7 @@ impl OAuthClientManager {
 /// Helper function to reduce boilerplate when creating OAuthClientManager instances
 /// in tests and test helpers (Engine::for_testing, TestEnvironment, etc).
 /// Uses standard test configuration with localhost:3000 redirect URI.
+#[allow(clippy::expect_used)] // Test helper function, expects should fail-fast
 pub fn create_test_oauth_client(
     storage: Arc<dyn Storage>,
     secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
@@ -485,7 +604,10 @@ pub struct OAuthClientState {
 
 /// Create public OAuth client routes (callbacks - no auth required)
 ///
-/// These routes must remain public because OAuth providers redirect to them.
+/// These routes are intentionally NOT versioned and mounted at the root level:
+/// - `/oauth/callback` - Browser-based OAuth callback
+/// - `/oauth/callback/api` - API-based OAuth callback
+///
 /// The callbacks validate CSRF tokens and retrieve user context from session.
 ///
 /// Note: No /oauth/success route needed - success page served by frontend (React)
@@ -498,27 +620,39 @@ pub fn create_public_oauth_client_routes(state: Arc<OAuthClientState>) -> Router
 
 /// Create protected OAuth client routes (requires authentication)
 ///
-/// These routes initiate OAuth flows and manage credentials.
-/// TODO: Apply auth middleware when feat/multi-tenant is merged.
+/// All protected OAuth routes are versioned under `/v1/oauth/*` for API consistency.
+/// When nested under `/api`, the full paths become:
+/// - GET  `/api/v1/oauth/providers`
+/// - GET  `/api/v1/oauth/providers/{provider}`
+/// - POST `/api/v1/oauth/providers/{provider}/connect`
+/// - GET  `/api/v1/oauth/credentials`
+/// - DELETE `/api/v1/oauth/credentials/{id}`
+/// - GET  `/api/v1/oauth/connections`
+/// - DELETE `/api/v1/oauth/providers/{provider}/disconnect`
+///
+/// Protected by auth_middleware and organization_middleware.
 pub fn create_protected_oauth_client_routes(state: Arc<OAuthClientState>) -> Router {
     Router::new()
         // Provider browsing (HTML + JSON)
-        .route("/oauth/providers", get(oauth_providers_handler))
-        .route("/oauth/providers/{provider}", get(oauth_provider_handler))
+        .route("/v1/oauth/providers", get(oauth_providers_handler))
+        .route(
+            "/v1/oauth/providers/{provider}",
+            get(oauth_provider_handler),
+        )
         // OAuth flow initiation
         .route(
-            "/oauth/providers/{provider}/connect",
+            "/v1/oauth/providers/{provider}/connect",
             post(connect_oauth_provider_post_handler),
         )
         // Credential management (RESTful)
-        .route("/oauth/credentials", get(list_oauth_credentials_handler))
+        .route("/v1/oauth/credentials", get(list_oauth_credentials_handler))
         .route(
-            "/oauth/credentials/{id}",
+            "/v1/oauth/credentials/{id}",
             delete(delete_oauth_credential_handler),
         )
-        .route("/oauth/connections", get(list_oauth_connections_handler))
+        .route("/v1/oauth/connections", get(list_oauth_connections_handler))
         .route(
-            "/oauth/providers/{provider}/disconnect",
+            "/v1/oauth/providers/{provider}/disconnect",
             delete(disconnect_oauth_provider_handler),
         )
         .with_state(state)
@@ -593,8 +727,32 @@ fn error_html(title: &str, heading: &str, message: Option<&str>, retry_link: boo
 
 async fn oauth_providers_handler(
     State(state): State<Arc<OAuthClientState>>,
-    headers: axum::http::HeaderMap,
+    req: axum::extract::Request,
 ) -> impl IntoResponse {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = match req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+    {
+        Some(ctx) => ctx,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "Authentication Required",
+                    "You must be logged in to view OAuth providers",
+                    None,
+                    false,
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    // Extract headers for content negotiation
+    let headers = req.headers();
+
     // Fetch providers from registry and storage
     let registry_providers = match state.registry_manager.list_oauth_providers().await {
         Ok(p) => p,
@@ -612,10 +770,12 @@ async fn oauth_providers_handler(
         }
     };
 
-    // Fetch all credentials and build a set of connected provider IDs for O(1) lookup
-    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
-    //   state.storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await
-    let connected_providers: HashSet<String> = match state.storage.list_oauth_credentials().await {
+    // Fetch user's credentials and build a set of connected provider IDs for O(1) lookup
+    let connected_providers: HashSet<String> = match state
+        .storage
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
+        .await
+    {
         Ok(credentials) => credentials.iter().map(|c| c.provider.clone()).collect(),
         Err(e) => {
             tracing::error!("Failed to list OAuth credentials: {}", e);
@@ -895,10 +1055,52 @@ pub async fn oauth_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
+    // Extract user_id and organization_id from session (set during authorization)
+    let user_id = match session.data.get("user_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            tracing::error!("No user_id found in session");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "OAuth Error",
+                    "Authentication Required",
+                    Some("User authentication required. Please log in and try again."),
+                    true,
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    let organization_id = match session.data.get("organization_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            tracing::error!("No organization_id found in session");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "OAuth Error",
+                    "Organization Required",
+                    Some("Organization context required. Please log in and try again."),
+                    true,
+                )),
+            )
+                .into_response();
+        }
+    };
+
     // Exchange authorization code for tokens using oauth2 crate
     match state
         .oauth_client
-        .exchange_code(provider_id, code, code_verifier, integration)
+        .exchange_code(
+            provider_id,
+            code,
+            code_verifier,
+            integration,
+            user_id,
+            organization_id,
+        )
         .await
     {
         Ok(credential) => {
@@ -956,7 +1158,29 @@ pub async fn oauth_callback_handler(
 async fn oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(provider): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> impl IntoResponse {
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = match req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+    {
+        Some(ctx) => ctx,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Html(error_html(
+                    "Authentication Required",
+                    "You must be logged in to connect OAuth providers",
+                    None,
+                    false,
+                )),
+            )
+                .into_response();
+        }
+    };
+
     // Get default scopes for the provider from registry
     let scopes = match state.registry_manager.get_oauth_provider(&provider).await {
         Ok(Some(entry)) => entry
@@ -1017,6 +1241,16 @@ async fn oauth_provider_handler(
         json!("default"),
     );
 
+    // Store user_id and organization_id for callback (critical for multi-tenant security)
+    state
+        .session_store
+        .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
+    state.session_store.update_session(
+        &session.id,
+        "organization_id".to_string(),
+        json!(req_ctx.organization_id),
+    );
+
     // Redirect to OAuth provider (session_id is embedded in state parameter)
     (
         StatusCode::FOUND,
@@ -1024,10 +1258,6 @@ async fn oauth_provider_handler(
     )
         .into_response()
 }
-
-// ============================================================================
-// OAUTH PROVIDER API HANDLERS
-// ============================================================================
 
 // ============================================================================
 // OAUTH CREDENTIAL API HANDLERS
@@ -1041,12 +1271,18 @@ async fn oauth_provider_handler(
 /// List all OAuth credentials
 async fn list_oauth_credentials_handler(
     State(state): State<Arc<OAuthClientState>>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
-    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     let credentials = state
         .storage
-        .list_oauth_credentials()
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1070,20 +1306,59 @@ async fn list_oauth_credentials_handler(
     Ok(Json(json!({ "credentials": safe_credentials })))
 }
 
-/// Delete an OAuth credential by ID
+/// Delete an OAuth credential
+///
+/// # Security - RBAC
+/// - Users can delete their own credentials
+/// - Admins/Owners can delete any credential in their organization (OAuthDisconnect permission)
 async fn delete_oauth_credential_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(id): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // TODO(multi-tenant): After feat/multi-tenant merge, this needs:
-    //   1. Extract RequestContext from middleware (user_id, tenant_id)
-    //   2. Verify credential belongs to user (or user has admin permission)
-    //   3. Call delete_oauth_credential with tenant_id for tenant isolation
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Efficient direct lookup with organization isolation
+    let credential = state
+        .storage
+        .get_oauth_credential_by_id(&id, &req_ctx.organization_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to fetch credential: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // RBAC: Check ownership
+    if credential.user_id != req_ctx.user_id
+        && !req_ctx
+            .role
+            .has_permission(crate::auth::Permission::OAuthDisconnect)
+    {
+        tracing::warn!(
+            "User {} (role: {:?}) attempted to delete credential {} owned by {}",
+            req_ctx.user_id,
+            req_ctx.role,
+            id,
+            credential.user_id
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Delete with defense-in-depth
     state
         .storage
-        .delete_oauth_credential(&id)
+        .delete_oauth_credential(&id, &req_ctx.organization_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Failed to delete credential: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
     Ok(Json(json!({ "success": true })))
 }
 
@@ -1091,12 +1366,18 @@ async fn delete_oauth_credential_handler(
 async fn disconnect_oauth_provider_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(provider): AxumPath<String>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
-    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     let credentials = state
         .storage
-        .list_oauth_credentials()
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1106,12 +1387,10 @@ async fn disconnect_oauth_provider_handler(
         .find(|c| c.provider == provider)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Delete the credential
-    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
-    //   storage.delete_oauth_credential(&credential.id, &ctx.tenant_id).await?;
+    // Delete the credential with organization isolation
     state
         .storage
-        .delete_oauth_credential(&credential.id)
+        .delete_oauth_credential(&credential.id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1124,12 +1403,18 @@ async fn disconnect_oauth_provider_handler(
 /// List all active OAuth connections with details
 async fn list_oauth_connections_handler(
     State(state): State<Arc<OAuthClientState>>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
-    // TODO(multi-tenant): After feat/multi-tenant merge, change to:
-    //   let credentials = storage.list_oauth_credentials(&ctx.user_id, &ctx.tenant_id).await?;
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = req
+        .extensions()
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     let credentials = state
         .storage
-        .list_oauth_credentials()
+        .list_oauth_credentials(&req_ctx.user_id, &req_ctx.organization_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -1167,8 +1452,24 @@ async fn list_oauth_connections_handler(
 async fn connect_oauth_provider_post_handler(
     State(state): State<Arc<OAuthClientState>>,
     AxumPath(provider): AxumPath<String>,
-    Json(body): Json<Value>,
+    req: axum::extract::Request,
 ) -> std::result::Result<Json<Value>, StatusCode> {
+    // Extract RequestContext and JSON body manually from request
+    let (parts, body) = req.into_parts();
+
+    // Extract RequestContext from auth middleware (REQUIRED - route must be protected)
+    let req_ctx = parts
+        .extensions
+        .get::<crate::auth::RequestContext>()
+        .cloned()
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Extract JSON body with size limit for DoS protection
+    let body_bytes = axum::body::to_bytes(body, crate::constants::MAX_REQUEST_BODY_SIZE)
+        .await
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+    let body: Value = serde_json::from_slice(&body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+
     // Extract scopes from request body
     // If not provided, build_auth_url() will use the provider's default scopes
     let scope_strings: Vec<String> = body
@@ -1226,7 +1527,17 @@ async fn connect_oauth_provider_post_handler(
         json!(integration.unwrap_or("default")),
     );
 
-    // Return response matching frontend expectations
+    // Store user_id and organization_id for callback (critical for multi-tenant security)
+    state
+        .session_store
+        .update_session(&session.id, "user_id".to_string(), json!(req_ctx.user_id));
+    state.session_store.update_session(
+        &session.id,
+        "organization_id".to_string(),
+        json!(req_ctx.organization_id),
+    );
+
+    // Return authorization URL (session_id is now embedded in the state parameter)
     Ok(Json(json!({
         "auth_url": auth_url,
         "provider_id": provider,
@@ -1294,10 +1605,30 @@ async fn oauth_api_callback_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
 
+    // Extract user_id and organization_id from session
+    let user_id = session
+        .data
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let organization_id = session
+        .data
+        .get("organization_id")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
     // Exchange code for tokens
     let credential = state
         .oauth_client
-        .exchange_code(provider_id, code, code_verifier, stored_integration)
+        .exchange_code(
+            provider_id,
+            code,
+            code_verifier,
+            stored_integration,
+            user_id,
+            organization_id,
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -201,11 +201,10 @@ pub fn is_valid_identifier(s: &str) -> bool {
         return false;
     }
 
-    // Safe: We already checked that s is not empty above
-    let first = s
-        .chars()
-        .next()
-        .expect("string is not empty after length check");
+    // Use safe pattern matching instead of expect
+    let Some(first) = s.chars().next() else {
+        return false; // Empty string is not a valid identifier
+    };
     if !first.is_alphabetic() && first != '_' {
         return false;
     }
@@ -226,15 +225,22 @@ pub struct RunsAccess {
     storage: Arc<dyn Storage>,
     current_run_id: Option<Uuid>,
     flow_name: String,
+    organization_id: String,
 }
 
 impl RunsAccess {
     /// Create a new runs access helper
-    pub fn new(storage: Arc<dyn Storage>, current_run_id: Option<Uuid>, flow_name: String) -> Self {
+    pub fn new(
+        storage: Arc<dyn Storage>,
+        current_run_id: Option<Uuid>,
+        flow_name: String,
+        organization_id: String,
+    ) -> Self {
         Self {
             storage,
             current_run_id,
             flow_name,
+            organization_id,
         }
     }
 
@@ -249,9 +255,11 @@ impl RunsAccess {
     /// Returns empty map if no previous run found.
     pub async fn previous(&self) -> HashMap<String, Value> {
         // Use optimized query to fetch only matching runs (database-level filtering)
+        // Uses organization_id from the current execution context for organization isolation
         let runs = match self
             .storage
             .list_runs_by_flow_and_status(
+                &self.organization_id,
                 &self.flow_name,
                 RunStatus::Succeeded,
                 self.current_run_id,
@@ -285,7 +293,7 @@ impl RunsAccess {
         );
 
         // Get step outputs for this run
-        let steps = match self.storage.get_steps(run.id).await {
+        let steps = match self.storage.get_steps(run.id, &self.organization_id).await {
             Ok(steps) => steps,
             Err(e) => {
                 tracing::warn!("Failed to get steps for run {}: {}", run.id, e);

@@ -35,15 +35,17 @@ async fn setup_executor() -> Executor {
     let oauth_client =
         crate::auth::create_test_oauth_client(storage.clone(), secrets_provider.clone());
 
-    Executor::new(
+    Executor::new(super::executor::ExecutorConfig {
         adapters,
         templater,
         storage,
         secrets_provider,
         oauth_client,
-        None,
-        1000,
-    )
+        runs_data: None,
+        max_concurrent_tasks: 1000,
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
+    })
 }
 
 #[tokio::test]

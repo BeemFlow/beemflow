@@ -35,9 +35,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
-    LatencyUnit,
     cors::CorsLayer,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    trace::{DefaultMakeSpan, OnResponse, TraceLayer},
 };
 
 /// Application state shared across handlers
@@ -48,6 +47,7 @@ pub struct AppState {
     oauth_client: Arc<crate::auth::OAuthClientManager>,
     storage: Arc<dyn crate::storage::Storage>,
     template_renderer: Arc<template::TemplateRenderer>,
+    jwt_manager: Arc<crate::auth::JwtManager>,
 }
 
 /// Configuration for which server interfaces to enable
@@ -76,14 +76,20 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_type, message) = match &self.0 {
             BeemFlowError::Validation(msg) => {
+                // Log validation errors (400) at WARN level - these are client errors
+                tracing::warn!("Validation error: {}", msg);
                 (StatusCode::BAD_REQUEST, "validation_error", msg.clone())
             }
             BeemFlowError::Storage(e) => match e {
-                crate::error::StorageError::NotFound { entity, id } => (
-                    StatusCode::NOT_FOUND,
-                    "not_found",
-                    format!("{} not found: {}", entity, id),
-                ),
+                crate::error::StorageError::NotFound { entity, id } => {
+                    // Log 404s at DEBUG level - normal operation
+                    tracing::debug!("{} not found: {}", entity, id);
+                    (
+                        StatusCode::NOT_FOUND,
+                        "not_found",
+                        format!("{} not found: {}", entity, id),
+                    )
+                }
                 _ => {
                     // Log full error details internally
                     tracing::error!("Storage error: {:?}", e);
@@ -103,9 +109,21 @@ impl IntoResponse for AppError {
                     "A step execution error occurred".to_string(),
                 )
             }
-            BeemFlowError::OAuth(msg) => (StatusCode::UNAUTHORIZED, "auth_error", msg.clone()),
-            BeemFlowError::Adapter(msg) => (StatusCode::BAD_GATEWAY, "adapter_error", msg.clone()),
-            BeemFlowError::Mcp(msg) => (StatusCode::BAD_GATEWAY, "mcp_error", msg.clone()),
+            BeemFlowError::OAuth(msg) => {
+                // Log auth errors (401) at WARN level - could indicate attack or misconfiguration
+                tracing::warn!("OAuth/authentication error: {}", msg);
+                (StatusCode::UNAUTHORIZED, "auth_error", msg.clone())
+            }
+            BeemFlowError::Adapter(msg) => {
+                // Log adapter errors at ERROR level - these are external service issues
+                tracing::error!("Adapter error: {}", msg);
+                (StatusCode::BAD_GATEWAY, "adapter_error", msg.clone())
+            }
+            BeemFlowError::Mcp(msg) => {
+                // Log MCP errors at ERROR level
+                tracing::error!("MCP error: {}", msg);
+                (StatusCode::BAD_GATEWAY, "mcp_error", msg.clone())
+            }
             BeemFlowError::Network(e) => {
                 // Log full error details internally
                 tracing::error!("Network error: {:?}", e);
@@ -125,14 +143,6 @@ impl IntoResponse for AppError {
                 )
             }
         };
-
-        // Log the sanitized error response
-        tracing::debug!(
-            error_type = error_type,
-            status = %status,
-            message = %message,
-            "HTTP request error response"
-        );
 
         let body = json!({
             "error": {
@@ -233,6 +243,53 @@ fn validate_frontend_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Custom response handler that logs HTTP errors with full context
+///
+/// Logs all 4xx and 5xx responses at appropriate levels with method, path, and status code.
+/// This captures routing errors (like 405 Method Not Allowed) that happen at the Axum layer.
+#[derive(Clone)]
+struct ErrorAwareResponseLogger;
+
+impl<B> OnResponse<B> for ErrorAwareResponseLogger {
+    fn on_response(
+        self,
+        response: &axum::http::Response<B>,
+        latency: std::time::Duration,
+        span: &tracing::Span,
+    ) {
+        let status = response.status();
+        let latency_micros = latency.as_micros();
+
+        // Get method and path from span context if available
+        span.in_scope(|| {
+            if status.is_client_error() {
+                // 4xx errors - log at WARN (client-side issues)
+                tracing::warn!(
+                    status = %status,
+                    status_code = status.as_u16(),
+                    latency_us = latency_micros,
+                    "HTTP client error"
+                );
+            } else if status.is_server_error() {
+                // 5xx errors - log at ERROR (our bugs/issues)
+                tracing::error!(
+                    status = %status,
+                    status_code = status.as_u16(),
+                    latency_us = latency_micros,
+                    "HTTP server error"
+                );
+            } else {
+                // Success responses - log at DEBUG to reduce noise
+                tracing::debug!(
+                    status = %status,
+                    latency_us = latency_micros,
+                    "HTTP response"
+                );
+            }
+        });
+    }
+}
+
 /// Middleware to detect HTTPS from X-Forwarded-Proto header when behind a reverse proxy
 ///
 /// This middleware checks the X-Forwarded-Proto header and sets an IsHttps marker
@@ -293,6 +350,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         oauth_issuer: None,
         public_url: None,
         frontend_url: None, // Integrated mode by default
+        single_user: false, // Default to multi-tenant mode
     });
 
     // Allow environment variable override for frontend URL (development convenience)
@@ -354,12 +412,26 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     template_renderer.load_oauth_templates().await?;
     let template_renderer = Arc::new(template_renderer);
 
+    // Initialize JWT manager for authentication
+    // Validate JWT secret BEFORE starting server (fails if weak/missing)
+    let jwt_secret = crate::auth::ValidatedJwtSecret::from_env()?;
+
+    let jwt_manager = Arc::new(crate::auth::JwtManager::new(
+        &jwt_secret,
+        http_config
+            .oauth_issuer
+            .clone()
+            .unwrap_or_else(|| format!("http://{}:{}", http_config.host, http_config.port)),
+        chrono::Duration::minutes(15), // 15-minute access tokens
+    ));
+
     let state = AppState {
         registry,
         session_store: session_store.clone(),
         oauth_client: dependencies.oauth_client.clone(),
         storage: dependencies.storage.clone(),
         template_renderer,
+        jwt_manager,
     };
 
     // Create OAuth server state
@@ -415,6 +487,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
     // Set up graceful shutdown signal handler
     let shutdown_signal = async {
         // Wait for SIGTERM (Docker/Kubernetes) or SIGINT (Ctrl+C)
+        #[allow(clippy::expect_used)] // Signal handler installation should fail-fast
         let ctrl_c = async {
             tokio::signal::ctrl_c()
                 .await
@@ -422,6 +495,7 @@ pub async fn start_server(config: Config, interfaces: ServerInterfaces) -> Resul
         };
 
         #[cfg(unix)]
+        #[allow(clippy::expect_used)] // Signal handler installation should fail-fast
         let terminate = async {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 .expect("failed to install SIGTERM signal handler")
@@ -499,7 +573,16 @@ fn build_router(
         app = app.merge(oauth_server_routes);
     }
 
-    // OAuth CLIENT routes (split into public and protected)
+    // AUTH routes (always enabled - required for multi-tenant)
+    // Nested under /api for consistency with all other API routes
+    let auth_state = Arc::new(crate::auth::AuthState {
+        storage: state.storage.clone(),
+        jwt_manager: state.jwt_manager.clone(),
+    });
+    let auth_routes = crate::auth::create_auth_routes(auth_state);
+    app = app.nest("/api", auth_routes);
+
+    // OAuth CLIENT routes (split into public callbacks and protected endpoints)
     let oauth_client_state = Arc::new(OAuthClientState {
         oauth_client: state.oauth_client.clone(),
         storage: state.storage.clone(),
@@ -509,18 +592,59 @@ fn build_router(
         frontend_url: http_config.frontend_url.clone(),
     });
 
-    // Public OAuth routes (callbacks - no auth required)
+    // Public OAuth routes (callbacks from OAuth providers - no auth required)
     // These must be public because OAuth providers redirect to them
     let public_oauth_routes = create_public_oauth_client_routes(oauth_client_state.clone());
     app = app.merge(public_oauth_routes);
 
-    // Protected OAuth routes (API endpoints for managing OAuth connections)
-    // Nest under /api for consistency with other API endpoints
-    // TODO: Apply auth middleware when feat/multi-tenant is merged
-    let protected_oauth_routes = create_protected_oauth_client_routes(oauth_client_state);
+    // Protected OAuth routes (initiate flows, manage credentials - auth required)
+    let auth_middleware_state = Arc::new(crate::auth::AuthMiddlewareState {
+        storage: state.storage.clone(),
+        jwt_manager: state.jwt_manager.clone(),
+    });
+
+    // Apply auth middleware conditionally based on single_user mode
+    let protected_oauth_routes = if http_config.single_user {
+        // Single-user mode: Only inject default context, no auth required
+        create_protected_oauth_client_routes(oauth_client_state)
+            .layer(axum::middleware::from_fn(single_user_context_middleware))
+    } else {
+        // Multi-tenant mode: Full auth + tenant middleware
+        create_protected_oauth_client_routes(oauth_client_state)
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::organization_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::auth_middleware,
+            ))
+    };
     app = app.nest("/api", protected_oauth_routes);
 
-    // MCP routes (conditionally enabled)
+    // Management routes (user/org/member) - PROTECTED with full middleware stack
+    let management_routes = if http_config.single_user {
+        crate::auth::create_management_routes(state.storage.clone())
+            .layer(axum::middleware::from_fn(single_user_context_middleware))
+    } else {
+        crate::auth::create_management_routes(state.storage.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::organization_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_middleware_state.clone(),
+                crate::auth::auth_middleware,
+            ))
+    };
+    app = app.nest("/api", management_routes);
+
+    // Print warning if running in single-user mode
+    if http_config.single_user {
+        eprintln!("⚠️  Running in single-user mode (no authentication required)");
+    }
+
+    // MCP routes (conditionally enabled) - PROTECTED with auth middleware
     if interfaces.mcp {
         let oauth_issuer = if interfaces.oauth_server {
             Some(
@@ -539,7 +663,24 @@ fn build_router(
             storage: deps.storage.clone(),
         });
 
-        let mcp_routes = create_mcp_routes(mcp_state);
+        // Apply middleware based on single_user flag
+        let mcp_routes = if http_config.single_user {
+            // Single-user mode: Only inject default context, no auth required
+            create_mcp_routes(mcp_state)
+                .layer(axum::middleware::from_fn(single_user_context_middleware))
+        } else {
+            // Multi-organization mode: Full auth middleware stack
+            // MCP over HTTP requires authentication just like the HTTP API
+            create_mcp_routes(mcp_state)
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::organization_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::auth_middleware,
+                ))
+        };
         app = app.merge(mcp_routes);
 
         // Add MCP metadata routes if OAuth is enabled
@@ -553,10 +694,30 @@ fn build_router(
         }
     }
 
-    // HTTP API routes (conditionally enabled)
+    // HTTP API routes (conditionally enabled) - PROTECTED with auth middleware
     // All operation routes are nested under /api for clean separation from frontend
     if interfaces.http_api {
-        let operation_routes = build_operation_routes(&state);
+        // Apply middleware based on single_user flag
+        let operation_routes = if http_config.single_user {
+            // Single-user mode: Only inject default context, no auth required
+            build_operation_routes(&state)
+                .layer(axum::middleware::from_fn(single_user_context_middleware))
+        } else {
+            // Multi-organization mode: Full auth + organization middleware
+            // Note: Layers are applied in reverse order (last = first to execute)
+            build_operation_routes(&state)
+                // Second: Resolve organization and create full RequestContext
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state.clone(),
+                    crate::auth::organization_middleware,
+                ))
+                // First: Validate JWT and create AuthContext
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware_state,
+                    crate::auth::auth_middleware,
+                ))
+        };
+
         app = app.nest("/api", operation_routes);
     }
 
@@ -611,21 +772,22 @@ fn build_router(
             }))
             // Session middleware for OAuth flows and authenticated requests
             .layer(axum::middleware::from_fn(session::session_middleware))
-            // Tracing layer for request/response logging
+            // Tracing layer for request/response logging with error-aware handler
             .layer(
                 TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().include_headers(true))
-                    .on_response(
-                        DefaultOnResponse::new()
+                    .make_span_with(
+                        DefaultMakeSpan::new()
                             .level(tracing::Level::INFO)
-                            .latency_unit(LatencyUnit::Micros),
-                    ),
+                            .include_headers(false) // Don't log headers by default (may contain secrets)
+                    )
+                    .on_response(ErrorAwareResponseLogger),
             )
             // CORS layer for cross-origin requests
             .layer({
                 use axum::http::HeaderValue;
 
                 // Build allowed origins based on deployment mode
+                #[allow(clippy::expect_used)] // Hardcoded localhost/127.0.0.1 URLs are always valid
                 let allowed_origins: Vec<HeaderValue> =
                     if let Some(origins) = &http_config.allowed_origins {
                         // Explicit origins configured - use those
@@ -751,6 +913,36 @@ async fn serve_static_asset(AxumPath(path): AxumPath<String>) -> impl IntoRespon
 }
 
 // ============================================================================
+// SINGLE-USER MODE MIDDLEWARE
+// ============================================================================
+
+/// Middleware that injects default RequestContext for single-user mode
+///
+/// This bypasses authentication by providing a pre-configured context with
+/// DEFAULT_ORGANIZATION_ID and full Owner permissions for all requests.
+///
+/// Use this ONLY with the `--single-user` flag for personal/local deployments.
+async fn single_user_context_middleware(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use crate::constants::{DEFAULT_ORGANIZATION_ID, SYSTEM_USER_ID};
+
+    // Inject default RequestContext for single-user mode
+    req.extensions_mut().insert(crate::auth::RequestContext {
+        user_id: SYSTEM_USER_ID.to_string(),
+        organization_id: DEFAULT_ORGANIZATION_ID.to_string(),
+        organization_name: "Personal".to_string(),
+        role: crate::auth::Role::Owner,
+        client_ip: None,
+        user_agent: Some("single-user-mode".to_string()),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    });
+
+    next.run(req).await
+}
+
+// ============================================================================
 // SYSTEM HANDLERS (Special cases not in operation registry)
 // ============================================================================
 
@@ -776,9 +968,9 @@ async fn health_handler() -> Json<Value> {
 async fn readiness_handler(
     State(storage): State<Arc<dyn crate::storage::Storage>>,
 ) -> std::result::Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Check database connectivity by attempting a simple query
-    // We use list_runs(1, 0) as a canary - if it succeeds, the database is accessible
-    match storage.list_runs(1, 0).await {
+    // Check database connectivity by attempting to list active organizations
+    // This verifies database accessibility without depending on specific organization data
+    match storage.list_active_organizations().await {
         Ok(_) => {
             // Database is accessible
             Ok(Json(json!({

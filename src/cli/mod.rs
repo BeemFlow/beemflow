@@ -41,6 +41,25 @@ fn to_static_str(s: String) -> &'static str {
 async fn create_registry() -> Result<OperationRegistry> {
     let config = Config::load_and_inject(crate::constants::CONFIG_FILE_NAME)?;
     let deps = crate::core::create_dependencies(&config).await?;
+
+    // TODO: Load CLI credentials and validate JWT
+    // For multi-organization CLI support, add:
+    //
+    // if let Some(credentials) = load_cli_credentials()? {
+    //     // Check if token expired
+    //     if credentials.expires_at < Utc::now().timestamp() {
+    //         // Auto-refresh via HTTP call to server
+    //         let new_credentials = refresh_token_via_http(
+    //             &credentials.server,
+    //             &credentials.refresh_token
+    //         ).await?;
+    //         save_cli_credentials(&new_credentials)?;
+    //         credentials = new_credentials;
+    //     }
+    //
+    //     // Credentials will be used to scope REQUEST_CONTEXT in run()
+    // }
+
     Ok(OperationRegistry::new(deps))
 }
 
@@ -69,6 +88,27 @@ pub async fn run() -> Result<()> {
 
     // Try to dispatch to an operation (uses registry.execute() like MCP does)
     if let Some((op_name, input)) = dispatch_to_operation(&matches, &registry)? {
+        // TODO: Scope REQUEST_CONTEXT for multi-organization CLI support
+        // For authenticated CLI operations:
+        //
+        // let credentials = load_cli_credentials()?;
+        // let ctx = RequestContext {
+        //     user_id: credentials.user_id,
+        //     organization_id: credentials.organization_id,
+        //     role: credentials.role,  // Stored from JWT claims
+        //     request_id: Uuid::new_v4().to_string(),
+        //     organization_name: credentials.organization_name,
+        //     client_ip: None,
+        //     user_agent: Some(format!("BeemFlow-CLI/{}", env!("CARGO_PKG_VERSION"))),
+        // };
+        //
+        // let result = REQUEST_CONTEXT.scope(ctx, async {
+        //     registry.execute(&op_name, input).await
+        // }).await?;
+        //
+        // For now, operations use get_auth_context_or_default() which returns
+        // default user/organization (single-user mode).
+
         let result = registry.execute(&op_name, input).await?;
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
@@ -170,7 +210,51 @@ fn build_cli(registry: &OperationRegistry) -> Command {
                         .about("Revoke OAuth client")
                         .arg(Arg::new("client-id").required(true).index(1)),
                 ),
-        );
+        )
+        // TODO: Add CLI authentication support
+        // Currently, CLI operates in single-user mode only (user_id="default", organization_id="default").
+        // To support multi-organization CLI:
+        //
+        // 1. Add auth subcommand:
+        //    .subcommand(
+        //        Command::new("auth")
+        //            .about("Authentication management")
+        //            .subcommand(Command::new("register").about("Register new account")
+        //                .arg(Arg::new("email").required(true))
+        //                .arg(Arg::new("password").required(true))
+        //                .arg(Arg::new("name").required(true)))
+        //            .subcommand(Command::new("login").about("Login to BeemFlow server")
+        //                .arg(Arg::new("email").required(true))
+        //                .arg(Arg::new("password").required(true))
+        //                .arg(Arg::new("server").default_value("http://localhost:3330")))
+        //            .subcommand(Command::new("logout").about("Logout and clear credentials"))
+        //            .subcommand(Command::new("whoami").about("Show current user and organization"))
+        //    )
+        //
+        // 2. Implement credential storage in ~/.beemflow/credentials.json:
+        //    {
+        //        "server": "https://beemflow.example.com",
+        //        "access_token": "eyJ...",
+        //        "refresh_token": "rt_...",
+        //        "expires_at": 1704700800,
+        //        "user_id": "user_123",
+        //        "organization_id": "org_456"
+        //    }
+        //
+        // 3. Load credentials in create_registry() and scope REQUEST_CONTEXT for each operation:
+        //    let credentials = load_cli_credentials()?;
+        //    let ctx = credentials_to_request_context(&credentials)?;
+        //    REQUEST_CONTEXT.scope(ctx, async {
+        //        registry.execute(op_name, input).await
+        //    }).await
+        //
+        // 4. Auto-refresh expired tokens before operation execution
+        //
+        // 5. Handle multiple organizations (let user switch contexts):
+        //    flow auth switch-organization <organization_id>
+        //
+        // For now, use HTTP API for registration/login, or run server with --single-user flag.
+;
 
     // Build operation commands from metadata
     add_operation_commands(app, registry)
@@ -210,7 +294,11 @@ fn add_operation_commands(mut app: Command, registry: &OperationRegistry) -> Com
             if let Some(cli_pattern) = meta.cli_pattern {
                 // cli_pattern has 'static lifetime, so words do too
                 let words: Vec<&'static str> = cli_pattern.split_whitespace().collect();
-                let subcmd_name = words.get(1).copied().unwrap_or(words[0]);
+                let subcmd_name = match words.as_slice() {
+                    [] => "operation", // Empty pattern - defensive default
+                    [single] => single,
+                    [_, second, ..] => second,
+                };
 
                 let cmd = build_operation_command(op_name, meta, subcmd_name);
                 group_cmd = group_cmd.subcommand(cmd);
@@ -469,7 +557,10 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
     }
 
     // Get host and port (CLI overrides config)
-    let host = matches.get_one::<String>("host").unwrap();
+    #[allow(clippy::expect_used)] // CLI arg has default value, this is guaranteed by clap
+    let host = matches
+        .get_one::<String>("host")
+        .expect("host argument has default value");
     let port = matches
         .get_one::<String>("port")
         .and_then(|s| s.parse::<u16>().ok())
@@ -504,6 +595,7 @@ async fn handle_serve_command(matches: &ArgMatches) -> Result<()> {
             oauth_issuer,
             public_url,
             frontend_url: None, // Integrated mode by default (env var can override)
+            single_user: false, // Default to multi-tenant mode
         });
     }
 
@@ -553,7 +645,10 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
 
     match matches.subcommand() {
         Some(("create-client", sub)) => {
-            let name = sub.get_one::<String>("name").unwrap();
+            #[allow(clippy::expect_used)] // Required CLI arg, guaranteed by clap
+            let name = sub
+                .get_one::<String>("name")
+                .expect("name argument is required by clap");
             let grant_types = parse_comma_list(sub, "grant-types");
             let scopes = parse_comma_list(sub, "scopes");
             let json = sub.get_flag("json");
@@ -610,7 +705,10 @@ async fn handle_oauth_command(matches: &ArgMatches) -> Result<()> {
             }
         }
         Some(("revoke-client", sub)) => {
-            let client_id = sub.get_one::<String>("client-id").unwrap();
+            #[allow(clippy::expect_used)] // Required CLI arg, guaranteed by clap
+            let client_id = sub
+                .get_one::<String>("client-id")
+                .expect("client-id argument is required by clap");
             storage.delete_oauth_client(client_id).await?;
             println!("✅ Client '{}' revoked", client_id);
         }

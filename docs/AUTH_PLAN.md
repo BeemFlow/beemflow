@@ -1210,13 +1210,7 @@ pub async fn tenant_middleware(
         request_id: uuid::Uuid::new_v4().to_string(),
     };
 
-    // 6. Set PostgreSQL session variable for RLS
-    state.storage
-        .set_tenant_context(&request_context.tenant.tenant_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // 7. Inject into request extensions
+    // 6. Inject into request extensions
     req.extensions_mut().insert(request_context);
 
     Ok(next.run(req).await)

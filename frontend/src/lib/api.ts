@@ -19,6 +19,12 @@ import type {
   FlowGraph,
   ApiError,
   JsonValue,
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  User,
+  Organization,
+  OrganizationMember,
 } from '../types/beemflow';
 
 // API base URL - defaults to /api prefix for proxied requests
@@ -26,6 +32,10 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 class BeemFlowAPI {
   private client: AxiosInstance;
+  private accessToken: string | null = null;
+  private refreshToken: string | null = null;
+  private currentOrganizationId: string | null = null;
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(baseURL: string = API_BASE_URL) {
     this.client = axios.create({
@@ -36,10 +46,54 @@ class BeemFlowAPI {
       withCredentials: true, // For session cookies (OAuth)
     });
 
-    // Response interceptor for error handling
+    // Request interceptor to inject auth token and org header
+    this.client.interceptors.request.use(
+      (config) => {
+        // Don't add auth headers to auth endpoints (login, register, refresh, logout)
+        const isAuthEndpoint = config.url?.includes('/v1/auth/');
+
+        if (this.accessToken && !isAuthEndpoint) {
+          config.headers.Authorization = `Bearer ${this.accessToken}`;
+        }
+
+        // Add organization header for all protected API calls (not auth endpoints)
+        if (this.currentOrganizationId && !isAuthEndpoint) {
+          config.headers['X-Organization-ID'] = this.currentOrganizationId;
+        }
+
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
+
+    // Response interceptor for error handling and token refresh
     this.client.interceptors.response.use(
       (response) => response,
-      (error: AxiosError<ApiError>) => {
+      async (error: AxiosError<ApiError>) => {
+        const originalRequest = error.config;
+
+        // Handle 401 unauthorized - attempt token refresh
+        if (error.response?.status === 401 && this.refreshToken && originalRequest && !originalRequest.url?.includes('/v1/auth/refresh')) {
+          try {
+            // Prevent multiple simultaneous refresh requests
+            if (!this.refreshPromise) {
+              this.refreshPromise = this.performTokenRefresh();
+            }
+            await this.refreshPromise;
+            this.refreshPromise = null;
+
+            // Retry original request with new token
+            if (this.accessToken) {
+              originalRequest.headers.Authorization = `Bearer ${this.accessToken}`;
+              return this.client(originalRequest);
+            }
+          } catch (refreshError) {
+            // Refresh failed - clear tokens and redirect to login
+            this.clearTokens();
+            throw refreshError;
+          }
+        }
+
         if (error.response?.data?.error) {
           // Throw the API error with structured format
           throw new ApiErrorClass(
@@ -57,6 +111,151 @@ class BeemFlowAPI {
       }
     );
   }
+
+  private async performTokenRefresh(): Promise<void> {
+    if (!this.refreshToken) {
+      throw new Error('No refresh token available');
+    }
+
+    const response = await this.client.post<LoginResponse>('/v1/auth/refresh', {
+      refresh_token: this.refreshToken,
+    });
+
+    this.setTokens(response.data.access_token, response.data.refresh_token);
+  }
+
+  private setTokens(accessToken: string, refreshToken: string): void {
+    this.accessToken = accessToken;
+    this.refreshToken = refreshToken;
+  }
+
+  private clearTokens(): void {
+    this.accessToken = null;
+    this.refreshToken = null;
+  }
+
+  public isAuthenticated(): boolean {
+    return this.accessToken !== null;
+  }
+
+  public setOrganization(organizationId: string): void {
+    this.currentOrganizationId = organizationId;
+  }
+
+  public getSelectedOrganizationId(): string | null {
+    return this.currentOrganizationId;
+  }
+
+  // ============================================================================
+  // Authentication
+  // ============================================================================
+
+  async login(credentials: LoginRequest): Promise<LoginResponse> {
+    const response = await this.client.post<LoginResponse>('/v1/auth/login', credentials);
+    this.setTokens(response.data.access_token, response.data.refresh_token);
+
+    // Set default organization (from login response)
+    if (response.data.organization?.id) {
+      this.setOrganization(response.data.organization.id);
+    }
+
+    return response.data;
+  }
+
+  async register(data: RegisterRequest): Promise<LoginResponse> {
+    const response = await this.client.post<LoginResponse>('/v1/auth/register', data);
+    this.setTokens(response.data.access_token, response.data.refresh_token);
+
+    // Set default organization (from registration response)
+    if (response.data.organization?.id) {
+      this.setOrganization(response.data.organization.id);
+    }
+
+    return response.data;
+  }
+
+  async logout(): Promise<void> {
+    try {
+      await this.client.post('/v1/auth/logout');
+    } finally {
+      this.clearTokens();
+      this.currentOrganizationId = null;
+    }
+  }
+
+  // ============================================================================
+  // User Management
+  // ============================================================================
+
+  async getCurrentUser(): Promise<User> {
+    const response = await this.client.get<User>('/v1/users/me');
+    return response.data;
+  }
+
+  async updateProfile(data: { name?: string; avatar_url?: string }): Promise<User> {
+    const response = await this.client.put<User>('/v1/users/me', data);
+    return response.data;
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await this.client.post('/v1/users/me/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  }
+
+  // ============================================================================
+  // Organization Management
+  // ============================================================================
+
+  async listOrganizations(): Promise<Organization[]> {
+    const response = await this.client.get<Organization[]>('/v1/organizations');
+    return response.data;
+  }
+
+  async getCurrentOrganization(): Promise<Organization> {
+    const response = await this.client.get<Organization>('/v1/organizations/current');
+    return response.data;
+  }
+
+  async updateOrganization(data: { name?: string; slug?: string }): Promise<Organization> {
+    const response = await this.client.put<Organization>('/v1/organizations/current', data);
+    return response.data;
+  }
+
+  // ============================================================================
+  // Member Management
+  // ============================================================================
+
+  async listMembers(): Promise<OrganizationMember[]> {
+    const response = await this.client.get<OrganizationMember[]>('/v1/organizations/current/members');
+    return response.data;
+  }
+
+  async inviteMember(email: string, role: string): Promise<OrganizationMember> {
+    const response = await this.client.post<OrganizationMember>('/v1/organizations/current/members', {
+      email,
+      role,
+    });
+    return response.data;
+  }
+
+  async updateMemberRole(userId: string, role: string): Promise<OrganizationMember> {
+    const response = await this.client.put<OrganizationMember>(
+      `/v1/organizations/current/members/${encodeURIComponent(userId)}`,
+      { role }
+    );
+    return response.data;
+  }
+
+  async removeMember(userId: string): Promise<void> {
+    await this.client.delete(`/v1/organizations/current/members/${encodeURIComponent(userId)}`);
+  }
+
+  // ============================================================================
+  // Audit Logs
+  // ============================================================================
+
 
   // ============================================================================
   // Flows
@@ -238,24 +437,24 @@ class BeemFlowAPI {
   // ============================================================================
 
   async listOAuthProviders(): Promise<OAuthProviderInfo[]> {
-    const response = await this.client.get<{ providers: OAuthProviderInfo[] }>('/oauth/providers');
+    const response = await this.client.get<{ providers: OAuthProviderInfo[] }>('/v1/oauth/providers');
     return response.data.providers;
   }
 
   async connectOAuthProvider(providerId: string, scopes?: string[]): Promise<ConnectOAuthProviderResponse> {
     const response = await this.client.post<ConnectOAuthProviderResponse>(
-      `/oauth/providers/${providerId}/connect`,
+      `/v1/oauth/providers/${providerId}/connect`,
       { scopes }
     );
     return response.data;
   }
 
   async disconnectOAuthProvider(providerId: string): Promise<void> {
-    await this.client.delete(`/oauth/providers/${providerId}/disconnect`);
+    await this.client.delete(`/v1/oauth/providers/${providerId}/disconnect`);
   }
 
   async listOAuthConnections(): Promise<OAuthConnection[]> {
-    const response = await this.client.get<{ connections: OAuthConnection[] }>('/oauth/connections');
+    const response = await this.client.get<{ connections: OAuthConnection[] }>('/v1/oauth/connections');
     return response.data.connections;
   }
 

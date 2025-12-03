@@ -18,6 +18,8 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage
@@ -26,7 +28,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
         .expect("SaveRun should succeed");
 
     let retrieved = storage
-        .get_run(run_id)
+        .get_run(run_id, "test_org")
         .await
         .expect("GetRun should succeed");
     assert!(retrieved.is_some(), "Should find saved run");
@@ -36,7 +38,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
     // Test 2: GetRun with non-existent ID
     let non_existent_id = Uuid::new_v4();
     let missing = storage
-        .get_run(non_existent_id)
+        .get_run(non_existent_id, "test_org")
         .await
         .expect("GetRun should not error");
     assert!(missing.is_none(), "Should return None for non-existent run");
@@ -46,6 +48,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
     let step = StepRun {
         id: step_id,
         run_id,
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Succeeded,
         outputs: Some({
@@ -64,7 +67,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
         .expect("SaveStep should succeed");
 
     let steps = storage
-        .get_steps(run_id)
+        .get_steps(run_id, "test_org")
         .await
         .expect("GetSteps should succeed");
     assert_eq!(steps.len(), 1, "Expected 1 step");
@@ -87,7 +90,7 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
 
     // Test 5: ListRuns
     let runs = storage
-        .list_runs(100, 0)
+        .list_runs("test_org", 100, 0)
         .await
         .expect("ListRuns should succeed");
     assert_eq!(runs.len(), 1, "Expected 1 run");
@@ -100,7 +103,13 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
     });
 
     storage
-        .save_paused_run("pause_token", "webhook.test_source", paused_data.clone())
+        .save_paused_run(
+            "pause_token",
+            "webhook.test_source",
+            paused_data.clone(),
+            "test_org",
+            "test_user",
+        )
         .await
         .expect("SavePausedRun should succeed");
 
@@ -124,12 +133,12 @@ async fn test_all_storage_operations<S: Storage>(storage: Arc<S>) {
 
     // Test 7: DeleteRun
     storage
-        .delete_run(run_id)
+        .delete_run(run_id, "test_org")
         .await
         .expect("DeleteRun should succeed");
 
     let runs = storage
-        .list_runs(100, 0)
+        .list_runs("test_org", 100, 0)
         .await
         .expect("ListRuns should succeed");
     assert_eq!(runs.len(), 0, "Expected 0 runs after delete");
@@ -147,6 +156,8 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
         scope: Some("spreadsheets.readonly".to_string()),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
     };
 
     // Save credential
@@ -157,7 +168,7 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
 
     // Get credential
     let retrieved = storage
-        .get_oauth_credential("google", "sheets")
+        .get_oauth_credential("google", "sheets", "test_user", "test_org")
         .await
         .expect("GetOAuthCredential should succeed");
     assert!(retrieved.is_some(), "Should find saved credential");
@@ -166,7 +177,7 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
 
     // List credentials
     let creds = storage
-        .list_oauth_credentials()
+        .list_oauth_credentials("test_user", "test_org")
         .await
         .expect("ListOAuthCredentials should succeed");
     assert_eq!(creds.len(), 1, "Expected 1 credential");
@@ -174,24 +185,29 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
     // Refresh credential
     let new_expires = Utc::now() + chrono::Duration::hours(2);
     storage
-        .refresh_oauth_credential("test_cred", "new_access_token", Some(new_expires))
+        .refresh_oauth_credential(
+            "test_cred",
+            "test_org",
+            "new_access_token",
+            Some(new_expires),
+        )
         .await
         .expect("RefreshOAuthCredential should succeed");
 
     let refreshed = storage
-        .get_oauth_credential("google", "sheets")
+        .get_oauth_credential("google", "sheets", "test_user", "test_org")
         .await
         .expect("GetOAuthCredential should succeed");
     assert_eq!(refreshed.as_ref().unwrap().access_token, "new_access_token");
 
     // Delete credential
     storage
-        .delete_oauth_credential("test_cred")
+        .delete_oauth_credential("test_cred", "test_org")
         .await
         .expect("DeleteOAuthCredential should succeed");
 
     let creds = storage
-        .list_oauth_credentials()
+        .list_oauth_credentials("test_user", "test_org")
         .await
         .expect("ListOAuthCredentials should succeed");
     assert_eq!(creds.len(), 0, "Expected 0 credentials after delete");
@@ -201,19 +217,19 @@ async fn test_oauth_credential_operations<S: Storage>(storage: Arc<S>) {
 async fn test_flow_versioning_operations<S: Storage>(storage: Arc<S>) {
     // Deploy version 1
     storage
-        .deploy_flow_version("my_flow", "1.0.0", "content v1")
+        .deploy_flow_version("test_org", "my_flow", "1.0.0", "content v1", "test_user")
         .await
         .expect("Deploy v1 should succeed");
 
     // Deploy version 2
     storage
-        .deploy_flow_version("my_flow", "2.0.0", "content v2")
+        .deploy_flow_version("test_org", "my_flow", "2.0.0", "content v2", "test_user")
         .await
         .expect("Deploy v2 should succeed");
 
     // Get deployed version (should be v2, latest)
     let deployed = storage
-        .get_deployed_version("my_flow")
+        .get_deployed_version("test_org", "my_flow")
         .await
         .expect("GetDeployedVersion should succeed");
     assert_eq!(
@@ -224,20 +240,20 @@ async fn test_flow_versioning_operations<S: Storage>(storage: Arc<S>) {
 
     // Get specific version content
     let content_v1 = storage
-        .get_flow_version_content("my_flow", "1.0.0")
+        .get_flow_version_content("test_org", "my_flow", "1.0.0")
         .await
         .expect("GetFlowVersionContent should succeed");
     assert_eq!(content_v1, Some("content v1".to_string()));
 
     let content_v2 = storage
-        .get_flow_version_content("my_flow", "2.0.0")
+        .get_flow_version_content("test_org", "my_flow", "2.0.0")
         .await
         .expect("GetFlowVersionContent should succeed");
     assert_eq!(content_v2, Some("content v2".to_string()));
 
     // List versions
     let versions = storage
-        .list_flow_versions("my_flow")
+        .list_flow_versions("test_org", "my_flow")
         .await
         .expect("ListFlowVersions should succeed");
     assert_eq!(versions.len(), 2, "Expected 2 versions");
@@ -252,12 +268,12 @@ async fn test_flow_versioning_operations<S: Storage>(storage: Arc<S>) {
 
     // Rollback to v1
     storage
-        .set_deployed_version("my_flow", "1.0.0")
+        .set_deployed_version("test_org", "my_flow", "1.0.0")
         .await
         .expect("SetDeployedVersion should succeed");
 
     let deployed = storage
-        .get_deployed_version("my_flow")
+        .get_deployed_version("test_org", "my_flow")
         .await
         .expect("GetDeployedVersion should succeed");
     assert_eq!(
@@ -268,13 +284,19 @@ async fn test_flow_versioning_operations<S: Storage>(storage: Arc<S>) {
 
     // Test list_all_deployed_flows (efficient JOIN query for webhooks)
     storage
-        .deploy_flow_version("another_flow", "1.0.0", "another content")
+        .deploy_flow_version(
+            "test_org",
+            "another_flow",
+            "1.0.0",
+            "another content",
+            "test_user",
+        )
         .await
         .expect("Deploy another_flow should succeed");
 
     // Now we have 2 flows deployed: my_flow@1.0.0 and another_flow@1.0.0
     let all_deployed = storage
-        .list_all_deployed_flows()
+        .list_all_deployed_flows("test_org")
         .await
         .expect("ListAllDeployedFlows should succeed");
 
@@ -295,12 +317,12 @@ async fn test_flow_versioning_operations<S: Storage>(storage: Arc<S>) {
 
     // Disable my_flow
     storage
-        .unset_deployed_version("my_flow")
+        .unset_deployed_version("test_org", "my_flow")
         .await
         .expect("UnsetDeployedVersion should succeed");
 
     let all_deployed_after = storage
-        .list_all_deployed_flows()
+        .list_all_deployed_flows("test_org")
         .await
         .expect("ListAllDeployedFlows should succeed");
 
@@ -327,6 +349,8 @@ async fn test_multiple_steps<S: Storage>(storage: Arc<S>) {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage
@@ -339,6 +363,7 @@ async fn test_multiple_steps<S: Storage>(storage: Arc<S>) {
         let step = StepRun {
             id: Uuid::new_v4(),
             run_id,
+            organization_id: "test_org".to_string(),
             step_name: format!("step_{}", i).into(),
             status: if i % 2 == 0 {
                 StepStatus::Succeeded
@@ -365,7 +390,7 @@ async fn test_multiple_steps<S: Storage>(storage: Arc<S>) {
     }
 
     let steps = storage
-        .get_steps(run_id)
+        .get_steps(run_id, "test_org")
         .await
         .expect("GetSteps should succeed");
     assert_eq!(steps.len(), 10, "Expected 10 steps");
@@ -450,6 +475,8 @@ async fn test_sqlite_storage_stress_runs() {
             started_at: Utc::now(),
             ended_at: None,
             steps: None,
+            organization_id: "test_org".to_string(),
+            triggered_by_user_id: "test_user".to_string(),
         };
         storage
             .save_run(&run)
@@ -458,7 +485,7 @@ async fn test_sqlite_storage_stress_runs() {
     }
 
     let runs = storage
-        .list_runs(1000, 0)
+        .list_runs("test_org", 1000, 0)
         .await
         .expect("ListRuns should succeed");
     assert_eq!(runs.len(), 100, "Expected 100 runs");
@@ -486,6 +513,8 @@ async fn test_sqlite_storage_concurrent_writes() {
                 started_at: Utc::now(),
                 ended_at: None,
                 steps: None,
+                organization_id: "test_org".to_string(),
+                triggered_by_user_id: "test_user".to_string(),
             };
             storage_clone.save_run(&run).await
         });
@@ -501,7 +530,7 @@ async fn test_sqlite_storage_concurrent_writes() {
     }
 
     let runs = storage
-        .list_runs(1000, 0)
+        .list_runs("test_org", 1000, 0)
         .await
         .expect("ListRuns should succeed");
     assert_eq!(runs.len(), 20, "Expected 20 runs from concurrent writes");
@@ -518,15 +547,15 @@ async fn test_sqlite_storage_delete_nonexistent() {
             .await
             .expect("SQLite creation failed"),
     );
-    // Deleting non-existent items should not error
-    storage
-        .delete_run(Uuid::new_v4())
-        .await
-        .expect("Delete non-existent run should not error");
-    storage
-        .delete_oauth_credential("nonexistent")
-        .await
-        .expect("Delete non-existent cred should not error");
+    // Deleting non-existent run should return NotFound error (for organization isolation)
+    let result = storage.delete_run(Uuid::new_v4(), "test_org").await;
+    assert!(result.is_err(), "Delete non-existent run should error");
+
+    // OAuth credential deletion should also return NotFound error (for organization isolation)
+    let result = storage
+        .delete_oauth_credential("nonexistent", "test_org")
+        .await;
+    assert!(result.is_err(), "Delete non-existent cred should error");
 }
 
 // ============================================================================
@@ -545,6 +574,8 @@ async fn test_find_paused_runs_by_source() {
             "token1",
             "webhook.airtable",
             serde_json::json!({"flow": "approval_flow", "step": 0}),
+            "test_org",
+            "test_user",
         )
         .await
         .expect("Failed to save paused run 1");
@@ -554,6 +585,8 @@ async fn test_find_paused_runs_by_source() {
             "token2",
             "webhook.airtable",
             serde_json::json!({"flow": "approval_flow", "step": 1}),
+            "test_org",
+            "test_user",
         )
         .await
         .expect("Failed to save paused run 2");
@@ -563,13 +596,15 @@ async fn test_find_paused_runs_by_source() {
             "token3",
             "webhook.github",
             serde_json::json!({"flow": "ci_flow", "step": 0}),
+            "test_org",
+            "test_user",
         )
         .await
         .expect("Failed to save paused run 3");
 
-    // Query by source
+    // Query by source - now requires organization_id for multi-tenant isolation
     let airtable_runs = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -583,7 +618,7 @@ async fn test_find_paused_runs_by_source() {
 
     // Query by different source
     let github_runs = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -592,7 +627,7 @@ async fn test_find_paused_runs_by_source() {
 
     // Query non-existent source
     let empty_runs = storage
-        .find_paused_runs_by_source("webhook.nonexistent")
+        .find_paused_runs_by_source("webhook.nonexistent", "test_org")
         .await
         .expect("Failed to query by source");
 
@@ -613,13 +648,19 @@ async fn test_source_persists_after_save() {
 
     // Save with source
     storage
-        .save_paused_run("test_token", "webhook.test", test_data.clone())
+        .save_paused_run(
+            "test_token",
+            "webhook.test",
+            test_data.clone(),
+            "test_org",
+            "test_user",
+        )
         .await
         .expect("Failed to save");
 
     // Query by source
     let runs = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
 
@@ -636,13 +677,19 @@ async fn test_fetch_and_delete_removes_from_source_query() {
 
     // Save a paused run
     storage
-        .save_paused_run("token1", "webhook.test", serde_json::json!({"data": 1}))
+        .save_paused_run(
+            "token1",
+            "webhook.test",
+            serde_json::json!({"data": 1}),
+            "test_org",
+            "test_user",
+        )
         .await
         .expect("Failed to save");
 
     // Verify it's queryable by source
     let runs_before = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(runs_before.len(), 1);
@@ -656,7 +703,7 @@ async fn test_fetch_and_delete_removes_from_source_query() {
 
     // Verify it's no longer queryable by source
     let runs_after = storage
-        .find_paused_runs_by_source("webhook.test")
+        .find_paused_runs_by_source("webhook.test", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(runs_after.len(), 0, "Should be deleted");
@@ -670,26 +717,38 @@ async fn test_update_source_for_existing_token() {
 
     // Save with initial source
     storage
-        .save_paused_run("token1", "webhook.old", serde_json::json!({"data": 1}))
+        .save_paused_run(
+            "token1",
+            "webhook.old",
+            serde_json::json!({"data": 1}),
+            "test_org",
+            "test_user",
+        )
         .await
         .expect("Failed to save");
 
     // Update with new source (same token)
     storage
-        .save_paused_run("token1", "webhook.new", serde_json::json!({"data": 2}))
+        .save_paused_run(
+            "token1",
+            "webhook.new",
+            serde_json::json!({"data": 2}),
+            "test_org",
+            "test_user",
+        )
         .await
         .expect("Failed to update");
 
     // Old source should have no results
     let old_runs = storage
-        .find_paused_runs_by_source("webhook.old")
+        .find_paused_runs_by_source("webhook.old", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(old_runs.len(), 0);
 
     // New source should have the run
     let new_runs = storage
-        .find_paused_runs_by_source("webhook.new")
+        .find_paused_runs_by_source("webhook.new", "test_org")
         .await
         .expect("Failed to query");
     assert_eq!(new_runs.len(), 1);
@@ -709,6 +768,8 @@ async fn test_multiple_sources_isolation() {
                 &format!("airtable_{}", i),
                 "webhook.airtable",
                 serde_json::json!({"index": i}),
+                "test_org",
+                "test_user",
             )
             .await
             .expect("Failed to save");
@@ -720,6 +781,8 @@ async fn test_multiple_sources_isolation() {
                 &format!("github_{}", i),
                 "webhook.github",
                 serde_json::json!({"index": i}),
+                "test_org",
+                "test_user",
             )
             .await
             .expect("Failed to save");
@@ -727,13 +790,13 @@ async fn test_multiple_sources_isolation() {
 
     // Verify isolation
     let airtable = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(airtable.len(), 3);
 
     let github = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(github.len(), 2);
@@ -746,13 +809,13 @@ async fn test_multiple_sources_isolation() {
 
     // Verify airtable count decreased but github unchanged
     let airtable_after = storage
-        .find_paused_runs_by_source("webhook.airtable")
+        .find_paused_runs_by_source("webhook.airtable", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(airtable_after.len(), 2);
 
     let github_after = storage
-        .find_paused_runs_by_source("webhook.github")
+        .find_paused_runs_by_source("webhook.github", "test_org")
         .await
         .expect("Query failed");
     assert_eq!(github_after.len(), 2);

@@ -1,6 +1,11 @@
 //! Utility functions and helpers
 //!
 //! Common utilities used throughout BeemFlow.
+//!
+//! This module contains primarily test infrastructure, so we allow
+//! unwrap/expect for convenience in test helper functions.
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
 
 use crate::config::{BlobConfig, Config};
 use crate::storage::SqliteStorage;
@@ -65,7 +70,7 @@ impl TestEnvironment {
     /// Create a test environment with a custom database name
     ///
     /// Useful when you need multiple isolated environments in the same test
-    pub async fn with_db_name(db_name: &str) -> Self {
+    pub async fn with_db_name(_db_name: &str) -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let beemflow_dir = temp_dir.path().join(".beemflow");
 
@@ -77,17 +82,31 @@ impl TestEnvironment {
 
         // Create config for test environment
         let config = Arc::new(Config {
-            flows_dir: Some(beemflow_dir.join("flows").to_str().unwrap().to_string()),
+            flows_dir: Some(
+                beemflow_dir
+                    .join("flows")
+                    .to_str()
+                    .expect("test path should be valid UTF-8")
+                    .to_string(),
+            ),
             blob: Some(BlobConfig {
                 driver: Some("filesystem".to_string()),
                 bucket: None,
-                directory: Some(beemflow_dir.join("files").to_str().unwrap().to_string()),
+                directory: Some(
+                    beemflow_dir
+                        .join("files")
+                        .to_str()
+                        .expect("test path should be valid UTF-8")
+                        .to_string(),
+                ),
             }),
             ..Default::default()
         });
 
+        // Use :memory: for tests to avoid migration hash conflicts
+        // (File-based databases can have cached migration state)
         let storage = Arc::new(
-            SqliteStorage::new(beemflow_dir.join(db_name).to_str().unwrap())
+            SqliteStorage::new(":memory:")
                 .await
                 .expect("Failed to create SQLite storage"),
         );
@@ -171,14 +190,14 @@ mod tests {
         // Verify storage is functional
         env.deps
             .storage
-            .deploy_flow_version("test_flow", "1.0.0", "content")
+            .deploy_flow_version("default", "test_flow", "1.0.0", "content", "test_user")
             .await
             .expect("Should be able to write to database");
 
         let content = env
             .deps
             .storage
-            .get_flow_version_content("test_flow", "1.0.0")
+            .get_flow_version_content("default", "test_flow", "1.0.0")
             .await
             .expect("Should be able to read from database");
 

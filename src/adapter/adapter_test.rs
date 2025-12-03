@@ -327,7 +327,9 @@ async fn test_lazy_load_end_to_end_execution() {
     };
 
     // Execute the flow - this should lazy-load the tool and execute it
-    let result = engine.execute(&flow, HashMap::new()).await;
+    let result = engine
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
+        .await;
 
     assert!(
         result.is_ok(),

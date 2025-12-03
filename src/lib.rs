@@ -29,9 +29,9 @@
 //!     let config = Config::default();
 //!     let deps = create_dependencies(&config).await?;
 //!
-//!     // Execute a flow
+//!     // Execute a flow (with user and organization context)
 //!     let flow = beemflow::dsl::parse_file("flow.yaml", None)?;
-//!     let outputs = deps.engine.execute(&flow, std::collections::HashMap::new()).await?;
+//!     let outputs = deps.engine.execute(&flow, std::collections::HashMap::new(), "default_user", "default").await?;
 //!     println!("{:?}", outputs);
 //!
 //!     Ok(())

@@ -5,7 +5,7 @@ use crate::model::McpServerConfig;
 use crate::storage::SqliteStorage;
 use std::sync::Arc;
 
-// Helper to create test execution context
+// Helper to create test execution context with organization context
 async fn test_context() -> ExecutionContext {
     let storage = Arc::new(
         SqliteStorage::new(":memory:")
@@ -17,7 +17,14 @@ async fn test_context() -> ExecutionContext {
     let oauth_client =
         crate::auth::create_test_oauth_client(storage.clone(), secrets_provider.clone());
 
-    ExecutionContext::new(storage, secrets_provider, oauth_client)
+    // MCP adapter requires organization_id for per-tenant server isolation
+    ExecutionContext::new(
+        storage,
+        secrets_provider,
+        oauth_client,
+        Some("test_user".to_string()),
+        Some("test_org".to_string()),
+    )
 }
 
 // Helper to create test secrets provider

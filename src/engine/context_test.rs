@@ -67,6 +67,8 @@ async fn test_runs_access_previous() {
         started_at: Utc::now(),
         ended_at: Some(Utc::now()),
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&prev_run).await.unwrap();
@@ -75,6 +77,7 @@ async fn test_runs_access_previous() {
     let step = StepRun {
         id: Uuid::new_v4(),
         run_id: prev_run.id,
+        organization_id: "test_org".to_string(),
         step_name: "step1".to_string().into(),
         status: StepStatus::Succeeded,
         started_at: Utc::now(),
@@ -92,8 +95,13 @@ async fn test_runs_access_previous() {
 
     storage.save_step(&step).await.unwrap();
 
-    // Create RunsAccess
-    let runs_access = RunsAccess::new(storage, None, "test_flow".to_string());
+    // Create RunsAccess - use same organization_id as the run
+    let runs_access = RunsAccess::new(
+        storage,
+        None,
+        "test_flow".to_string(),
+        "test_org".to_string(),
+    );
 
     // Get previous run
     let previous = runs_access.previous().await;

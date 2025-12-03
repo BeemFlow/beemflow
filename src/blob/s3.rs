@@ -76,7 +76,12 @@ impl BlobStore for S3BlobStore {
             _ => {
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .map_err(|e| {
+                        BeemFlowError::storage(format!(
+                            "System time error (clock set before 1970?): {}",
+                            e
+                        ))
+                    })?
                     .as_nanos();
                 format!("blob-{}", timestamp)
             }
@@ -118,15 +123,16 @@ impl BlobStore for S3BlobStore {
         let url_parts = &url[5..]; // Remove "s3://"
         let parts: Vec<&str> = url_parts.splitn(2, '/').collect();
 
-        if parts.len() != 2 {
-            return Err(BeemFlowError::validation(format!(
-                "invalid S3 URL format: {}",
-                url
-            )));
-        }
-
-        let bucket = parts[0];
-        let key = parts[1];
+        // Use pattern matching instead of length check + indexing
+        let (bucket, key) = match parts.as_slice() {
+            [b, k] => (*b, *k),
+            _ => {
+                return Err(BeemFlowError::validation(format!(
+                    "invalid S3 URL format: {}",
+                    url
+                )));
+            }
+        };
 
         // Verify bucket matches configured bucket
         if bucket != self.bucket {
