@@ -97,19 +97,16 @@ impl RunStorage for PostgresStorage {
     }
 
     async fn get_run(&self, id: Uuid, organization_id: &str) -> Result<Option<Run>> {
-        let row = sqlx::query(
+        sqlx::query(
             "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
              FROM runs WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => Ok(Some(Self::parse_run(&row)?)),
-            None => Ok(None),
-        }
+        .await?
+        .map(|row| Self::parse_run(&row))
+        .transpose()
     }
 
     async fn list_runs(
@@ -770,34 +767,7 @@ impl OAuthStorage for PostgresStorage {
         .fetch_optional(&self.pool)
         .await?;
 
-        match row {
-            Some(row) => {
-                // Decrypt tokens after retrieval
-                let encrypted_access: String = row.try_get("access_token")?;
-                let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
-
-                let (access_token, refresh_token) =
-                    crate::auth::TokenEncryption::decrypt_credential_tokens(
-                        encrypted_access,
-                        encrypted_refresh,
-                    )?;
-
-                Ok(Some(OAuthCredential {
-                    id: row.try_get("id")?,
-                    provider: row.try_get("provider")?,
-                    integration: row.try_get("integration")?,
-                    access_token,
-                    refresh_token,
-                    expires_at: row.try_get("expires_at")?,
-                    scope: row.try_get("scope")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                    user_id: row.try_get("user_id")?,
-                    organization_id: row.try_get("organization_id")?,
-                }))
-            }
-            None => Ok(None),
-        }
+        row.map(|r| parse_oauth_credential_postgres(&r)).transpose()
     }
 
     async fn list_oauth_credentials(
@@ -816,34 +786,7 @@ impl OAuthStorage for PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut creds = Vec::new();
-        for row in rows {
-            // Decrypt tokens after retrieval
-            let encrypted_access: String = row.try_get("access_token")?;
-            let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
-
-            let (access_token, refresh_token) =
-                crate::auth::TokenEncryption::decrypt_credential_tokens(
-                    encrypted_access,
-                    encrypted_refresh,
-                )?;
-
-            creds.push(OAuthCredential {
-                id: row.try_get("id")?,
-                provider: row.try_get("provider")?,
-                integration: row.try_get("integration")?,
-                access_token,
-                refresh_token,
-                expires_at: row.try_get("expires_at")?,
-                scope: row.try_get("scope")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                user_id: row.try_get("user_id")?,
-                organization_id: row.try_get("organization_id")?,
-            });
-        }
-
-        Ok(creds)
+        rows.iter().map(parse_oauth_credential_postgres).collect()
     }
 
     async fn get_oauth_credential_by_id(
@@ -851,7 +794,7 @@ impl OAuthStorage for PostgresStorage {
         id: &str,
         organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
-        let row = sqlx::query(
+        sqlx::query(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE id = $1 AND organization_id = $2"
@@ -859,32 +802,9 @@ impl OAuthStorage for PostgresStorage {
         .bind(id)
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            // Decrypt tokens
-            let (access_token, refresh_token) =
-                crate::auth::TokenEncryption::decrypt_credential_tokens(
-                    row.try_get("access_token")?,
-                    row.try_get("refresh_token")?,
-                )?;
-
-            Ok(Some(OAuthCredential {
-                id: row.try_get("id")?,
-                provider: row.try_get("provider")?,
-                integration: row.try_get("integration")?,
-                access_token,
-                refresh_token,
-                expires_at: row.try_get("expires_at")?,
-                scope: row.try_get("scope")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                user_id: row.try_get("user_id")?,
-                organization_id: row.try_get("organization_id")?,
-            }))
-        } else {
-            Ok(None)
-        }
+        .await?
+        .map(|row| parse_oauth_credential_postgres(&row))
+        .transpose()
     }
 
     async fn delete_oauth_credential(&self, id: &str, organization_id: &str) -> Result<()> {
@@ -1380,69 +1300,21 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     async fn get_user(&self, id: &str) -> Result<Option<crate::auth::User>> {
-        let row = sqlx::query("SELECT * FROM users WHERE id = $1")
+        sqlx::query("SELECT * FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::User {
-                id: row.try_get("id")?,
-                email: row.try_get("email")?,
-                name: row.try_get("name")?,
-                password_hash: row.try_get("password_hash")?,
-                email_verified: row.try_get("email_verified")?,
-                avatar_url: row.try_get("avatar_url")?,
-                mfa_enabled: row.try_get("mfa_enabled")?,
-                mfa_secret: row.try_get("mfa_secret")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_login_at: row
-                    .try_get::<Option<i64>, _>("last_login_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                disabled: row.try_get("disabled")?,
-                disabled_reason: row.try_get("disabled_reason")?,
-                disabled_at: row
-                    .try_get::<Option<i64>, _>("disabled_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(|row| parse_user_postgres(&row))
+            .transpose()
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<crate::auth::User>> {
-        let row = sqlx::query("SELECT * FROM users WHERE email = $1 AND disabled = FALSE")
+        sqlx::query("SELECT * FROM users WHERE email = $1 AND disabled = FALSE")
             .bind(email)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::User {
-                id: row.try_get("id")?,
-                email: row.try_get("email")?,
-                name: row.try_get("name")?,
-                password_hash: row.try_get("password_hash")?,
-                email_verified: row.try_get("email_verified")?,
-                avatar_url: row.try_get("avatar_url")?,
-                mfa_enabled: row.try_get("mfa_enabled")?,
-                mfa_secret: row.try_get("mfa_secret")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_login_at: row
-                    .try_get::<Option<i64>, _>("last_login_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                disabled: row.try_get("disabled")?,
-                disabled_reason: row.try_get("disabled_reason")?,
-                disabled_at: row
-                    .try_get::<Option<i64>, _>("disabled_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(|row| parse_user_postgres(&row))
+            .transpose()
     }
 
     async fn update_user(&self, user: &crate::auth::User) -> Result<()> {

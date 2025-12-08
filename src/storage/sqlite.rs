@@ -150,19 +150,16 @@ impl RunStorage for SqliteStorage {
     }
 
     async fn get_run(&self, id: Uuid, organization_id: &str) -> Result<Option<Run>> {
-        let row = sqlx::query(
+        sqlx::query(
             "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
              FROM runs WHERE id = ? AND organization_id = ?",
         )
         .bind(id.to_string())
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => Ok(Some(Self::parse_run(&row)?)),
-            None => Ok(None),
-        }
+        .await?
+        .map(|row| Self::parse_run(&row))
+        .transpose()
     }
 
     async fn list_runs(
@@ -816,7 +813,7 @@ impl OAuthStorage for SqliteStorage {
         user_id: &str,
         organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
-        let row = sqlx::query(
+        sqlx::query(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE provider = ? AND integration = ? AND user_id = ? AND organization_id = ?"
@@ -826,42 +823,9 @@ impl OAuthStorage for SqliteStorage {
         .bind(user_id)
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => {
-                // Decrypt tokens after retrieval
-                let encrypted_access: String = row.try_get("access_token")?;
-                let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
-
-                let (access_token, refresh_token) =
-                    crate::auth::TokenEncryption::decrypt_credential_tokens(
-                        encrypted_access,
-                        encrypted_refresh,
-                    )?;
-
-                let created_at_unix: i64 = row.try_get("created_at")?;
-                let updated_at_unix: i64 = row.try_get("updated_at")?;
-                let expires_at_unix: Option<i64> = row.try_get("expires_at")?;
-
-                Ok(Some(OAuthCredential {
-                    id: row.try_get("id")?,
-                    provider: row.try_get("provider")?,
-                    integration: row.try_get("integration")?,
-                    access_token,
-                    refresh_token,
-                    expires_at: expires_at_unix.and_then(DateTime::from_timestamp_millis),
-                    scope: row.try_get("scope")?,
-                    created_at: DateTime::from_timestamp_millis(created_at_unix)
-                        .unwrap_or_else(Utc::now),
-                    updated_at: DateTime::from_timestamp_millis(updated_at_unix)
-                        .unwrap_or_else(Utc::now),
-                    user_id: row.try_get("user_id")?,
-                    organization_id: row.try_get("organization_id")?,
-                }))
-            }
-            None => Ok(None),
-        }
+        .await?
+        .map(|row| parse_oauth_credential_sqlite(&row))
+        .transpose()
     }
 
     async fn list_oauth_credentials(
@@ -880,40 +844,7 @@ impl OAuthStorage for SqliteStorage {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut creds = Vec::new();
-        for row in rows {
-            // Decrypt tokens after retrieval
-            let encrypted_access: String = row.try_get("access_token")?;
-            let encrypted_refresh: Option<String> = row.try_get("refresh_token")?;
-
-            let (access_token, refresh_token) =
-                crate::auth::TokenEncryption::decrypt_credential_tokens(
-                    encrypted_access,
-                    encrypted_refresh,
-                )?;
-
-            let created_at_unix: i64 = row.try_get("created_at")?;
-            let updated_at_unix: i64 = row.try_get("updated_at")?;
-            let expires_at_unix: Option<i64> = row.try_get("expires_at")?;
-
-            creds.push(OAuthCredential {
-                id: row.try_get("id")?,
-                provider: row.try_get("provider")?,
-                integration: row.try_get("integration")?,
-                access_token,
-                refresh_token,
-                expires_at: expires_at_unix.and_then(DateTime::from_timestamp_millis),
-                scope: row.try_get("scope")?,
-                created_at: DateTime::from_timestamp_millis(created_at_unix)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(updated_at_unix)
-                    .unwrap_or_else(Utc::now),
-                user_id: row.try_get("user_id")?,
-                organization_id: row.try_get("organization_id")?,
-            });
-        }
-
-        Ok(creds)
+        rows.iter().map(parse_oauth_credential_sqlite).collect()
     }
 
     async fn get_oauth_credential_by_id(
@@ -921,7 +852,7 @@ impl OAuthStorage for SqliteStorage {
         id: &str,
         organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
-        let row = sqlx::query(
+        sqlx::query(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE id = ? AND organization_id = ?"
@@ -929,36 +860,9 @@ impl OAuthStorage for SqliteStorage {
         .bind(id)
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(row) = row {
-            // Decrypt tokens
-            let (access_token, refresh_token) =
-                crate::auth::TokenEncryption::decrypt_credential_tokens(
-                    row.try_get("access_token")?,
-                    row.try_get("refresh_token")?,
-                )?;
-
-            let expires_at: Option<i64> = row.try_get("expires_at")?;
-
-            Ok(Some(OAuthCredential {
-                id: row.try_get("id")?,
-                provider: row.try_get("provider")?,
-                integration: row.try_get("integration")?,
-                access_token,
-                refresh_token,
-                expires_at: expires_at.and_then(DateTime::from_timestamp_millis),
-                scope: row.try_get("scope")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                user_id: row.try_get("user_id")?,
-                organization_id: row.try_get("organization_id")?,
-            }))
-        } else {
-            Ok(None)
-        }
+        .await?
+        .map(|row| parse_oauth_credential_sqlite(&row))
+        .transpose()
     }
 
     async fn delete_oauth_credential(&self, id: &str, organization_id: &str) -> Result<()> {
@@ -1448,69 +1352,21 @@ impl crate::storage::AuthStorage for SqliteStorage {
     }
 
     async fn get_user(&self, id: &str) -> Result<Option<crate::auth::User>> {
-        let row = sqlx::query("SELECT * FROM users WHERE id = ?")
+        sqlx::query("SELECT * FROM users WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::User {
-                id: row.try_get("id")?,
-                email: row.try_get("email")?,
-                name: row.try_get("name")?,
-                password_hash: row.try_get("password_hash")?,
-                email_verified: row.try_get::<i32, _>("email_verified")? != 0,
-                avatar_url: row.try_get("avatar_url")?,
-                mfa_enabled: row.try_get::<i32, _>("mfa_enabled")? != 0,
-                mfa_secret: row.try_get("mfa_secret")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_login_at: row
-                    .try_get::<Option<i64>, _>("last_login_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                disabled: row.try_get::<i32, _>("disabled")? != 0,
-                disabled_reason: row.try_get("disabled_reason")?,
-                disabled_at: row
-                    .try_get::<Option<i64>, _>("disabled_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(|row| parse_user_sqlite(&row))
+            .transpose()
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<crate::auth::User>> {
-        let row = sqlx::query("SELECT * FROM users WHERE email = ? AND disabled = 0")
+        sqlx::query("SELECT * FROM users WHERE email = ? AND disabled = 0")
             .bind(email)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::User {
-                id: row.try_get("id")?,
-                email: row.try_get("email")?,
-                name: row.try_get("name")?,
-                password_hash: row.try_get("password_hash")?,
-                email_verified: row.try_get::<i32, _>("email_verified")? != 0,
-                avatar_url: row.try_get("avatar_url")?,
-                mfa_enabled: row.try_get::<i32, _>("mfa_enabled")? != 0,
-                mfa_secret: row.try_get("mfa_secret")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_login_at: row
-                    .try_get::<Option<i64>, _>("last_login_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                disabled: row.try_get::<i32, _>("disabled")? != 0,
-                disabled_reason: row.try_get("disabled_reason")?,
-                disabled_at: row
-                    .try_get::<Option<i64>, _>("disabled_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(|row| parse_user_sqlite(&row))
+            .transpose()
     }
 
     async fn update_user(&self, user: &crate::auth::User) -> Result<()> {
