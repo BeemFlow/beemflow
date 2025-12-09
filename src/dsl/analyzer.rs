@@ -39,6 +39,7 @@ impl DependencyAnalyzer {
             // - {{ steps.foo.output }}
             // - {{ steps['foo'] }}
             // - {{ steps["foo"] }}
+            #[allow(clippy::expect_used)] // Static regex compilation should fail-fast
             step_ref_regex: Regex::new(
                 r#"steps\.([a-zA-Z0-9_-]+)|steps\['([^']+)'\]|steps\["([^"]+)"\]"#,
             )

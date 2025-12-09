@@ -1,10 +1,17 @@
 import { useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { useOAuthProviders } from '../../hooks/useOAuthProviders';
 import { OAuthProviderCard } from './OAuthProviderCard';
+import { Permission } from '../../types/beemflow';
 
 export function OAuthProvidersList() {
+  const { role, hasPermission } = useAuth();
   const { data: providers, isLoading, error } = useOAuthProviders();
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Permission checks
+  const canConnect = hasPermission(Permission.OAuthConnect);
+  const canDisconnect = hasPermission(Permission.OAuthDisconnect);
 
   // Filter providers based on search query
   const filteredProviders = providers?.filter((provider) => {
@@ -54,12 +61,41 @@ export function OAuthProvidersList() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          OAuth Integrations
-        </h1>
-        <p className="text-gray-600">
-          Connect your external services to enable powerful workflow automations
-        </p>
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              OAuth Integrations
+            </h1>
+            <p className="text-gray-600">
+              Connect your external services to enable powerful workflow automations
+            </p>
+          </div>
+          {role && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize">
+              Your role: {role}
+            </span>
+          )}
+        </div>
+
+        {/* Permission Warning */}
+        {!canConnect && (
+          <div className="mt-4 rounded-md bg-yellow-50 p-4 border border-yellow-200">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">Limited Access</h3>
+                <p className="mt-1 text-sm text-yellow-700">
+                  You don't have permission to connect OAuth integrations. Your current role is <span className="font-medium capitalize">{role}</span>.
+                  Contact an administrator to request elevated permissions.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Search Bar */}
@@ -93,7 +129,12 @@ export function OAuthProvidersList() {
       {filteredProviders && filteredProviders.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredProviders.map((provider) => (
-            <OAuthProviderCard key={provider.id} provider={provider} />
+            <OAuthProviderCard
+              key={provider.id}
+              provider={provider}
+              canConnect={canConnect}
+              canDisconnect={canDisconnect}
+            />
           ))}
         </div>
       ) : (

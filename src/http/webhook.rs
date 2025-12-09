@@ -15,6 +15,7 @@ use axum::{
     routing::post,
 };
 use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
@@ -40,25 +41,61 @@ pub(crate) struct ParsedEvent {
     pub(crate) data: HashMap<String, Value>,
 }
 
+/// Webhook path parameters
+#[derive(Deserialize)]
+pub struct WebhookPath {
+    pub organization_id: String,
+    pub topic: String,
+}
+
 /// Create webhook routes
 pub fn create_webhook_routes() -> Router<WebhookManagerState> {
-    Router::new().route("/{provider}", post(handle_webhook))
+    Router::new().route("/{organization_id}/{topic}", post(handle_webhook))
 }
 
 /// Handle incoming webhook
 async fn handle_webhook(
     State(state): State<WebhookManagerState>,
-    Path(provider): Path<String>,
+    Path(path): Path<WebhookPath>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    tracing::debug!("Webhook received: provider={}", provider);
+    let organization_id = &path.organization_id;
+    let topic = &path.topic;
 
-    // Find webhook configuration from registry
-    let webhook_config = match find_webhook_config(&state.registry_manager, &provider).await {
+    tracing::debug!(
+        "Webhook received: organization_id={}, topic={}",
+        organization_id,
+        topic
+    );
+
+    // Verify organization exists before processing webhook
+    let organization = match state.storage.get_organization(organization_id).await {
+        Ok(Some(organization)) => organization,
+        Ok(None) => {
+            tracing::warn!(
+                "Webhook rejected: organization not found: {}",
+                organization_id
+            );
+            return (StatusCode::NOT_FOUND, "Organization not found").into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to verify organization {}: {}", organization_id, e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+
+    tracing::debug!(
+        "Organization verified: {} ({})",
+        organization.name,
+        organization.id
+    );
+
+    // Find webhook configuration from registry (topic maps to provider name)
+    let webhook_config = match find_webhook_config(&state.registry_manager, topic).await {
         Some(config) => config,
         None => {
-            tracing::warn!("Webhook not found: {}", provider);
+            tracing::warn!("Webhook not found for topic: {}", topic);
             return (StatusCode::NOT_FOUND, "Webhook not configured").into_response();
         }
     };
@@ -78,7 +115,11 @@ async fn handle_webhook(
         if !secret_value.is_empty()
             && !verify_webhook_signature(&webhook_config, &headers, &body, &secret_value)
         {
-            tracing::error!("Invalid webhook signature for {}", provider);
+            tracing::error!(
+                "Invalid webhook signature for organization {} topic {}",
+                organization_id,
+                topic
+            );
             return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
         }
     }
@@ -140,10 +181,14 @@ async fn handle_webhook(
     let mut resumed_count = 0;
 
     for event in &events {
-        tracing::info!("Processing webhook event: {}", event.topic);
+        tracing::info!(
+            "Processing webhook event: {} for organization {}",
+            event.topic,
+            organization_id
+        );
 
         // Use Case 1: Trigger new workflow executions
-        match trigger_flows_for_event(&state, event).await {
+        match trigger_flows_for_event(&state, organization_id, event).await {
             Ok(count) => {
                 triggered_count += count;
                 tracing::info!("Event {} triggered {} new flow(s)", event.topic, count);
@@ -155,7 +200,7 @@ async fn handle_webhook(
         }
 
         // Use Case 2: Resume paused workflow executions
-        match resume_paused_runs_for_event(&state, event).await {
+        match resume_paused_runs_for_event(&state, organization_id, event).await {
             Ok(count) => {
                 resumed_count += count;
                 tracing::info!("Event {} resumed {} paused run(s)", event.topic, count);
@@ -180,13 +225,21 @@ async fn handle_webhook(
 /// Trigger new flow executions for matching deployed flows (Use Case 1)
 async fn trigger_flows_for_event(
     state: &WebhookManagerState,
+    organization_id: &str,
     event: &ParsedEvent,
 ) -> Result<usize> {
     // Fast O(log N) lookup: Query only flow names (not content)
-    let flow_names = state.storage.find_flow_names_by_topic(&event.topic).await?;
+    let flow_names = state
+        .storage
+        .find_flow_names_by_topic(organization_id, &event.topic)
+        .await?;
 
     if flow_names.is_empty() {
-        tracing::debug!("No flows registered for topic: {}", event.topic);
+        tracing::debug!(
+            "No flows registered for topic: {} in organization: {}",
+            event.topic,
+            organization_id
+        );
         return Ok(0);
     }
 
@@ -195,14 +248,37 @@ async fn trigger_flows_for_event(
     // Use engine.start() - same code path as HTTP/CLI/MCP operations
     for flow_name in flow_names {
         tracing::info!(
-            "Triggering flow '{}' for webhook topic '{}'",
+            "Triggering flow '{}' for webhook topic '{}' in organization '{}'",
             flow_name,
-            event.topic
+            event.topic,
+            organization_id
         );
+
+        // Use deployer's user_id for OAuth credential resolution
+        let deployed_by = state
+            .storage
+            .get_deployed_by(organization_id, &flow_name)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    organization_id = %organization_id,
+                    flow = %flow_name,
+                    "No deployer found for flow, using default user"
+                );
+                crate::constants::DEFAULT_USER_ID.to_string()
+            });
 
         match state
             .engine
-            .start(&flow_name, event.data.clone(), false)
+            .start(
+                &flow_name,
+                event.data.clone(),
+                false,
+                &deployed_by,
+                organization_id,
+            )
             .await
         {
             Ok(_) => {
@@ -222,12 +298,13 @@ async fn trigger_flows_for_event(
 /// Resume paused runs for matching paused workflows (Use Case 2)
 async fn resume_paused_runs_for_event(
     state: &WebhookManagerState,
+    organization_id: &str,
     event: &ParsedEvent,
 ) -> Result<usize> {
-    // Query paused runs by source (event topic)
+    // Query paused runs by source (event topic) - organization-scoped
     let paused_runs = state
         .storage
-        .find_paused_runs_by_source(&event.topic)
+        .find_paused_runs_by_source(&event.topic, organization_id)
         .await?;
 
     if paused_runs.is_empty() {
@@ -252,6 +329,18 @@ async fn resume_paused_runs_for_event(
                 continue;
             }
         };
+
+        // Defense-in-depth: Verify organization even though SQL already filtered by org
+        // This catches bugs or race conditions that could leak data across organizations
+        if paused.organization_id != organization_id {
+            tracing::error!(
+                paused_org = %paused.organization_id,
+                webhook_org = %organization_id,
+                token = %token,
+                "SECURITY: Paused run organization mismatch - possible data leak attempt"
+            );
+            continue;
+        }
 
         // Get await_event spec from the current step
         let step = match paused.flow.steps.get(paused.step_idx) {
@@ -375,10 +464,13 @@ fn verify_webhook_signature(
         // Verify timestamp age
         if let Ok(ts) = timestamp.parse::<i64>() {
             let max_age = signature_config.max_age.unwrap_or(300); // Default 5 minutes
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
+            let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(d) => d.as_secs() as i64,
+                Err(e) => {
+                    tracing::error!("System time error during webhook verification: {}", e);
+                    return false; // Fail verification if system clock is broken
+                }
+            };
 
             if now - ts > max_age {
                 return false;
@@ -400,7 +492,20 @@ fn verify_webhook_signature(
     };
 
     // Calculate expected signature
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    // HmacSha256 accepts keys of any length, but log a warning if the key seems problematic
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(
+                "Failed to create HMAC verifier with provided secret (length: {}): {}. \
+                 Webhook signature verification will fail.",
+                secret.len(),
+                e
+            );
+            // Return false early - don't panic, just fail verification gracefully
+            return false;
+        }
+    };
     mac.update(base_string.as_bytes());
     let expected_sig = hex::encode(mac.finalize().into_bytes());
 

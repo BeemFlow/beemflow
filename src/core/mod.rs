@@ -9,6 +9,34 @@ pub mod runs;
 pub mod system;
 pub mod tools;
 
+// TODO: Add user and organization management operation modules
+// For complete multi-organization SaaS, add:
+//
+// pub mod users;         // User management operations
+// pub mod organizations; // Organization management operations
+//
+// Suggested operations:
+//
+// users module:
+// - users.list         - List users in current organization
+// - users.get          - Get user details
+// - users.update       - Update user profile
+// - users.disable      - Disable user account
+//
+// organizations module:
+// - organizations.list       - List all organizations for current user
+// - organizations.get        - Get organization details
+// - organizations.update     - Update organization settings
+// - organizations.members.list   - List organization members
+// - organizations.members.invite - Invite user to organization
+// - organizations.members.update - Update member role
+// - organizations.members.remove - Remove member from organization
+//
+// Note: Registration and login are already implemented as HTTP-only routes
+// in src/auth/handlers.rs (not exposed as operations). This works for HTTP/MCP,
+// but CLI authentication would need these exposed as operations or via
+// direct HTTP calls from CLI commands.
+
 // Operation groups are available as modules
 // (not re-exported to avoid namespace pollution)
 
@@ -24,6 +52,80 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+// Task-local storage for RequestContext
+// Allows operations to access authenticated user context without changing Operation trait
+tokio::task_local! {
+    pub static REQUEST_CONTEXT: crate::auth::RequestContext;
+}
+
+/// Get auth context with default fallback for single-user mode
+///
+/// Returns default context (single-user mode) when REQUEST_CONTEXT not set.
+/// This enables BeemFlow to work without authentication for simple use cases.
+///
+/// **Single-User Mode (Default):**
+/// - user_id: "default"
+/// - organization_id: "default"
+/// - role: Owner (full permissions)
+///
+/// **Multi-Organization Mode (Advanced):**
+/// - Requires JWT_SECRET environment variable
+/// - HTTP requests must include Authorization: Bearer <token>
+/// - CLI requires `flow login` (TODO: not yet implemented)
+///
+/// # Example
+/// ```ignore
+/// let ctx = get_auth_context_or_default();
+/// storage.list_flows(&ctx.organization_id).await?
+/// ```
+///
+/// # TODO: CLI Authentication
+/// Currently, CLI always returns default context (single-user mode).
+/// For multi-organization CLI support:
+/// - Add `flow auth login/register/logout` commands (see src/cli/mod.rs TODOs)
+/// - Store credentials in ~/.beemflow/credentials.json
+/// - Load and scope REQUEST_CONTEXT in CLI before calling operations
+/// - See src/cli/mod.rs:91-110 for implementation details
+pub fn get_auth_context_or_default() -> crate::auth::RequestContext {
+    REQUEST_CONTEXT
+        .try_with(|ctx| ctx.clone())
+        .unwrap_or_else(|_| {
+            // Default context for single-user mode
+            crate::auth::RequestContext {
+                user_id: "default".to_string(),
+                organization_id: "default".to_string(),
+                organization_name: "Default".to_string(),
+                role: crate::auth::Role::Owner,
+                client_ip: None,
+                user_agent: None,
+                request_id: uuid::Uuid::new_v4().to_string(),
+            }
+        })
+}
+
+/// Extract authenticated RequestContext from task-local storage
+///
+/// Returns error if no context available (unauthenticated call).
+/// Use this for operations that REQUIRE authentication (user/organization management).
+///
+/// # Errors
+/// Returns `BeemFlowError::Unauthorized` if REQUEST_CONTEXT is not set
+/// (e.g., unauthenticated CLI call without `flow login`).
+///
+/// # Example
+/// ```ignore
+/// let ctx = require_auth_context()?;
+/// check_permission(&ctx.role, "runs.read")?;
+/// storage.list_runs(&ctx.organization_id, limit, offset).await?
+/// ```
+pub fn require_auth_context() -> crate::Result<crate::auth::RequestContext> {
+    REQUEST_CONTEXT
+        .try_with(|ctx| ctx.clone())
+        .map_err(|_| crate::BeemFlowError::Unauthorized(
+            "Authentication required. This operation requires a valid JWT token or authenticated CLI session.".to_string()
+        ))
+}
 
 /// Dependencies that operations need access to
 #[derive(Clone)]
@@ -188,6 +290,7 @@ where
 // Helper function for loading flows from name or file
 async fn load_flow_from_config(
     config: &Config,
+    organization_id: &str,
     name: Option<&str>,
     file: Option<&str>,
 ) -> Result<crate::model::Flow> {
@@ -196,7 +299,7 @@ async fn load_flow_from_config(
         (Some(f), _) => parse_file(f, None),
         (None, Some(n)) => {
             let flows_dir = crate::config::get_flows_dir(config);
-            let content = crate::storage::flows::get_flow(&flows_dir, n)
+            let content = crate::storage::flows::get_flow(&flows_dir, organization_id, n)
                 .await?
                 .ok_or_else(|| not_found("Flow", n))?;
             parse_string(&content, None)

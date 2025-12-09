@@ -29,6 +29,9 @@ pub enum BeemFlowError {
     #[error("OAuth error: {0}")]
     OAuth(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
     #[error("MCP error: {0}")]
     Mcp(String),
 

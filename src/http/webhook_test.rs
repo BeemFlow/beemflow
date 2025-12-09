@@ -29,11 +29,11 @@ async fn test_webhook_route_registration() {
     // Build webhook router
     let app = create_webhook_routes().with_state(webhook_state);
 
-    // Make a POST request to /test-provider
-    // This should return 404 (webhook not configured) but proves the route is registered
+    // Make a POST request to /test-org/test-topic
+    // This should return 404 (organization not found) but proves the route is registered
     let request = Request::builder()
         .method("POST")
-        .uri("/test-provider")
+        .uri("/test-org/test-topic")
         .header("content-type", "application/json")
         .body(Body::from(r#"{"test":"data"}"#))
         .unwrap();
@@ -41,7 +41,7 @@ async fn test_webhook_route_registration() {
     let response = app.oneshot(request).await.unwrap();
 
     // Verify the route is accessible (not 404 NOT_FOUND for the route itself)
-    // We expect 404 "Webhook not configured" since test-provider isn't in registry
+    // We expect 404 "Organization not found" since test-org doesn't exist
     // This is different from Axum returning 404 for an unregistered route
     assert_eq!(
         response.status(),
@@ -437,7 +437,11 @@ steps:
     let flow = parse_string(flow_yaml, None).expect("Failed to parse flow");
 
     // Execute flow - should pause at await_event
-    let result = env.deps.engine.execute(&flow, HashMap::new()).await;
+    let result = env
+        .deps
+        .engine
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
+        .await;
     assert!(result.is_err(), "Flow should pause (error) at await_event");
     let err = result.unwrap_err();
     let err_msg = err.to_string();
@@ -451,7 +455,7 @@ steps:
     let paused_runs = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .expect("Should find paused runs");
     assert_eq!(paused_runs.len(), 1, "Should have one paused run");
@@ -500,7 +504,7 @@ steps:
     let after_resume = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .expect("Should query");
     assert_eq!(after_resume.len(), 0, "Paused run should be deleted");
@@ -530,13 +534,17 @@ steps:
 "#;
 
     let flow = parse_string(flow_yaml, None).unwrap();
-    env.deps.engine.execute(&flow, HashMap::new()).await.ok();
+    env.deps
+        .engine
+        .execute(&flow, HashMap::new(), "test_user", "test_org")
+        .await
+        .ok();
 
     // Get the auto-generated paused token
     let paused = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     let (token, _) = &paused[0];
@@ -558,7 +566,7 @@ steps:
     let still_paused = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     assert_eq!(still_paused.len(), 1, "Should still be paused");
@@ -575,7 +583,7 @@ steps:
     let cleaned = env
         .deps
         .storage
-        .find_paused_runs_by_source("twilio.sms")
+        .find_paused_runs_by_source("twilio.sms", "test_org")
         .await
         .unwrap();
     assert_eq!(cleaned.len(), 0, "Should be cleaned up");

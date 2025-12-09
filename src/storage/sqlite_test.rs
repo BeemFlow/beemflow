@@ -16,10 +16,12 @@ async fn test_save_and_get_run() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&run).await.unwrap();
-    let retrieved = storage.get_run(run.id).await.unwrap();
+    let retrieved = storage.get_run(run.id, "test_org").await.unwrap();
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().flow_name.as_str(), "test");
 }
@@ -37,11 +39,13 @@ async fn test_oauth_credentials() {
         scope: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
     };
 
     storage.save_oauth_credential(&cred).await.unwrap();
     let retrieved = storage
-        .get_oauth_credential("google", "my_app")
+        .get_oauth_credential("google", "my_app", "test_user", "test_org")
         .await
         .unwrap();
     assert!(retrieved.is_some());
@@ -53,18 +57,24 @@ async fn test_flow_versioning() {
     let storage = SqliteStorage::new(":memory:").await.unwrap();
 
     storage
-        .deploy_flow_version("my_flow", "v1", "content1")
+        .deploy_flow_version("test_org", "my_flow", "v1", "content1", "test_user")
         .await
         .unwrap();
     storage
-        .deploy_flow_version("my_flow", "v2", "content2")
+        .deploy_flow_version("test_org", "my_flow", "v2", "content2", "test_user")
         .await
         .unwrap();
 
-    let deployed = storage.get_deployed_version("my_flow").await.unwrap();
+    let deployed = storage
+        .get_deployed_version("test_org", "my_flow")
+        .await
+        .unwrap();
     assert_eq!(deployed, Some("v2".to_string()));
 
-    let versions = storage.list_flow_versions("my_flow").await.unwrap();
+    let versions = storage
+        .list_flow_versions("test_org", "my_flow")
+        .await
+        .unwrap();
     assert_eq!(versions.len(), 2);
     assert!(versions.iter().any(|v| v.version == "v2" && v.is_live));
 }
@@ -86,6 +96,8 @@ async fn test_all_operations_comprehensive() {
             "sqlite_pause_token",
             "webhook.test_source",
             paused_data.clone(),
+            "test_org",
+            "test_user",
         )
         .await
         .unwrap();
@@ -106,7 +118,7 @@ async fn test_all_operations_comprehensive() {
     assert_eq!(paused_runs.len(), 0, "Expected 0 paused runs after delete");
 
     // Test ListRuns - should be empty initially
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 0, "Expected 0 runs initially");
 
     // Add a run
@@ -123,12 +135,14 @@ async fn test_all_operations_comprehensive() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&run).await.unwrap();
 
     // Test GetRun
-    let retrieved_run = storage.get_run(run_id).await.unwrap();
+    let retrieved_run = storage.get_run(run_id, "test_org").await.unwrap();
     assert!(retrieved_run.is_some(), "Should find saved run");
     assert_eq!(retrieved_run.as_ref().unwrap().id, run_id);
     assert_eq!(
@@ -138,7 +152,7 @@ async fn test_all_operations_comprehensive() {
 
     // Test GetRun with non-existent ID
     let non_existent_id = Uuid::new_v4();
-    let missing_run = storage.get_run(non_existent_id).await.unwrap();
+    let missing_run = storage.get_run(non_existent_id, "test_org").await.unwrap();
     assert!(missing_run.is_none(), "Should not find non-existent run");
 
     // Test SaveStep and GetSteps
@@ -146,6 +160,7 @@ async fn test_all_operations_comprehensive() {
     let step = StepRun {
         id: step_id,
         run_id,
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Succeeded,
         outputs: Some({
@@ -160,7 +175,7 @@ async fn test_all_operations_comprehensive() {
 
     storage.save_step(&step).await.unwrap();
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(steps.len(), 1, "Expected 1 step");
     assert_eq!(steps[0].id, step_id);
     assert_eq!(steps[0].step_name.as_str(), "test_step");
@@ -175,12 +190,12 @@ async fn test_all_operations_comprehensive() {
     let _ = resolved_run;
 
     // Test ListRuns
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 1, "Expected 1 run");
 
     // Test DeleteRun
-    storage.delete_run(run_id).await.unwrap();
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    storage.delete_run(run_id, "test_org").await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 0, "Expected 0 runs after delete");
 }
 
@@ -189,7 +204,7 @@ async fn test_get_non_existent_run() {
     let storage = SqliteStorage::new(":memory:").await.unwrap();
     let non_existent_id = Uuid::new_v4();
 
-    let result = storage.get_run(non_existent_id).await.unwrap();
+    let result = storage.get_run(non_existent_id, "test_org").await.unwrap();
     assert!(result.is_none(), "Should return None for non-existent run");
 }
 
@@ -200,6 +215,7 @@ async fn test_save_step_for_non_existent_run() {
     let step = StepRun {
         id: Uuid::new_v4(),
         run_id: Uuid::new_v4(), // Non-existent run
+        organization_id: "test_org".to_string(),
         step_name: "test_step".to_string().into(),
         status: StepStatus::Running,
         outputs: Some(HashMap::new()),
@@ -229,11 +245,13 @@ async fn test_list_runs_multiple() {
             started_at: Utc::now(),
             ended_at: Some(Utc::now()),
             steps: None,
+            organization_id: "test_org".to_string(),
+            triggered_by_user_id: "test_user".to_string(),
         };
         storage.save_run(&run).await.unwrap();
     }
 
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 5, "Expected 5 runs");
 }
 
@@ -245,11 +263,23 @@ async fn test_paused_runs_roundtrip() {
     let data2 = serde_json::json!({"step": "step2", "value": 100});
 
     storage
-        .save_paused_run("token1", "webhook.source1", data1.clone())
+        .save_paused_run(
+            "token1",
+            "webhook.source1",
+            data1.clone(),
+            "test_org",
+            "test_user",
+        )
         .await
         .unwrap();
     storage
-        .save_paused_run("token2", "webhook.source2", data2.clone())
+        .save_paused_run(
+            "token2",
+            "webhook.source2",
+            data2.clone(),
+            "test_org",
+            "test_user",
+        )
         .await
         .unwrap();
 
@@ -297,16 +327,27 @@ async fn test_oauth_credential_list_and_delete() {
             scope: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            user_id: "test_user".to_string(),
+            organization_id: "test_org".to_string(),
         };
         storage.save_oauth_credential(&cred).await.unwrap();
     }
 
-    let creds = storage.list_oauth_credentials().await.unwrap();
+    let creds = storage
+        .list_oauth_credentials("test_user", "test_org")
+        .await
+        .unwrap();
     assert_eq!(creds.len(), 3);
 
     // Delete one
-    storage.delete_oauth_credential("cred_1").await.unwrap();
-    let creds = storage.list_oauth_credentials().await.unwrap();
+    storage
+        .delete_oauth_credential("cred_1", "test_org")
+        .await
+        .unwrap();
+    let creds = storage
+        .list_oauth_credentials("test_user", "test_org")
+        .await
+        .unwrap();
     assert_eq!(creds.len(), 2);
 }
 
@@ -324,6 +365,8 @@ async fn test_oauth_credential_refresh() {
         scope: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        user_id: "test_user".to_string(),
+        organization_id: "test_org".to_string(),
     };
 
     storage.save_oauth_credential(&cred).await.unwrap();
@@ -331,13 +374,13 @@ async fn test_oauth_credential_refresh() {
     // Refresh with new token
     let new_expires = Utc::now() + chrono::Duration::hours(1);
     storage
-        .refresh_oauth_credential("refresh_test", "new_token", Some(new_expires))
+        .refresh_oauth_credential("refresh_test", "test_org", "new_token", Some(new_expires))
         .await
         .unwrap();
 
     // Verify update
     let updated = storage
-        .get_oauth_credential("google", "sheets")
+        .get_oauth_credential("google", "sheets", "test_user", "test_org")
         .await
         .unwrap();
     assert!(updated.is_some());
@@ -350,7 +393,7 @@ async fn test_get_steps_empty() {
     let storage = SqliteStorage::new(":memory:").await.unwrap();
     let run_id = Uuid::new_v4();
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(
         steps.len(),
         0,
@@ -372,6 +415,8 @@ async fn test_multiple_steps_same_run() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
     storage.save_run(&run).await.unwrap();
 
@@ -380,6 +425,7 @@ async fn test_multiple_steps_same_run() {
         let step = StepRun {
             id: Uuid::new_v4(),
             run_id,
+            organization_id: "test_org".to_string(),
             step_name: format!("step_{}", i).into(),
             status: StepStatus::Succeeded,
             outputs: Some(HashMap::new()),
@@ -390,7 +436,7 @@ async fn test_multiple_steps_same_run() {
         storage.save_step(&step).await.unwrap();
     }
 
-    let steps = storage.get_steps(run_id).await.unwrap();
+    let steps = storage.get_steps(run_id, "test_org").await.unwrap();
     assert_eq!(steps.len(), 3, "Expected 3 steps");
 }
 
@@ -428,10 +474,12 @@ async fn test_auto_create_database_file() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
 
     storage.save_run(&run).await.unwrap();
-    let retrieved = storage.get_run(run.id).await.unwrap();
+    let retrieved = storage.get_run(run.id, "test_org").await.unwrap();
     assert!(
         retrieved.is_some(),
         "Should be able to save and retrieve data"
@@ -463,7 +511,7 @@ async fn test_auto_create_parent_directories() {
     assert!(nested_path.exists(), "Database file should exist");
 
     // Verify it's functional - test with runs instead of flows
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 0, "New database should have no runs");
 }
 
@@ -479,7 +527,13 @@ async fn test_reuse_existing_database() {
     {
         let storage = SqliteStorage::new(db_path_str).await.unwrap();
         storage
-            .deploy_flow_version("existing_flow", "1.0.0", "test content")
+            .deploy_flow_version(
+                "test_org",
+                "existing_flow",
+                "1.0.0",
+                "test content",
+                "test_user",
+            )
             .await
             .unwrap();
     }
@@ -488,11 +542,14 @@ async fn test_reuse_existing_database() {
     let storage = SqliteStorage::new(db_path_str).await.unwrap();
 
     // Verify existing data is accessible
-    let version = storage.get_deployed_version("existing_flow").await.unwrap();
+    let version = storage
+        .get_deployed_version("test_org", "existing_flow")
+        .await
+        .unwrap();
     assert_eq!(version, Some("1.0.0".to_string()));
 
     let content = storage
-        .get_flow_version_content("existing_flow", "1.0.0")
+        .get_flow_version_content("test_org", "existing_flow", "1.0.0")
         .await
         .unwrap();
     assert_eq!(content, Some("test content".to_string()));
@@ -526,9 +583,11 @@ async fn test_sqlite_prefix_handling() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
     storage.save_run(&run).await.unwrap();
-    let retrieved = storage.get_run(run.id).await.unwrap();
+    let retrieved = storage.get_run(run.id, "test_org").await.unwrap();
     assert!(retrieved.is_some());
 }
 
@@ -561,6 +620,8 @@ async fn test_concurrent_database_access() {
                 started_at: Utc::now(),
                 ended_at: None,
                 steps: None,
+                organization_id: "test_org".to_string(),
+                triggered_by_user_id: "test_user".to_string(),
             };
             storage.save_run(&run).await.unwrap();
         });
@@ -573,7 +634,7 @@ async fn test_concurrent_database_access() {
 
     // Verify all runs were saved
     let storage = SqliteStorage::new(&db_path_str).await.unwrap();
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 5, "All concurrent writes should succeed");
 }
 
@@ -591,9 +652,11 @@ async fn test_memory_database_still_works() {
         started_at: Utc::now(),
         ended_at: None,
         steps: None,
+        organization_id: "test_org".to_string(),
+        triggered_by_user_id: "test_user".to_string(),
     };
     storage.save_run(&run).await.unwrap();
-    let runs = storage.list_runs(1000, 0).await.unwrap();
+    let runs = storage.list_runs("test_org", 1000, 0).await.unwrap();
     assert_eq!(runs.len(), 1);
 
     // Memory databases should not create any files

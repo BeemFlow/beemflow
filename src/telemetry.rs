@@ -10,16 +10,18 @@ use prometheus::{
 };
 
 /// HTTP requests total counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_http_requests_total",
         "Total number of HTTP requests received",
         &["handler", "method", "code"]
     )
-    .unwrap()
+    .expect("Failed to register beemflow_http_requests_total metric")
 });
 
 /// HTTP request duration histogram
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new(
@@ -28,20 +30,22 @@ static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
         ),
         &["handler", "method"]
     )
-    .unwrap()
+    .expect("Failed to register beemflow_http_request_duration_seconds metric")
 });
 
 /// Flow execution counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static FLOW_EXECUTIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_flow_executions_total",
         "Total number of flow executions",
         &["flow", "status"]
     )
-    .unwrap()
+    .expect("Failed to register beemflow_flow_executions_total metric")
 });
 
 /// Flow execution duration histogram
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static FLOW_EXECUTION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         HistogramOpts::new(
@@ -50,17 +54,18 @@ static FLOW_EXECUTION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
         ),
         &["flow"]
     )
-    .unwrap()
+    .expect("Failed to register beemflow_flow_execution_duration_seconds metric")
 });
 
 /// Step execution counter
+#[allow(clippy::expect_used)] // Startup-time metric registration should fail-fast
 static STEP_EXECUTIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "beemflow_step_executions_total",
         "Total number of step executions",
         &["flow", "step", "status"]
     )
-    .unwrap()
+    .expect("Failed to register beemflow_step_executions_total metric")
 });
 
 /// Initialize telemetry based on configuration

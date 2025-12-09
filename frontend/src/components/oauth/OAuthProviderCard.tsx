@@ -4,9 +4,11 @@ import { useConnectOAuthProvider, useDisconnectOAuthProvider } from '../../hooks
 
 interface OAuthProviderCardProps {
   provider: OAuthProviderInfo;
+  canConnect: boolean;
+  canDisconnect: boolean;
 }
 
-export function OAuthProviderCard({ provider }: OAuthProviderCardProps) {
+export function OAuthProviderCard({ provider, canConnect, canDisconnect }: OAuthProviderCardProps) {
   const [showScopes, setShowScopes] = useState(false);
   const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
 
@@ -128,15 +130,17 @@ export function OAuthProviderCard({ provider }: OAuthProviderCardProps) {
           <>
             <button
               onClick={handleDisconnect}
-              disabled={disconnectMutation.isPending}
+              disabled={!canDisconnect || disconnectMutation.isPending}
               className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              title={!canDisconnect ? 'You do not have permission to disconnect OAuth providers' : undefined}
             >
               {disconnectMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
             </button>
             <button
               onClick={handleConnect}
-              disabled={connectMutation.isPending}
+              disabled={!canConnect || connectMutation.isPending}
               className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              title={!canConnect ? 'You do not have permission to reconnect OAuth providers' : undefined}
             >
               {connectMutation.isPending ? 'Reconnecting...' : 'Reconnect'}
             </button>
@@ -144,8 +148,9 @@ export function OAuthProviderCard({ provider }: OAuthProviderCardProps) {
         ) : (
           <button
             onClick={handleConnect}
-            disabled={connectMutation.isPending}
+            disabled={!canConnect || connectMutation.isPending}
             className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+            title={!canConnect ? 'You do not have permission to connect OAuth providers' : undefined}
           >
             {connectMutation.isPending ? 'Connecting...' : 'Connect'}
           </button>

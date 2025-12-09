@@ -12,27 +12,51 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::process::Command;
 
+/// Server pool key: (organization_id, server_name)
+/// Each organization gets isolated server instances for multi-org security.
+type ServerKey = (String, String);
+
+/// Per-organization MCP server pool with thread-safe access
+type ServerPool = HashMap<ServerKey, Arc<McpServer>>;
+
 pub struct McpServer {
     service: RunningService<RoleClient, ()>,
     tools: Arc<RwLock<HashMap<String, Tool>>>,
 }
 
 impl McpServer {
+    /// Start an MCP server with organization context for multi-tenant isolation
+    ///
+    /// Each organization gets its own server instances, with BEEMFLOW_ORGANIZATION_ID
+    /// injected as an environment variable. This enables:
+    /// - Per-tenant isolation of MCP server state
+    /// - Organization-scoped credential access within MCP tools
+    /// - Audit trail per organization
     pub async fn start(
         name: &str,
         config: &McpServerConfig,
         secrets_provider: &Arc<dyn crate::secrets::SecretsProvider>,
+        organization_id: &str,
     ) -> Result<Self> {
         if config.command.trim().is_empty() {
             return Err(BeemFlowError::validation("MCP command cannot be empty"));
         }
 
-        tracing::debug!("Starting MCP server '{}': {}", name, config.command);
+        tracing::debug!(
+            "Starting MCP server '{}' for organization '{}': {}",
+            name,
+            organization_id,
+            config.command
+        );
 
         let mut cmd = Command::new(&config.command);
         if let Some(ref args) = config.args {
             cmd.args(args);
         }
+
+        // Inject organization context as environment variable for tenant isolation
+        cmd.env("BEEMFLOW_ORGANIZATION_ID", organization_id);
+
         if let Some(ref env) = config.env {
             for (k, v) in env {
                 // Use centralized secret expansion for $env: patterns
@@ -60,8 +84,9 @@ impl McpServer {
         server.discover_tools().await?;
 
         tracing::info!(
-            "Started MCP server '{}' with {} tools",
+            "Started MCP server '{}' for organization '{}' with {} tools",
             name,
+            organization_id,
             server.tools.read().len()
         );
 
@@ -98,8 +123,16 @@ impl McpServer {
     }
 }
 
+/// MCP Manager with per-organization server isolation
+///
+/// Each organization gets its own set of MCP server instances, ensuring:
+/// - Complete isolation of server state between tenants
+/// - Organization-specific environment variables injected into servers
+/// - Separate process pools per organization
 pub struct McpManager {
-    servers: Arc<RwLock<HashMap<String, Arc<McpServer>>>>,
+    /// Per-organization server instances: ServerKey -> server
+    servers: Arc<RwLock<ServerPool>>,
+    /// Server configurations (shared across organizations)
     configs: Arc<RwLock<HashMap<String, McpServerConfig>>>,
     secrets_provider: Arc<dyn crate::secrets::SecretsProvider>,
 }
@@ -117,10 +150,20 @@ impl McpManager {
         self.configs.write().insert(name, config);
     }
 
-    pub async fn get_or_start_server(&self, server_name: &str) -> Result<Arc<McpServer>> {
+    /// Get or start an MCP server for a specific organization
+    ///
+    /// Each organization gets its own server instances to ensure complete isolation.
+    /// Servers are cached per (organization_id, server_name) tuple.
+    pub async fn get_or_start_server(
+        &self,
+        server_name: &str,
+        organization_id: &str,
+    ) -> Result<Arc<McpServer>> {
+        let key = (organization_id.to_string(), server_name.to_string());
+
         {
             let servers = self.servers.read();
-            if let Some(server) = servers.get(server_name) {
+            if let Some(server) = servers.get(&key) {
                 return Ok(server.clone());
             }
         }
@@ -134,22 +177,49 @@ impl McpManager {
                 BeemFlowError::adapter(format!("MCP server '{}' not configured", server_name))
             })?;
 
-        let server =
-            Arc::new(McpServer::start(server_name, &config, &self.secrets_provider).await?);
-        self.servers
-            .write()
-            .insert(server_name.to_string(), server.clone());
+        tracing::info!(
+            server = %server_name,
+            organization = %organization_id,
+            "Starting isolated MCP server for organization"
+        );
+
+        let server = Arc::new(
+            McpServer::start(
+                server_name,
+                &config,
+                &self.secrets_provider,
+                organization_id,
+            )
+            .await?,
+        );
+
+        self.servers.write().insert(key, server.clone());
         Ok(server)
     }
 
+    /// Call a tool on an organization's MCP server
     pub async fn call_tool(
         &self,
         server_name: &str,
         tool_name: &str,
         arguments: Value,
+        organization_id: &str,
     ) -> Result<Value> {
-        let server = self.get_or_start_server(server_name).await?;
+        let server = self
+            .get_or_start_server(server_name, organization_id)
+            .await?;
         server.call_tool(tool_name, arguments).await
+    }
+
+    /// Shutdown all servers for an organization (cleanup on org delete/disable)
+    #[allow(dead_code)]
+    pub fn shutdown_organization(&self, organization_id: &str) {
+        let mut servers = self.servers.write();
+        servers.retain(|(org, _), _| org != organization_id);
+        tracing::info!(
+            organization = %organization_id,
+            "Shut down all MCP servers for organization"
+        );
     }
 }
 
