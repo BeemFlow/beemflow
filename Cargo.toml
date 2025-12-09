@@ -73,6 +73,7 @@ sqlx = { version = "0.8", features = [
     "chrono",
     "json",
     "migrate",
+    "macros",
 ] }
 
 # CLI

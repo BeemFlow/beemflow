@@ -6,9 +6,535 @@ use super::{FlowSnapshot, FlowStorage, OAuthStorage, RunStorage, StateStorage, s
 use crate::{BeemFlowError, Result, model::*};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{FromRow, PgPool};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+// ============================================================================
+// PostgreSQL Row Types (FromRow) - compile-time verified column mappings
+// ============================================================================
+
+/// PostgreSQL runs table - matches schema exactly
+#[derive(FromRow)]
+struct RunRow {
+    id: Uuid,
+    flow_name: String,
+    event: serde_json::Value,
+    vars: serde_json::Value,
+    status: String,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    organization_id: String,
+    triggered_by_user_id: String,
+}
+
+impl TryFrom<RunRow> for Run {
+    type Error = BeemFlowError;
+
+    fn try_from(row: RunRow) -> Result<Self> {
+        Ok(Run {
+            id: row.id,
+            flow_name: FlowName::new(row.flow_name)?,
+            event: parse_hashmap_from_jsonb(row.event),
+            vars: parse_hashmap_from_jsonb(row.vars),
+            status: parse_run_status(&row.status),
+            started_at: row.started_at,
+            ended_at: row.ended_at,
+            steps: None,
+            organization_id: row.organization_id,
+            triggered_by_user_id: row.triggered_by_user_id,
+        })
+    }
+}
+
+/// PostgreSQL steps table - matches schema exactly
+#[derive(FromRow)]
+struct StepRow {
+    id: Uuid,
+    run_id: Uuid,
+    organization_id: String,
+    step_name: String,
+    status: String,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    outputs: serde_json::Value,
+    error: Option<String>,
+}
+
+impl TryFrom<StepRow> for StepRun {
+    type Error = BeemFlowError;
+
+    fn try_from(row: StepRow) -> Result<Self> {
+        Ok(StepRun {
+            id: row.id,
+            run_id: row.run_id,
+            organization_id: row.organization_id,
+            step_name: StepId::new(row.step_name)?,
+            status: parse_step_status(&row.status),
+            started_at: row.started_at,
+            ended_at: row.ended_at,
+            outputs: row
+                .outputs
+                .as_object()
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            error: row.error,
+        })
+    }
+}
+
+/// PostgreSQL users table - matches schema exactly
+#[derive(FromRow)]
+struct UserRow {
+    id: String,
+    email: String,
+    name: Option<String>,
+    password_hash: String,
+    email_verified: bool,
+    avatar_url: Option<String>,
+    mfa_enabled: bool,
+    mfa_secret: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
+    disabled: bool,
+    disabled_reason: Option<String>,
+    disabled_at: Option<i64>,
+}
+
+impl TryFrom<UserRow> for crate::auth::User {
+    type Error = BeemFlowError;
+
+    fn try_from(row: UserRow) -> Result<Self> {
+        Ok(crate::auth::User {
+            id: row.id,
+            email: row.email,
+            name: row.name,
+            password_hash: row.password_hash,
+            email_verified: row.email_verified,
+            avatar_url: row.avatar_url,
+            mfa_enabled: row.mfa_enabled,
+            mfa_secret: row.mfa_secret,
+            created_at: DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now),
+            updated_at: DateTime::from_timestamp_millis(row.updated_at).unwrap_or_else(Utc::now),
+            last_login_at: row.last_login_at.and_then(DateTime::from_timestamp_millis),
+            disabled: row.disabled,
+            disabled_reason: row.disabled_reason,
+            disabled_at: row.disabled_at.and_then(DateTime::from_timestamp_millis),
+        })
+    }
+}
+
+/// PostgreSQL oauth_credentials table - matches schema exactly
+#[derive(FromRow)]
+struct OAuthCredentialRow {
+    id: String,
+    provider: String,
+    integration: String,
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    scope: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    user_id: String,
+    organization_id: String,
+}
+
+impl OAuthCredentialRow {
+    fn into_credential(self) -> Result<OAuthCredential> {
+        let (access_token, refresh_token) =
+            crate::auth::TokenEncryption::decrypt_credential_tokens(
+                self.access_token,
+                self.refresh_token,
+            )?;
+
+        Ok(OAuthCredential {
+            id: self.id,
+            provider: self.provider,
+            integration: self.integration,
+            access_token,
+            refresh_token,
+            expires_at: self.expires_at,
+            scope: self.scope,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            user_id: self.user_id,
+            organization_id: self.organization_id,
+        })
+    }
+}
+
+/// PostgreSQL oauth_providers table - matches schema exactly
+#[derive(FromRow)]
+struct OAuthProviderRow {
+    id: String,
+    name: String,
+    client_id: String,
+    client_secret: String,
+    auth_url: String,
+    token_url: String,
+    scopes: serde_json::Value,
+    auth_params: serde_json::Value,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl TryFrom<OAuthProviderRow> for OAuthProvider {
+    type Error = BeemFlowError;
+
+    fn try_from(row: OAuthProviderRow) -> Result<Self> {
+        Ok(OAuthProvider {
+            id: row.id,
+            name: row.name,
+            client_id: row.client_id,
+            client_secret: row.client_secret,
+            auth_url: row.auth_url,
+            token_url: row.token_url,
+            scopes: row.scopes.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            }),
+            auth_params: row.auth_params.as_object().map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                    .collect()
+            }),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+/// PostgreSQL oauth_clients table - matches schema exactly
+#[derive(FromRow)]
+struct OAuthClientRow {
+    id: String,
+    secret: String,
+    name: String,
+    redirect_uris: serde_json::Value,
+    grant_types: serde_json::Value,
+    response_types: serde_json::Value,
+    scope: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl TryFrom<OAuthClientRow> for OAuthClient {
+    type Error = BeemFlowError;
+
+    fn try_from(row: OAuthClientRow) -> Result<Self> {
+        Ok(OAuthClient {
+            id: row.id,
+            secret: row.secret,
+            name: row.name,
+            redirect_uris: serde_json::from_value(row.redirect_uris)?,
+            grant_types: serde_json::from_value(row.grant_types)?,
+            response_types: serde_json::from_value(row.response_types)?,
+            scope: row.scope,
+            client_uri: None,
+            logo_uri: None,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+/// PostgreSQL oauth_tokens table - matches schema exactly
+#[derive(FromRow)]
+struct OAuthTokenRow {
+    id: String,
+    client_id: String,
+    user_id: String,
+    redirect_uri: String,
+    scope: String,
+    code: String,
+    code_create_at: Option<DateTime<Utc>>,
+    code_expires_in: Option<i64>,
+    code_challenge: Option<String>,
+    code_challenge_method: Option<String>,
+    access: String,
+    access_create_at: Option<DateTime<Utc>>,
+    access_expires_in: Option<i64>,
+    refresh: String,
+    refresh_create_at: Option<DateTime<Utc>>,
+    refresh_expires_in: Option<i64>,
+}
+
+impl TryFrom<OAuthTokenRow> for OAuthToken {
+    type Error = BeemFlowError;
+
+    fn try_from(row: OAuthTokenRow) -> Result<Self> {
+        Ok(OAuthToken {
+            id: row.id,
+            client_id: row.client_id,
+            user_id: row.user_id,
+            redirect_uri: row.redirect_uri,
+            scope: row.scope,
+            code: Some(row.code),
+            code_create_at: row.code_create_at,
+            code_expires_in: row
+                .code_expires_in
+                .filter(|&s| s >= 0)
+                .map(|s| std::time::Duration::from_secs(s as u64)),
+            code_challenge: row.code_challenge,
+            code_challenge_method: row.code_challenge_method,
+            access: Some(row.access),
+            access_create_at: row.access_create_at,
+            access_expires_in: row
+                .access_expires_in
+                .filter(|&s| s >= 0)
+                .map(|s| std::time::Duration::from_secs(s as u64)),
+            refresh: Some(row.refresh),
+            refresh_create_at: row.refresh_create_at,
+            refresh_expires_in: row
+                .refresh_expires_in
+                .filter(|&s| s >= 0)
+                .map(|s| std::time::Duration::from_secs(s as u64)),
+        })
+    }
+}
+
+/// PostgreSQL organizations table - matches schema exactly
+#[derive(FromRow)]
+struct OrganizationRow {
+    id: String,
+    name: String,
+    slug: String,
+    plan: String,
+    plan_starts_at: Option<i64>,
+    plan_ends_at: Option<i64>,
+    max_users: i32,
+    max_flows: i32,
+    max_runs_per_month: i32,
+    settings: Option<serde_json::Value>,
+    created_by_user_id: String,
+    created_at: i64,
+    updated_at: i64,
+    disabled: bool,
+}
+
+impl TryFrom<OrganizationRow> for crate::auth::Organization {
+    type Error = BeemFlowError;
+
+    fn try_from(row: OrganizationRow) -> Result<Self> {
+        Ok(crate::auth::Organization {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            plan: row.plan,
+            plan_starts_at: row.plan_starts_at.and_then(DateTime::from_timestamp_millis),
+            plan_ends_at: row.plan_ends_at.and_then(DateTime::from_timestamp_millis),
+            max_users: row.max_users,
+            max_flows: row.max_flows,
+            max_runs_per_month: row.max_runs_per_month,
+            settings: row.settings,
+            created_by_user_id: row.created_by_user_id,
+            created_at: DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now),
+            updated_at: DateTime::from_timestamp_millis(row.updated_at).unwrap_or_else(Utc::now),
+            disabled: row.disabled,
+        })
+    }
+}
+
+/// PostgreSQL paused_runs table - matches schema exactly
+#[derive(FromRow)]
+struct PausedRunRow {
+    token: String,
+    data: serde_json::Value,
+}
+
+/// PostgreSQL refresh_tokens table - matches schema exactly
+#[derive(FromRow)]
+struct RefreshTokenRow {
+    id: String,
+    user_id: String,
+    token_hash: String,
+    expires_at: i64,
+    revoked: bool,
+    revoked_at: Option<i64>,
+    created_at: i64,
+    last_used_at: Option<i64>,
+    user_agent: Option<String>,
+    client_ip: Option<String>,
+}
+
+impl TryFrom<RefreshTokenRow> for crate::auth::RefreshToken {
+    type Error = BeemFlowError;
+
+    fn try_from(row: RefreshTokenRow) -> Result<Self> {
+        Ok(crate::auth::RefreshToken {
+            id: row.id,
+            user_id: row.user_id,
+            token_hash: row.token_hash,
+            expires_at: DateTime::from_timestamp_millis(row.expires_at).unwrap_or_else(Utc::now),
+            revoked: row.revoked,
+            revoked_at: row.revoked_at.and_then(DateTime::from_timestamp_millis),
+            created_at: DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now),
+            last_used_at: row.last_used_at.and_then(DateTime::from_timestamp_millis),
+            user_agent: row.user_agent,
+            client_ip: row.client_ip,
+        })
+    }
+}
+
+/// PostgreSQL organization_members table - matches schema exactly
+#[derive(FromRow)]
+struct OrganizationMemberRow {
+    id: String,
+    organization_id: String,
+    user_id: String,
+    role: String,
+    invited_by_user_id: Option<String>,
+    invited_at: Option<i64>,
+    joined_at: i64,
+    disabled: bool,
+}
+
+impl TryFrom<OrganizationMemberRow> for crate::auth::OrganizationMember {
+    type Error = BeemFlowError;
+
+    fn try_from(row: OrganizationMemberRow) -> Result<Self> {
+        let role = row
+            .role
+            .parse::<crate::auth::Role>()
+            .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", row.role)))?;
+
+        Ok(crate::auth::OrganizationMember {
+            id: row.id,
+            organization_id: row.organization_id,
+            user_id: row.user_id,
+            role,
+            invited_by_user_id: row.invited_by_user_id,
+            invited_at: row.invited_at.and_then(DateTime::from_timestamp_millis),
+            joined_at: DateTime::from_timestamp_millis(row.joined_at).unwrap_or_else(Utc::now),
+            disabled: row.disabled,
+        })
+    }
+}
+
+/// PostgreSQL flow_versions row for list_flow_versions
+#[derive(FromRow)]
+struct FlowSnapshotRow {
+    version: String,
+    deployed_at: DateTime<Utc>,
+    is_live: bool,
+}
+
+/// Helper row type for single-column queries
+#[derive(FromRow)]
+struct StringRow {
+    value: String,
+}
+
+/// Row type for flow content queries
+#[derive(FromRow)]
+struct FlowContentRow {
+    flow_name: String,
+    content: String,
+}
+
+/// Row type for organization with role (joined query)
+#[derive(FromRow)]
+struct OrganizationWithRoleRow {
+    id: String,
+    name: String,
+    slug: String,
+    plan: String,
+    plan_starts_at: Option<i64>,
+    plan_ends_at: Option<i64>,
+    max_users: i32,
+    max_flows: i32,
+    max_runs_per_month: i32,
+    settings: Option<serde_json::Value>,
+    created_by_user_id: String,
+    created_at: i64,
+    updated_at: i64,
+    disabled: bool,
+    role: String,
+}
+
+impl OrganizationWithRoleRow {
+    fn into_tuple(self) -> Result<(crate::auth::Organization, crate::auth::Role)> {
+        let role = self
+            .role
+            .parse::<crate::auth::Role>()
+            .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", self.role)))?;
+
+        let org = crate::auth::Organization {
+            id: self.id,
+            name: self.name,
+            slug: self.slug,
+            plan: self.plan,
+            plan_starts_at: self
+                .plan_starts_at
+                .and_then(DateTime::from_timestamp_millis),
+            plan_ends_at: self.plan_ends_at.and_then(DateTime::from_timestamp_millis),
+            max_users: self.max_users,
+            max_flows: self.max_flows,
+            max_runs_per_month: self.max_runs_per_month,
+            settings: self.settings,
+            created_by_user_id: self.created_by_user_id,
+            created_at: DateTime::from_timestamp_millis(self.created_at).unwrap_or_else(Utc::now),
+            updated_at: DateTime::from_timestamp_millis(self.updated_at).unwrap_or_else(Utc::now),
+            disabled: self.disabled,
+        };
+
+        Ok((org, role))
+    }
+}
+
+/// Row type for user with role (joined query)
+#[derive(FromRow)]
+struct UserWithRoleRow {
+    id: String,
+    email: String,
+    name: Option<String>,
+    password_hash: String,
+    email_verified: bool,
+    avatar_url: Option<String>,
+    mfa_enabled: bool,
+    mfa_secret: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
+    disabled: bool,
+    disabled_reason: Option<String>,
+    disabled_at: Option<i64>,
+    role: String,
+}
+
+impl UserWithRoleRow {
+    fn into_tuple(self) -> Result<(crate::auth::User, crate::auth::Role)> {
+        let role = self
+            .role
+            .parse::<crate::auth::Role>()
+            .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", self.role)))?;
+
+        let user = crate::auth::User {
+            id: self.id,
+            email: self.email,
+            name: self.name,
+            password_hash: self.password_hash,
+            email_verified: self.email_verified,
+            avatar_url: self.avatar_url,
+            mfa_enabled: self.mfa_enabled,
+            mfa_secret: self.mfa_secret,
+            created_at: DateTime::from_timestamp_millis(self.created_at).unwrap_or_else(Utc::now),
+            updated_at: DateTime::from_timestamp_millis(self.updated_at).unwrap_or_else(Utc::now),
+            last_login_at: self.last_login_at.and_then(DateTime::from_timestamp_millis),
+            disabled: self.disabled,
+            disabled_reason: self.disabled_reason,
+            disabled_at: self.disabled_at.and_then(DateTime::from_timestamp_millis),
+        };
+
+        Ok((user, role))
+    }
+}
+
+// ============================================================================
+// PostgreSQL Storage Implementation
+// ============================================================================
 
 /// PostgreSQL storage implementation
 pub struct PostgresStorage {
@@ -29,38 +555,6 @@ impl PostgresStorage {
             .map_err(|e| BeemFlowError::storage(format!("Failed to run migrations: {}", e)))?;
 
         Ok(Self { pool })
-    }
-    fn parse_run(row: &PgRow) -> Result<Run> {
-        Ok(Run {
-            id: row.try_get("id")?,
-            flow_name: FlowName::new(row.try_get::<String, _>("flow_name")?)?,
-            event: parse_hashmap_from_jsonb(row.try_get("event")?),
-            vars: parse_hashmap_from_jsonb(row.try_get("vars")?),
-            status: parse_run_status(&row.try_get::<String, _>("status")?),
-            started_at: row.try_get("started_at")?,
-            ended_at: row.try_get("ended_at")?,
-            steps: None,
-            organization_id: row.try_get("organization_id")?,
-            triggered_by_user_id: row.try_get("triggered_by_user_id")?,
-        })
-    }
-
-    fn parse_step(row: &PgRow) -> Result<StepRun> {
-        let outputs_json: serde_json::Value = row.try_get("outputs")?;
-
-        Ok(StepRun {
-            id: row.try_get("id")?,
-            run_id: row.try_get("run_id")?,
-            organization_id: row.try_get("organization_id")?,
-            step_name: StepId::new(row.try_get::<String, _>("step_name")?)?,
-            status: parse_step_status(&row.try_get::<String, _>("status")?),
-            started_at: row.try_get("started_at")?,
-            ended_at: row.try_get("ended_at")?,
-            outputs: outputs_json
-                .as_object()
-                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
-            error: row.try_get("error")?,
-        })
     }
 }
 
@@ -97,7 +591,7 @@ impl RunStorage for PostgresStorage {
     }
 
     async fn get_run(&self, id: Uuid, organization_id: &str) -> Result<Option<Run>> {
-        sqlx::query(
+        sqlx::query_as::<_, RunRow>(
             "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
              FROM runs WHERE id = $1 AND organization_id = $2",
         )
@@ -105,7 +599,7 @@ impl RunStorage for PostgresStorage {
         .bind(organization_id)
         .fetch_optional(&self.pool)
         .await?
-        .map(|row| Self::parse_run(&row))
+        .map(Run::try_from)
         .transpose()
     }
 
@@ -118,7 +612,7 @@ impl RunStorage for PostgresStorage {
         // Cap limit at 10,000 to prevent unbounded queries
         let capped_limit = limit.min(10_000);
 
-        let rows = sqlx::query(
+        sqlx::query_as::<_, RunRow>(
             "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
              FROM runs
              WHERE organization_id = $1
@@ -129,15 +623,10 @@ impl RunStorage for PostgresStorage {
         .bind(capped_limit as i64)
         .bind(offset as i64)
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut runs = Vec::new();
-        for row in rows {
-            if let Ok(run) = Self::parse_run(&row) {
-                runs.push(run);
-            }
-        }
-        Ok(runs)
+        .await?
+        .into_iter()
+        .map(Run::try_from)
+        .collect()
     }
 
     async fn list_runs_by_flow_and_status(
@@ -151,8 +640,8 @@ impl RunStorage for PostgresStorage {
         let status_str = run_status_to_str(status);
 
         // Build query with optional exclude clause
-        let query = if let Some(id) = exclude_id {
-            sqlx::query(
+        let rows = if let Some(id) = exclude_id {
+            sqlx::query_as::<_, RunRow>(
                 "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
                  FROM runs
                  WHERE organization_id = $1 AND flow_name = $2 AND status = $3 AND id != $4
@@ -164,8 +653,10 @@ impl RunStorage for PostgresStorage {
             .bind(status_str)
             .bind(id)
             .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?
         } else {
-            sqlx::query(
+            sqlx::query_as::<_, RunRow>(
                 "SELECT id, flow_name, event, vars, status, started_at, ended_at, organization_id, triggered_by_user_id
                  FROM runs
                  WHERE organization_id = $1 AND flow_name = $2 AND status = $3
@@ -176,17 +667,11 @@ impl RunStorage for PostgresStorage {
             .bind(flow_name)
             .bind(status_str)
             .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?
         };
 
-        let rows = query.fetch_all(&self.pool).await?;
-
-        let mut runs = Vec::new();
-        for row in rows {
-            if let Ok(run) = Self::parse_run(&row) {
-                runs.push(run);
-            }
-        }
-        Ok(runs)
+        rows.into_iter().map(Run::try_from).collect()
     }
 
     async fn delete_run(&self, id: Uuid, organization_id: &str) -> Result<()> {
@@ -259,22 +744,17 @@ impl RunStorage for PostgresStorage {
     }
 
     async fn get_steps(&self, run_id: Uuid, organization_id: &str) -> Result<Vec<StepRun>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, StepRow>(
             "SELECT id, run_id, organization_id, step_name, status, started_at, ended_at, outputs, error
              FROM steps WHERE run_id = $1 AND organization_id = $2",
         )
         .bind(run_id)
         .bind(organization_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut steps = Vec::new();
-        for row in rows {
-            if let Ok(step) = Self::parse_step(&row) {
-                steps.push(step);
-            }
-        }
-        Ok(steps)
+        .await?
+        .into_iter()
+        .map(StepRun::try_from)
+        .collect()
     }
 }
 
@@ -329,18 +809,11 @@ impl StateStorage for PostgresStorage {
     }
 
     async fn load_paused_runs(&self) -> Result<HashMap<String, serde_json::Value>> {
-        let rows = sqlx::query("SELECT token, data FROM paused_runs")
+        let rows = sqlx::query_as::<_, PausedRunRow>("SELECT token, data FROM paused_runs")
             .fetch_all(&self.pool)
             .await?;
 
-        let mut result = HashMap::new();
-        for row in rows {
-            let token: String = row.try_get("token")?;
-            let data: serde_json::Value = row.try_get("data")?;
-            result.insert(token, data);
-        }
-
-        Ok(result)
+        Ok(rows.into_iter().map(|row| (row.token, row.data)).collect())
     }
 
     async fn find_paused_runs_by_source(
@@ -348,7 +821,7 @@ impl StateStorage for PostgresStorage {
         source: &str,
         organization_id: &str,
     ) -> Result<Vec<(String, serde_json::Value)>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, PausedRunRow>(
             "SELECT token, data FROM paused_runs WHERE source = $1 AND organization_id = $2",
         )
         .bind(source)
@@ -356,14 +829,7 @@ impl StateStorage for PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut result = Vec::new();
-        for row in rows {
-            let token: String = row.try_get("token")?;
-            let data: serde_json::Value = row.try_get("data")?;
-            result.push((token, data));
-        }
-
-        Ok(result)
+        Ok(rows.into_iter().map(|row| (row.token, row.data)).collect())
     }
 
     async fn delete_paused_run(&self, token: &str) -> Result<()> {
@@ -377,18 +843,18 @@ impl StateStorage for PostgresStorage {
 
     async fn fetch_and_delete_paused_run(&self, token: &str) -> Result<Option<serde_json::Value>> {
         // Use DELETE ... RETURNING for atomic fetch-and-delete
-        let row = sqlx::query("DELETE FROM paused_runs WHERE token = $1 RETURNING data")
-            .bind(token)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => {
-                let data: serde_json::Value = row.try_get("data")?;
-                Ok(Some(data))
-            }
-            None => Ok(None),
+        #[derive(FromRow)]
+        struct DataRow {
+            data: serde_json::Value,
         }
+
+        Ok(
+            sqlx::query_as::<_, DataRow>("DELETE FROM paused_runs WHERE token = $1 RETURNING data")
+                .bind(token)
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|row| row.data),
+        )
     }
 }
 
@@ -507,15 +973,14 @@ impl FlowStorage for PostgresStorage {
         organization_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT deployed_version FROM deployed_flows WHERE organization_id = $1 AND flow_name = $2",
+        Ok(sqlx::query_as::<_, StringRow>(
+            "SELECT deployed_version AS value FROM deployed_flows WHERE organization_id = $1 AND flow_name = $2",
         )
         .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|r| r.try_get("deployed_version").ok()))
+        .await?
+        .map(|r| r.value))
     }
 
     async fn get_flow_version_content(
@@ -524,15 +989,15 @@ impl FlowStorage for PostgresStorage {
         flow_name: &str,
         version: &str,
     ) -> Result<Option<String>> {
-        let row =
-            sqlx::query("SELECT content FROM flow_versions WHERE organization_id = $1 AND flow_name = $2 AND version = $3")
-                .bind(organization_id)
-                .bind(flow_name)
-                .bind(version)
-                .fetch_optional(&self.pool)
-                .await?;
-
-        Ok(row.and_then(|r| r.try_get("content").ok()))
+        Ok(sqlx::query_as::<_, StringRow>(
+            "SELECT content AS value FROM flow_versions WHERE organization_id = $1 AND flow_name = $2 AND version = $3",
+        )
+        .bind(organization_id)
+        .bind(flow_name)
+        .bind(version)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| r.value))
     }
 
     async fn list_flow_versions(
@@ -540,7 +1005,7 @@ impl FlowStorage for PostgresStorage {
         organization_id: &str,
         flow_name: &str,
     ) -> Result<Vec<FlowSnapshot>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, FlowSnapshotRow>(
             "SELECT v.version, v.deployed_at,
                 CASE WHEN d.deployed_version = v.version THEN true ELSE false END as is_live
              FROM flow_versions v
@@ -553,21 +1018,15 @@ impl FlowStorage for PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut snapshots = Vec::new();
-        for row in rows {
-            let version: String = row.try_get("version")?;
-            let deployed_at: DateTime<Utc> = row.try_get("deployed_at")?;
-            let is_live: bool = row.try_get("is_live")?;
-
-            snapshots.push(FlowSnapshot {
+        Ok(rows
+            .into_iter()
+            .map(|row| FlowSnapshot {
                 flow_name: flow_name.to_string(),
-                version,
-                deployed_at,
-                is_live,
-            });
-        }
-
-        Ok(snapshots)
+                version: row.version,
+                deployed_at: row.deployed_at,
+                is_live: row.is_live,
+            })
+            .collect())
     }
 
     async fn get_latest_deployed_version_from_history(
@@ -575,8 +1034,8 @@ impl FlowStorage for PostgresStorage {
         organization_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT version FROM flow_versions
+        Ok(sqlx::query_as::<_, StringRow>(
+            "SELECT version AS value FROM flow_versions
              WHERE organization_id = $1 AND flow_name = $2
              ORDER BY deployed_at DESC, version DESC
              LIMIT 1",
@@ -584,9 +1043,8 @@ impl FlowStorage for PostgresStorage {
         .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|r| r.try_get("version").ok()))
+        .await?
+        .map(|r| r.value))
     }
 
     async fn unset_deployed_version(&self, organization_id: &str, flow_name: &str) -> Result<()> {
@@ -602,7 +1060,7 @@ impl FlowStorage for PostgresStorage {
         &self,
         organization_id: &str,
     ) -> Result<Vec<(String, String)>> {
-        let rows = sqlx::query(
+        Ok(sqlx::query_as::<_, FlowContentRow>(
             "SELECT d.flow_name, v.content
              FROM deployed_flows d
              INNER JOIN flow_versions v
@@ -613,16 +1071,10 @@ impl FlowStorage for PostgresStorage {
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut result = Vec::new();
-        for row in rows {
-            let flow_name: String = row.try_get("flow_name")?;
-            let content: String = row.try_get("content")?;
-            result.push((flow_name, content));
-        }
-
-        Ok(result)
+        .await?
+        .into_iter()
+        .map(|row| (row.flow_name, row.content))
+        .collect())
     }
 
     async fn find_flow_names_by_topic(
@@ -630,22 +1082,20 @@ impl FlowStorage for PostgresStorage {
         organization_id: &str,
         topic: &str,
     ) -> Result<Vec<String>> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT ft.flow_name
+        Ok(sqlx::query_as::<_, StringRow>(
+            "SELECT DISTINCT ft.flow_name AS value
              FROM flow_triggers ft
              INNER JOIN deployed_flows d ON ft.organization_id = d.organization_id AND ft.flow_name = d.flow_name AND ft.version = d.deployed_version
              WHERE ft.organization_id = $1 AND ft.topic = $2
-             ORDER BY ft.flow_name"
+             ORDER BY ft.flow_name",
         )
         .bind(organization_id)
         .bind(topic)
         .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| row.try_get("flow_name").ok())
-            .collect())
+        .await?
+        .into_iter()
+        .map(|r| r.value)
+        .collect())
     }
 
     async fn get_deployed_flows_content(
@@ -671,17 +1121,19 @@ impl FlowStorage for PostgresStorage {
             placeholders
         );
 
-        let mut query = sqlx::query(&query_str);
+        // Dynamic SQL with query_as - column mapping is still compile-time checked via FlowContentRow
+        let mut query = sqlx::query_as::<_, FlowContentRow>(&query_str);
         query = query.bind(organization_id);
         for name in flow_names {
             query = query.bind(name);
         }
 
-        let rows = query.fetch_all(&self.pool).await?;
-
-        rows.iter()
-            .map(|row| Ok((row.try_get("flow_name")?, row.try_get("content")?)))
-            .collect()
+        Ok(query
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|row| (row.flow_name, row.content))
+            .collect())
     }
 
     async fn get_deployed_by(
@@ -689,8 +1141,8 @@ impl FlowStorage for PostgresStorage {
         organization_id: &str,
         flow_name: &str,
     ) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT fv.deployed_by_user_id
+        Ok(sqlx::query_as::<_, StringRow>(
+            "SELECT fv.deployed_by_user_id AS value
              FROM deployed_flows df
              INNER JOIN flow_versions fv
                ON df.organization_id = fv.organization_id
@@ -701,9 +1153,8 @@ impl FlowStorage for PostgresStorage {
         .bind(organization_id)
         .bind(flow_name)
         .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|r| r.try_get("deployed_by_user_id").ok()))
+        .await?
+        .map(|r| r.value))
     }
 }
 
@@ -755,7 +1206,7 @@ impl OAuthStorage for PostgresStorage {
         user_id: &str,
         organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, OAuthCredentialRow>(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE provider = $1 AND integration = $2 AND user_id = $3 AND organization_id = $4"
@@ -765,9 +1216,9 @@ impl OAuthStorage for PostgresStorage {
         .bind(user_id)
         .bind(organization_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        row.map(|r| parse_oauth_credential_postgres(&r)).transpose()
+        .await?
+        .map(OAuthCredentialRow::into_credential)
+        .transpose()
     }
 
     async fn list_oauth_credentials(
@@ -775,7 +1226,7 @@ impl OAuthStorage for PostgresStorage {
         user_id: &str,
         organization_id: &str,
     ) -> Result<Vec<OAuthCredential>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, OAuthCredentialRow>(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE user_id = $1 AND organization_id = $2
@@ -784,9 +1235,10 @@ impl OAuthStorage for PostgresStorage {
         .bind(user_id)
         .bind(organization_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        rows.iter().map(parse_oauth_credential_postgres).collect()
+        .await?
+        .into_iter()
+        .map(OAuthCredentialRow::into_credential)
+        .collect()
     }
 
     async fn get_oauth_credential_by_id(
@@ -794,7 +1246,7 @@ impl OAuthStorage for PostgresStorage {
         id: &str,
         organization_id: &str,
     ) -> Result<Option<OAuthCredential>> {
-        sqlx::query(
+        sqlx::query_as::<_, OAuthCredentialRow>(
             "SELECT id, provider, integration, access_token, refresh_token, expires_at, scope, created_at, updated_at, user_id, organization_id
              FROM oauth_credentials
              WHERE id = $1 AND organization_id = $2"
@@ -803,7 +1255,7 @@ impl OAuthStorage for PostgresStorage {
         .bind(organization_id)
         .fetch_optional(&self.pool)
         .await?
-        .map(|row| parse_oauth_credential_postgres(&row))
+        .map(OAuthCredentialRow::into_credential)
         .transpose()
     }
 
@@ -890,64 +1342,27 @@ impl OAuthStorage for PostgresStorage {
     }
 
     async fn get_oauth_provider(&self, id: &str) -> Result<Option<OAuthProvider>> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, OAuthProviderRow>(
             "SELECT id, name, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
-             FROM oauth_providers
-             WHERE id = $1"
+             FROM oauth_providers WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => {
-                let scopes_json: serde_json::Value = row.try_get("scopes")?;
-                let auth_params_json: serde_json::Value = row.try_get("auth_params")?;
-                Ok(Some(OAuthProvider {
-                    id: row.try_get::<String, _>("id")?,
-                    name: row.try_get::<String, _>("name")?,
-                    client_id: row.try_get("client_id")?,
-                    client_secret: row.try_get("client_secret")?,
-                    auth_url: row.try_get("auth_url")?,
-                    token_url: row.try_get("token_url")?,
-                    scopes: serde_json::from_value(scopes_json).ok(),
-                    auth_params: serde_json::from_value(auth_params_json).ok(),
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                }))
-            }
-            None => Ok(None),
-        }
+        .await?
+        .map(OAuthProvider::try_from)
+        .transpose()
     }
 
     async fn list_oauth_providers(&self) -> Result<Vec<OAuthProvider>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, OAuthProviderRow>(
             "SELECT id, name, client_id, client_secret, auth_url, token_url, scopes, auth_params, created_at, updated_at
-             FROM oauth_providers
-             ORDER BY created_at DESC"
+             FROM oauth_providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut providers = Vec::new();
-        for row in rows {
-            let scopes_json: serde_json::Value = row.try_get("scopes")?;
-            let auth_params_json: serde_json::Value = row.try_get("auth_params")?;
-            providers.push(OAuthProvider {
-                id: row.try_get::<String, _>("id")?,
-                name: row.try_get::<String, _>("name")?,
-                client_id: row.try_get("client_id")?,
-                client_secret: row.try_get("client_secret")?,
-                auth_url: row.try_get("auth_url")?,
-                token_url: row.try_get("token_url")?,
-                scopes: serde_json::from_value(scopes_json).ok(),
-                auth_params: serde_json::from_value(auth_params_json).ok(),
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            });
-        }
-
-        Ok(providers)
+        .await?
+        .into_iter()
+        .map(OAuthProvider::try_from)
+        .collect()
     }
 
     async fn delete_oauth_provider(&self, id: &str) -> Result<()> {
@@ -998,76 +1413,27 @@ impl OAuthStorage for PostgresStorage {
     }
 
     async fn get_oauth_client(&self, id: &str) -> Result<Option<OAuthClient>> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, OAuthClientRow>(
             "SELECT id, secret, name, redirect_uris, grant_types, response_types, scope, created_at, updated_at
-             FROM oauth_clients
-             WHERE id = $1"
+             FROM oauth_clients WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => {
-                let redirect_uris_json: serde_json::Value = row.try_get("redirect_uris")?;
-                let grant_types_json: serde_json::Value = row.try_get("grant_types")?;
-                let response_types_json: serde_json::Value = row.try_get("response_types")?;
-
-                Ok(Some(OAuthClient {
-                    id: row.try_get("id")?,
-                    secret: row.try_get("secret")?,
-                    name: row.try_get("name")?,
-                    redirect_uris: serde_json::from_value(redirect_uris_json)?,
-                    grant_types: serde_json::from_value(grant_types_json)?,
-                    response_types: serde_json::from_value(response_types_json)?,
-                    scope: row.try_get("scope")?,
-                    client_uri: None,
-                    logo_uri: None,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                }))
-            }
-            None => Ok(None),
-        }
+        .await?
+        .map(OAuthClient::try_from)
+        .transpose()
     }
 
     async fn list_oauth_clients(&self) -> Result<Vec<OAuthClient>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, OAuthClientRow>(
             "SELECT id, secret, name, redirect_uris, grant_types, response_types, scope, created_at, updated_at
-             FROM oauth_clients
-             ORDER BY created_at DESC"
+             FROM oauth_clients ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut clients = Vec::new();
-        for row in rows {
-            let redirect_uris_json: serde_json::Value = row.try_get("redirect_uris")?;
-            let grant_types_json: serde_json::Value = row.try_get("grant_types")?;
-            let response_types_json: serde_json::Value = row.try_get("response_types")?;
-
-            if let (Ok(redirect_uris), Ok(grant_types), Ok(response_types)) = (
-                serde_json::from_value(redirect_uris_json),
-                serde_json::from_value(grant_types_json),
-                serde_json::from_value(response_types_json),
-            ) {
-                clients.push(OAuthClient {
-                    id: row.try_get("id")?,
-                    secret: row.try_get("secret")?,
-                    name: row.try_get("name")?,
-                    redirect_uris,
-                    grant_types,
-                    response_types,
-                    scope: row.try_get("scope")?,
-                    client_uri: None,
-                    logo_uri: None,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                });
-            }
-        }
-
-        Ok(clients)
+        .await?
+        .into_iter()
+        .map(OAuthClient::try_from)
+        .collect()
     }
 
     async fn delete_oauth_client(&self, id: &str) -> Result<()> {
@@ -1208,56 +1574,12 @@ impl PostgresStorage {
             }
         };
 
-        let row = sqlx::query(query)
+        sqlx::query_as::<_, OAuthTokenRow>(query)
             .bind(value)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => {
-                let code_expires_in_secs: Option<i64> = row.try_get("code_expires_in")?;
-                let access_expires_in_secs: Option<i64> = row.try_get("access_expires_in")?;
-                let refresh_expires_in_secs: Option<i64> = row.try_get("refresh_expires_in")?;
-
-                Ok(Some(OAuthToken {
-                    id: row.try_get("id")?,
-                    client_id: row.try_get("client_id")?,
-                    user_id: row.try_get("user_id")?,
-                    redirect_uri: row.try_get("redirect_uri")?,
-                    scope: row.try_get("scope")?,
-                    code: row.try_get("code")?,
-                    code_create_at: row.try_get("code_create_at")?,
-                    code_expires_in: code_expires_in_secs.and_then(|s| {
-                        if s >= 0 {
-                            Some(std::time::Duration::from_secs(s as u64))
-                        } else {
-                            None
-                        }
-                    }),
-                    code_challenge: row.try_get("code_challenge").ok(),
-                    code_challenge_method: row.try_get("code_challenge_method").ok(),
-                    access: row.try_get("access")?,
-                    access_create_at: row.try_get("access_create_at")?,
-                    access_expires_in: access_expires_in_secs.and_then(|s| {
-                        if s >= 0 {
-                            Some(std::time::Duration::from_secs(s as u64))
-                        } else {
-                            None
-                        }
-                    }),
-                    refresh: row.try_get("refresh")?,
-                    refresh_create_at: row.try_get("refresh_create_at")?,
-                    refresh_expires_in: refresh_expires_in_secs.and_then(|s| {
-                        if s >= 0 {
-                            Some(std::time::Duration::from_secs(s as u64))
-                        } else {
-                            None
-                        }
-                    }),
-                }))
-            }
-            None => Ok(None),
-        }
+            .await?
+            .map(OAuthToken::try_from)
+            .transpose()
     }
 }
 
@@ -1300,20 +1622,20 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     async fn get_user(&self, id: &str) -> Result<Option<crate::auth::User>> {
-        sqlx::query("SELECT * FROM users WHERE id = $1")
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
-            .map(|row| parse_user_postgres(&row))
+            .map(crate::auth::User::try_from)
             .transpose()
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<crate::auth::User>> {
-        sqlx::query("SELECT * FROM users WHERE email = $1 AND disabled = FALSE")
+        sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE email = $1 AND disabled = FALSE")
             .bind(email)
             .fetch_optional(&self.pool)
             .await?
-            .map(|row| parse_user_postgres(&row))
+            .map(crate::auth::User::try_from)
             .transpose()
     }
 
@@ -1390,72 +1712,24 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     async fn get_organization(&self, id: &str) -> Result<Option<crate::auth::Organization>> {
-        let row = sqlx::query("SELECT * FROM organizations WHERE id = $1")
+        sqlx::query_as::<_, OrganizationRow>("SELECT * FROM organizations WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::Organization {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                slug: row.try_get("slug")?,
-                plan: row.try_get("plan")?,
-                plan_starts_at: row
-                    .try_get::<Option<i64>, _>("plan_starts_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                plan_ends_at: row
-                    .try_get::<Option<i64>, _>("plan_ends_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                max_users: row.try_get("max_users")?,
-                max_flows: row.try_get("max_flows")?,
-                max_runs_per_month: row.try_get("max_runs_per_month")?,
-                settings: row.try_get("settings")?,
-                created_by_user_id: row.try_get("created_by_user_id")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                disabled: row.try_get("disabled")?,
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(crate::auth::Organization::try_from)
+            .transpose()
     }
 
     async fn get_organization_by_slug(
         &self,
         slug: &str,
     ) -> Result<Option<crate::auth::Organization>> {
-        let row = sqlx::query("SELECT * FROM organizations WHERE slug = $1")
+        sqlx::query_as::<_, OrganizationRow>("SELECT * FROM organizations WHERE slug = $1")
             .bind(slug)
             .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::Organization {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                slug: row.try_get("slug")?,
-                plan: row.try_get("plan")?,
-                plan_starts_at: row
-                    .try_get::<Option<i64>, _>("plan_starts_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                plan_ends_at: row
-                    .try_get::<Option<i64>, _>("plan_ends_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                max_users: row.try_get("max_users")?,
-                max_flows: row.try_get("max_flows")?,
-                max_runs_per_month: row.try_get("max_runs_per_month")?,
-                settings: row.try_get("settings")?,
-                created_by_user_id: row.try_get("created_by_user_id")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                disabled: row.try_get("disabled")?,
-            })),
-            None => Ok(None),
-        }
+            .await?
+            .map(crate::auth::Organization::try_from)
+            .transpose()
     }
 
     async fn update_organization(&self, organization: &crate::auth::Organization) -> Result<()> {
@@ -1487,39 +1761,14 @@ impl crate::storage::AuthStorage for PostgresStorage {
     }
 
     async fn list_active_organizations(&self) -> Result<Vec<crate::auth::Organization>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, OrganizationRow>(
             "SELECT * FROM organizations WHERE disabled = FALSE ORDER BY created_at ASC",
         )
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut organizations = Vec::new();
-        for row in rows {
-            organizations.push(crate::auth::Organization {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                slug: row.try_get("slug")?,
-                plan: row.try_get("plan")?,
-                plan_starts_at: row
-                    .try_get::<Option<i64>, _>("plan_starts_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                plan_ends_at: row
-                    .try_get::<Option<i64>, _>("plan_ends_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                max_users: row.try_get("max_users")?,
-                max_flows: row.try_get("max_flows")?,
-                max_runs_per_month: row.try_get("max_runs_per_month")?,
-                settings: row.try_get("settings")?,
-                created_by_user_id: row.try_get("created_by_user_id")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                disabled: row.try_get("disabled")?,
-            });
-        }
-
-        Ok(organizations)
+        .await?
+        .into_iter()
+        .map(crate::auth::Organization::try_from)
+        .collect()
     }
 
     // Organization membership methods
@@ -1555,44 +1804,22 @@ impl crate::storage::AuthStorage for PostgresStorage {
         organization_id: &str,
         user_id: &str,
     ) -> Result<Option<crate::auth::OrganizationMember>> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, OrganizationMemberRow>(
             "SELECT * FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND disabled = FALSE",
         )
         .bind(organization_id)
         .bind(user_id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        match row {
-            Some(row) => {
-                let role_str: String = row.try_get("role")?;
-                let role = role_str
-                    .parse::<crate::auth::Role>()
-                    .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
-
-                Ok(Some(crate::auth::OrganizationMember {
-                    id: row.try_get("id")?,
-                    organization_id: row.try_get("organization_id")?,
-                    user_id: row.try_get("user_id")?,
-                    role,
-                    invited_by_user_id: row.try_get("invited_by_user_id")?,
-                    invited_at: row
-                        .try_get::<Option<i64>, _>("invited_at")?
-                        .and_then(DateTime::from_timestamp_millis),
-                    joined_at: DateTime::from_timestamp_millis(row.try_get("joined_at")?)
-                        .unwrap_or_else(Utc::now),
-                    disabled: row.try_get("disabled")?,
-                }))
-            }
-            None => Ok(None),
-        }
+        .await?
+        .map(crate::auth::OrganizationMember::try_from)
+        .transpose()
     }
 
     async fn list_user_organizations(
         &self,
         user_id: &str,
     ) -> Result<Vec<(crate::auth::Organization, crate::auth::Role)>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, OrganizationWithRoleRow>(
             r#"
             SELECT o.*, om.role
             FROM organizations o
@@ -1603,49 +1830,17 @@ impl crate::storage::AuthStorage for PostgresStorage {
         )
         .bind(user_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            let role_str: String = row.try_get("role")?;
-            let role = role_str
-                .parse::<crate::auth::Role>()
-                .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
-
-            let organization = crate::auth::Organization {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                slug: row.try_get("slug")?,
-                plan: row.try_get("plan")?,
-                plan_starts_at: row
-                    .try_get::<Option<i64>, _>("plan_starts_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                plan_ends_at: row
-                    .try_get::<Option<i64>, _>("plan_ends_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                max_users: row.try_get("max_users")?,
-                max_flows: row.try_get("max_flows")?,
-                max_runs_per_month: row.try_get("max_runs_per_month")?,
-                settings: row.try_get("settings")?,
-                created_by_user_id: row.try_get("created_by_user_id")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                disabled: row.try_get("disabled")?,
-            };
-
-            results.push((organization, role));
-        }
-
-        Ok(results)
+        .await?
+        .into_iter()
+        .map(OrganizationWithRoleRow::into_tuple)
+        .collect()
     }
 
     async fn list_organization_members(
         &self,
         organization_id: &str,
     ) -> Result<Vec<(crate::auth::User, crate::auth::Role)>> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, UserWithRoleRow>(
             r#"
             SELECT u.*, om.role
             FROM users u
@@ -1656,42 +1851,10 @@ impl crate::storage::AuthStorage for PostgresStorage {
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            let role_str: String = row.try_get("role")?;
-            let role = role_str
-                .parse::<crate::auth::Role>()
-                .map_err(|_| BeemFlowError::storage(format!("Invalid role: {}", role_str)))?;
-
-            let user = crate::auth::User {
-                id: row.try_get("id")?,
-                email: row.try_get("email")?,
-                name: row.try_get("name")?,
-                password_hash: row.try_get("password_hash")?,
-                email_verified: row.try_get("email_verified")?,
-                avatar_url: row.try_get("avatar_url")?,
-                mfa_enabled: row.try_get("mfa_enabled")?,
-                mfa_secret: row.try_get("mfa_secret")?,
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                updated_at: DateTime::from_timestamp_millis(row.try_get("updated_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_login_at: row
-                    .try_get::<Option<i64>, _>("last_login_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                disabled: row.try_get("disabled")?,
-                disabled_reason: row.try_get("disabled_reason")?,
-                disabled_at: row
-                    .try_get::<Option<i64>, _>("disabled_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-            };
-
-            results.push((user, role));
-        }
-
-        Ok(results)
+        .await?
+        .into_iter()
+        .map(UserWithRoleRow::into_tuple)
+        .collect()
     }
 
     async fn update_member_role(
@@ -1754,33 +1917,14 @@ impl crate::storage::AuthStorage for PostgresStorage {
         &self,
         token_hash: &str,
     ) -> Result<Option<crate::auth::RefreshToken>> {
-        let row =
-            sqlx::query("SELECT * FROM refresh_tokens WHERE token_hash = $1 AND revoked = FALSE")
-                .bind(token_hash)
-                .fetch_optional(&self.pool)
-                .await?;
-
-        match row {
-            Some(row) => Ok(Some(crate::auth::RefreshToken {
-                id: row.try_get("id")?,
-                user_id: row.try_get("user_id")?,
-                token_hash: row.try_get("token_hash")?,
-                expires_at: DateTime::from_timestamp_millis(row.try_get("expires_at")?)
-                    .unwrap_or_else(Utc::now),
-                revoked: row.try_get("revoked")?,
-                revoked_at: row
-                    .try_get::<Option<i64>, _>("revoked_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                created_at: DateTime::from_timestamp_millis(row.try_get("created_at")?)
-                    .unwrap_or_else(Utc::now),
-                last_used_at: row
-                    .try_get::<Option<i64>, _>("last_used_at")?
-                    .and_then(DateTime::from_timestamp_millis),
-                user_agent: row.try_get("user_agent")?,
-                client_ip: row.try_get("client_ip")?,
-            })),
-            None => Ok(None),
-        }
+        sqlx::query_as::<_, RefreshTokenRow>(
+            "SELECT * FROM refresh_tokens WHERE token_hash = $1 AND revoked = FALSE",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(crate::auth::RefreshToken::try_from)
+        .transpose()
     }
 
     async fn revoke_refresh_token(&self, token_hash: &str) -> Result<()> {
