@@ -107,7 +107,7 @@ hmac = "0.12"
 
 # Utilities
 itertools = "0.14"
-bytes = "1.8"
+bytes = "1.11"
 parking_lot = "0.12"
 dashmap = "6.1"
 regex = "1.12"
