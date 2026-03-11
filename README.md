@@ -1,4 +1,9 @@
-# BeemFlow
+# NOTICE: This project is archived.
+BeemFlow is now a founder-led product studio & automation agency. Visit [beemflow.com](https://beemflow.com) for the latest.
+
+> This project served its purpose, but better tools have since emerged. We're always committed to using the right tool for the right job, whichever requires the least overhead and maintenance.
+
+### BeemFlow
 
 > **GitHub Actions for every business process — text-first, AI-native, open-source.**
 
@@ -77,15 +82,6 @@ The same universal protocol powers the BeemFlow agency, SaaS, and acquisition fl
 
 ### Why Now?
 
-**The $15 Trillion Problem:** 52% of U.S. businesses are owned by people 55+ nearing retirement.¹ 74% of these employers plan to sell or transfer ownership, but only 30% of businesses successfully find buyers.² This means if it doesn't get liquidated & donated, it ends up in the hands of big private equity conglomerates.
-
-Combine this historic generational wealth transfer with the wave of genius-level AI, and *now, as people*, we must answer this question:
-
-Do we cower in fear while the uber-rich AI overlords consolidate their wealth until we live in a technocratic oligarchy and beg for them to bump up our UBI stipends? 
-They say you will own nothing and be happy after all.
-
-Fuck that -- I vote that we take these tools that neutralize the playing field, and take this historic chance to steward a new generation of opportunity: giving creative, honest, hard-working individuals the technical and financial tools they need to achieve their dreams.
-
 We are in a new age, and things are happening fast:
 
 - **AI tooling is autonomous now:** Native MCP support gives access to any API to any LLM instantly
@@ -97,11 +93,7 @@ We are in a new age, and things are happening fast:
 
 BeemFlow isn't just about automation, it's about **acquisition**:
 
-> Deploy automation → Learn & optimize your favorite business → Build trust → Acquire with creative financing & retire a deserving business owner.
-
-Here's the thing: while everyone's debating UBI and government handouts, we're building the tools to **own shit**. Real businesses. Real assets. Real income streams that compound forever.
-
-(And hey, if you're team UBI—BeemFlow can automate those distribution systems too. We're infrastructure-agnostic. 😉)
+> Deploy automation → Learn & optimize your favorite business → Build trust → Acquire with financing & retire a deserving business owner.
 
 Every workflow you automate teaches you how a business actually works. Every process you optimize builds trust with the owner. Every efficiency you create makes acquisition financing easier.
 
