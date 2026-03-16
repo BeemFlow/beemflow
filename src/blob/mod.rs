@@ -4,7 +4,7 @@
 
 pub mod s3;
 
-use crate::{Result, constants};
+use crate::{BeemFlowError, Result, constants};
 use async_trait::async_trait;
 
 pub use s3::S3BlobStore;
@@ -69,11 +69,14 @@ impl BlobStore for FilesystemBlobStore {
         let filename = match filename {
             Some(name) if !name.is_empty() => name.to_string(),
             _ => {
-                // Safe: duration_since(UNIX_EPOCH) only fails if system time is before 1970,
-                // which is impossible on any modern system
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .expect("System time is before UNIX_EPOCH")
+                    .map_err(|e| {
+                        BeemFlowError::storage(format!(
+                            "System time error (clock set before 1970?): {}",
+                            e
+                        ))
+                    })?
                     .as_nanos();
                 format!("blob-{}", timestamp)
             }

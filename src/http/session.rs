@@ -273,11 +273,11 @@ pub fn create_csrf_middleware(
             Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(axum::body::Body::from("CSRF token validation failed"))
-                .unwrap_or_else(|_| {
-                    Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(axum::body::Body::empty())
-                        .unwrap()
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to build CSRF error response: {}", e);
+                    // If we can't even build a proper error response, return a minimal one
+                    // This should never fail because we're using simple status and empty body
+                    Response::new(axum::body::Body::from("Internal Server Error"))
                 })
         })
     }

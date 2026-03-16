@@ -14,12 +14,13 @@
 6. [Control Flow](#-control-flow)
 7. [Parallel Execution](#-parallel-execution)
 8. [Dependencies](#-dependencies)
-9. [Tools](#-tools)
-10. [Error Handling](#-error-handling)
-11. [Organizational Memory](#-organizational-memory)
-12. [Complete Examples](#-complete-examples)
-13. [Validation Rules](#-validation-rules)
-14. [LLM Checklist](#-llm-checklist)
+9. [OAuth & Authentication](#-oauth--authentication)
+10. [Tools](#-tools)
+11. [Error Handling](#-error-handling)
+12. [Organizational Memory](#-organizational-memory)
+13. [Complete Examples](#-complete-examples)
+14. [Validation Rules](#-validation-rules)
+15. [LLM Checklist](#-llm-checklist)
 
 ---
 
@@ -61,6 +62,19 @@ catch: [...]                   # optional - error handler steps
     # OR
     until: "2024-12-31T23:59:59Z"
 ```
+
+**🚨 CRITICAL RUNTIME RULES - Read Before Writing Workflows:**
+
+1. **forEach + Spreadsheets**: Use `{{ item_index + vars.start_row }}`, NOT `{{ item_row }}`
+   - `item_row` is 1-based and will overwrite header rows!
+
+2. **Null Safety**: Always check API response structure before accessing nested fields
+   - External APIs may return empty arrays, null fields, or different structures
+
+3. **OAuth**: Don't add `auth:` blocks - OAuth is automatic from tool manifests
+   - Only add `auth:` to override integration (rare)
+
+4. **Step References in forEach**: Use direct names (`{{ result.field }}`), not `{{ steps.result.field }}`
 
 **Constraint**: Each step requires exactly ONE action (choose one option from this list):
 
@@ -425,6 +439,89 @@ Minijinja provides built-in filters. Common ones:
 {{ name | trim | title }}
 ```
 
+### Null Safety & Defensive Programming
+
+**⚠️ CRITICAL: Always check before accessing nested data from external APIs**
+
+APIs may return unexpected structures. Always validate before accessing:
+
+**Bad (crashes on missing data):**
+```yaml
+# ❌ Assumes API always returns this exact structure - WILL CRASH!
+price: "{{ api_response.data.products[0].pricing.unit_price }}"
+```
+
+**Good (handles missing data gracefully):**
+```yaml
+# ✅ Check each level exists before accessing
+price: "{{ api_response.data.products[0].pricing.unit_price if (api_response.data and api_response.data.products and api_response.data.products | length > 0 and api_response.data.products[0].pricing) else 0 }}"
+
+# Or use step conditionals to skip when data is missing:
+- id: extract_price
+  use: core.echo
+  with:
+    price: "{{ api_response.data.products[0].pricing.unit_price }}"
+  # Only execute if the structure exists
+  if: "{{ api_response.data and api_response.data.products and api_response.data.products | length > 0 and api_response.data.products[0].pricing }}"
+```
+
+**Array access patterns:**
+```yaml
+# ❌ Crashes if array is empty or null
+first_item: "{{ items[0] }}"
+
+# ✅ Safe access with default
+first_item: "{{ items | first | default('N/A') }}"
+
+# ✅ Safe access with existence check
+first_item: "{{ items[0] if (items and items | length > 0) else 'N/A' }}"
+```
+
+**Nested object access patterns:**
+```yaml
+# ❌ Crashes if any level is null
+value: "{{ data.level1.level2.level3 }}"
+
+# ✅ Check each level
+value: "{{ data.level1.level2.level3 if (data and data.level1 and data.level1.level2) else null }}"
+
+# ✅ Or use step conditional
+- id: get_nested
+  use: core.echo
+  with:
+    value: "{{ data.level1.level2.level3 }}"
+  if: "{{ data and data.level1 and data.level1.level2 }}"
+```
+
+**API response validation example:**
+```yaml
+# Search API that may return empty results
+- id: search_products
+  use: external.api.search
+  with:
+    query: "{{ search_term }}"
+
+# Extract first result safely
+- id: extract_result
+  use: core.echo
+  with:
+    found: "{{ search_products.results and search_products.results | length > 0 }}"
+    product_id: "{{ search_products.results[0].id if (search_products.results and search_products.results | length > 0) else null }}"
+
+# Get details only if found
+- id: get_details
+  use: external.api.details
+  with:
+    product_id: "{{ extract_result.product_id }}"
+  if: "{{ extract_result.found }}"
+```
+
+**Key Principle:** External APIs are unreliable. Always assume:
+- Arrays might be empty
+- Fields might be null or missing
+- Nested structures might not exist
+- Use conditionals and defaults liberally
+
 ### Mathematical Operations
 
 ```yaml
@@ -535,6 +632,34 @@ Iterate over arrays with `foreach` + `as` + `do`.
 - `{{ item_index }}` - Zero-based index (0, 1, 2, ...)
 - `{{ item_row }}` - One-based index (1, 2, 3, ...)
 
+**⚠️ CRITICAL: Spreadsheet Row Index Pitfall**
+
+When updating spreadsheet rows in a forEach loop, **DO NOT use `item_row` directly!**
+
+```yaml
+# ❌ WRONG - Overwrites header row!
+# item_row is 1, 2, 3... but your data starts at row 2
+- foreach: "{{ sheet_data.values }}"
+  as: "row"
+  do:
+    - use: google_sheets.values.update
+      with:
+        range: "A{{ row_row }}"  # Writes to rows 1, 2, 3 (HEADER OVERWRITE!)
+
+# ✅ CORRECT - Accounts for header row offset
+- foreach: "{{ sheet_data.values }}"
+  as: "row"
+  do:
+    - use: google_sheets.values.update
+      with:
+        range: "A{{ row_index + vars.data_start_row }}"  # Writes to rows 2, 3, 4
+```
+
+**Formula:** `{{ item_index + start_row_offset }}`
+- `item_index` is 0-based (0, 1, 2...)
+- Add your starting row number (usually 2 if row 1 is header)
+- Result: Correct row numbers (2, 3, 4...)
+
 **Looping over API results**:
 ```yaml
 - id: fetch_users
@@ -552,23 +677,40 @@ Iterate over arrays with `foreach` + `as` + `do`.
         text: "Hello, {{ user.name }}!"
 ```
 
-**Looping over Google Sheets rows**:
+**Looping over Google Sheets rows (with updates)**:
 ```yaml
-- id: read_sheet
-  use: google_sheets.values.get
-  with:
-    spreadsheetId: "{{ vars.SHEET_ID }}"
-    range: "Sheet1!A:D"
+vars:
+  sheet_id: "abc123"
+  data_start_row: 2  # Data starts at row 2 (row 1 is header)
 
-- id: process_rows
-  foreach: "{{ read_sheet.values }}"
-  as: row
-  do:
-    - id: check_{{ row_index }}
-      if: "{{ row[0] and row[1] == 'approved' }}"
-      use: core.echo
-      with:
-        text: "Row {{ row_row }}: Processing {{ row[0] }}"
+steps:
+  - id: read_sheet
+    use: google_sheets.values.get
+    with:
+      spreadsheetId: "{{ vars.sheet_id }}"
+      range: "Sheet1!A2:D100"  # Skip header, read data rows only
+
+  - id: process_rows
+    foreach: "{{ read_sheet.values }}"
+    as: row
+    do:
+      # Read data from row
+      - id: check_status
+        use: core.echo
+        with:
+          part_number: "{{ row[0] }}"
+          status: "{{ row[1] }}"
+          processing_row: "{{ row_index + vars.data_start_row }}"
+
+      # Update spreadsheet - CRITICAL: Use row_index + offset!
+      - id: update_status
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.sheet_id }}"
+          # ✅ CORRECT: row_index (0, 1, 2...) + data_start_row (2) = rows 2, 3, 4...
+          range: "Sheet1!C{{ row_index + vars.data_start_row }}"
+          values:
+            - ["{{ check_status.result }}"]
 ```
 
 **Conditional steps in loops**:
@@ -851,6 +993,169 @@ steps:
   with:
     text: "All done!"
 ```
+
+---
+
+## 🔐 OAuth & Authentication
+
+### Overview
+
+OAuth-protected tools (Google Sheets, Digi-Key, GitHub, Slack, etc.) automatically handle authentication through tool manifests. **You typically don't need to add `auth:` blocks in your workflows** - the OAuth token is automatically retrieved and inserted into API requests.
+
+### How OAuth Works
+
+1. **Tool Manifest** defines OAuth requirement:
+   ```json
+   {
+     "name": "google_sheets.values.get",
+     "headers": {
+       "Authorization": "$oauth:google:default"
+     }
+   }
+   ```
+
+2. **HTTP Adapter** automatically expands `$oauth:google:default` to:
+   - Looks up stored OAuth credential for `google` provider, `default` integration
+   - Checks if token is expired (with 5-minute buffer)
+   - Refreshes token automatically if needed
+   - Inserts fresh token as `Authorization: Bearer {token}`
+
+3. **Your Workflow** just calls the tool:
+   ```yaml
+   - id: read_sheet
+     use: google_sheets.values.get
+     with:
+       spreadsheetId: "abc123"
+       range: "Sheet1!A1:D10"
+   # No auth: block needed - OAuth handled automatically!
+   ```
+
+### OAuth Flows Supported
+
+BeemFlow supports both OAuth 2.0 flows:
+
+#### 3-Legged OAuth (Authorization Code)
+**Use for:** User-specific data, interactive workflows
+
+**Setup:**
+```bash
+beemflow oauth authorize google  # Opens browser for user login
+```
+
+**Features:**
+- User interaction required (browser login)
+- PKCE security (SHA256)
+- Automatic token refresh
+- Refresh tokens stored encrypted
+
+#### 2-Legged OAuth (Client Credentials)
+**Use for:** Automated workflows, scheduled tasks, service accounts
+
+**Setup via HTTP API:**
+```bash
+curl -X POST http://localhost:8080/oauth/client-credentials \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "digikey",
+    "integration": "default",
+    "scopes": []
+  }'
+```
+
+**Features:**
+- No user interaction needed
+- Perfect for cron jobs
+- Runs unattended
+- Server-to-server authentication
+
+**Best Practice:** Use 2-legged OAuth for automated workflows, 3-legged for user-specific data.
+
+### Overriding OAuth Integration (Optional)
+
+The `auth:` block is **optional** and only needed when:
+1. You want a **different integration** than the manifest default
+2. For documentation/clarity (but it's redundant)
+
+```yaml
+# Manifest uses $oauth:google:default
+# But you want to use a different integration:
+- id: read_personal_sheet
+  use: google_sheets.values.get
+  with:
+    spreadsheetId: "abc123"
+    range: "A1:D10"
+  auth:
+    oauth: "google:personal"  # Override to use 'personal' integration
+```
+
+**Note:** Most workflows don't need `auth:` blocks since the manifest defaults work fine.
+
+### Environment Variables vs OAuth
+
+**OAuth** (recommended for external APIs):
+- Automatic token refresh
+- Secure credential storage (encrypted)
+- Per-user/per-integration isolation
+- Examples: Google Sheets, GitHub, Slack, Digi-Key
+
+**Environment Variables** (for static API keys):
+- Simple API keys that don't expire
+- Used via `$env:VAR_NAME` in manifests
+- Examples: OpenAI API key, Twilio auth token
+
+```yaml
+# OAuth (automatic token management):
+- id: read_sheet
+  use: google_sheets.values.get  # Uses OAuth automatically
+
+# Environment Variable (static key):
+- id: generate_text
+  use: openai.chat_completion
+  with:
+    model: "gpt-4o"
+    messages: [...]
+# Tool manifest has: "Authorization": "Bearer $env:OPENAI_API_KEY"
+```
+
+### Available OAuth Providers
+
+Query installed providers:
+```typescript
+mcp__beemflow__beemflow_list_tools()  // Check which OAuth tools are available
+```
+
+Default registry typically includes:
+- **google** - Google Sheets, Drive, Calendar, Gmail, Docs
+- **github** - Repositories, issues, projects
+- **slack** - Messages, channels, users
+- **x** - Twitter/X posts and timeline
+- **digikey** - Electronic component search and pricing
+
+### Security Features
+
+- ✅ PKCE (Proof Key for Code Exchange) - SHA256
+- ✅ Automatic token refresh (5-minute buffer before expiry)
+- ✅ Encrypted token storage
+- ✅ CSRF protection (state parameter)
+- ✅ Redirect URI validation
+- ✅ Constant-time secret comparison
+
+### Troubleshooting OAuth
+
+**"OAuth credential not found for provider:integration"**
+```bash
+# Re-authorize the provider
+beemflow oauth authorize google
+```
+
+**"Token refresh failed"**
+- Check provider credentials in environment variables
+- Verify OAuth client ID and secret are correct
+- For external APIs: Check API subscription is active
+
+**"Invalid redirect URI"**
+- Ensure redirect URI in provider settings matches BeemFlow's callback URL
+- Default: `http://localhost:8080/oauth/callback`
 
 ---
 
@@ -1454,7 +1759,96 @@ steps:
         Raw metrics: {{ fetch_metrics.total_users }} users
 ```
 
-### Example 7: Parallel API Calls with Fan-In
+### Example 7: Production-Grade forEach with Null Safety
+
+Demonstrates all best practices: null-safe API access, correct row indexing, and error handling.
+
+```yaml
+name: api_to_spreadsheet_sync
+description: |
+  Production pattern: Search external API, validate responses, update Google Sheets.
+  Shows proper null safety, row index calculation, and error handling.
+on: cli.manual
+
+vars:
+  sheet_id: "abc123xyz"
+  data_start_row: 2       # Row 1 is header, data starts at row 2
+  api_endpoint: "https://api.example.com/search"
+
+steps:
+  # Read components from spreadsheet
+  - id: read_components
+    use: google_sheets.values.get
+    with:
+      spreadsheetId: "{{ vars.sheet_id }}"
+      range: "Sheet1!A{{ vars.data_start_row }}:B100"
+      valueRenderOption: "UNFORMATTED_VALUE"
+
+  # Process each component with null-safe API calls
+  - id: process_components
+    foreach: "{{ read_components.values }}"
+    as: "component"
+    parallel: false
+    do:
+      # Search external API
+      - id: search_api
+        use: http
+        with:
+          url: "{{ vars.api_endpoint }}"
+          method: POST
+          body:
+            query: "{{ component[0] }}"
+
+      # Extract results with null safety
+      - id: extract_results
+        use: core.echo
+        with:
+          part_id: "{{ component[0] }}"
+          quantity: "{{ component[1] }}"
+          # ✅ Safe: Check structure exists before accessing
+          found: "{{ search_api.results and search_api.results | length > 0 and search_api.results[0].data }}"
+          result_id: "{{ search_api.results[0].data.id if (search_api.results and search_api.results | length > 0 and search_api.results[0].data) else '' }}"
+          price: "{{ search_api.results[0].data.price if (search_api.results and search_api.results | length > 0 and search_api.results[0].data) else 0 }}"
+
+      # Update spreadsheet with results
+      - id: update_price
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.sheet_id }}"
+          # ✅ CRITICAL: Use component_index + offset, NOT component_row!
+          range: "Sheet1!C{{ component_index + vars.data_start_row }}"
+          values:
+            - ["{{ extract_results.price }}"]
+        # Only update if we found valid data
+        if: "{{ extract_results.found }}"
+
+      # Mark not found items
+      - id: mark_not_found
+        use: google_sheets.values.update
+        with:
+          spreadsheetId: "{{ vars.sheet_id }}"
+          range: "Sheet1!C{{ component_index + vars.data_start_row }}"
+          values:
+            - ["NOT FOUND"]
+        # Only if not found
+        if: "{{ !extract_results.found }}"
+
+  # Summary with error tracking
+  - id: summary
+    use: core.echo
+    with:
+      total_processed: "{{ read_components.values | length }}"
+      message: "Processed {{ read_components.values | length }} components"
+```
+
+**Key Patterns Demonstrated:**
+1. ✅ `component_index + vars.data_start_row` - Correct row calculation
+2. ✅ Null checks before accessing nested API data
+3. ✅ Conditional execution based on data existence
+4. ✅ Direct step references (no `steps.` prefix in forEach)
+5. ✅ No `auth:` blocks (OAuth handled by manifests)
+
+### Example 8: Parallel API Calls with Fan-In
 
 ```yaml
 name: parallel_apis
@@ -1584,11 +1978,96 @@ Before generating any BeemFlow workflow, verify:
 ### Tools
 - [ ] Tool names are valid (check registry or use known tools)
 - [ ] Tool parameters are correct for the tool
-- [ ] OAuth tools use `secrets.*` for credentials
+- [ ] OAuth tools DON'T need `auth:` blocks (handled by manifests automatically)
+- [ ] Only add `auth:` block to override integration (e.g., `oauth: "google:personal"`)
+
+### Null Safety
+- [ ] Check array bounds before access: `{{ items[0] if (items and items | length > 0) else null }}`
+- [ ] Check nested paths exist: `{{ data.a.b.c if (data and data.a and data.a.b) else null }}`
+- [ ] Use step conditionals for complex API responses
+- [ ] External API data is unreliable - always validate structure
+
+### forEach Loops
+- [ ] Use `item_index + offset` for spreadsheet row calculations, NOT `item_row`
+- [ ] Inside forEach `do:` blocks, use direct references (no `steps.` prefix)
+- [ ] Check that parallel execution is safe (no race conditions)
+- [ ] Validate array exists before forEach: `if: "{{ my_array and my_array | length > 0 }}"`
 
 ### Cron
 - [ ] Cron expressions use 6-field format: `SEC MIN HOUR DAY MONTH DOW`
 - [ ] Examples: `"0 0 9 * * *"` (daily 9am), `"0 30 8 * * 1-5"` (weekdays 8:30am)
+
+### forEach Best Practices
+- [ ] **Row Index Calculation**: When updating spreadsheet rows in forEach:
+  - ❌ `{{ item_row }}` - This is 1-based (1, 2, 3...) - WRONG for data rows!
+  - ✅ `{{ item_index + start_row }}` - Correct for 0-based index + offset
+  - Example: `range: "Sheet!A{{ component_index + vars.bom_start_row }}"` writes to correct row
+- [ ] **Step References**: Inside forEach `do:` block, use direct references:
+  - ✅ `{{ extract_results.found }}` - Clean and consistent
+  - ❌ `{{ steps.extract_results.found }}` - Works but verbose
+  - Note: Both work, but direct reference is preferred in forEach
+- [ ] **Loop Variables**: These are automatically available (based on `as:` name):
+  - `item` - The current array element
+  - `item_index` - Zero-based: 0, 1, 2, 3...
+  - `item_row` - One-based: 1, 2, 3, 4... (rarely used - usually wrong!)
+- [ ] **Parallel Safety**: Only use `parallel: true` if operations are independent
+  - ✅ Safe: Multiple API reads that don't conflict
+  - ❌ Unsafe: Writing to same spreadsheet cells (race conditions)
+
+### Null Safety for External APIs
+- [ ] **Always check array bounds** before accessing elements:
+  - ❌ `{{ api_response.items[0].price }}` - Crashes if empty!
+  - ✅ `{{ api_response.items[0].price if (api_response.items and api_response.items | length > 0) else 0 }}`
+- [ ] **Check nested paths** exist:
+  - ❌ `{{ data.level1.level2.value }}` - Crashes if any level is null!
+  - ✅ `{{ data.level1.level2.value if (data.level1 and data.level1.level2) else default_value }}`
+- [ ] **Use conditionals** to skip steps when data is missing:
+  ```yaml
+  - id: process_data
+    use: some.tool
+    with:
+      value: "{{ api_result.data[0].value }}"
+    if: "{{ api_result.data and api_result.data | length > 0 }}"
+  ```
+
+### OAuth & Authentication
+- [ ] **Don't add `auth:` blocks** unless overriding integration:
+  - ❌ Adding `auth: oauth: "google:default"` when manifest already has it
+  - ✅ Only add if using different integration: `auth: oauth: "google:personal"`
+  - OAuth is handled automatically by tool manifests
+- [ ] **Check available OAuth providers** before using:
+  - Query: `mcp__beemflow__beemflow_list_tools()`
+  - Don't assume providers are configured
+
+### Template Expression Safety
+- [ ] **Array filters** before operations:
+  - ✅ `{{ items | length }}` - Returns 0 if null
+  - ✅ `{{ items | default([]) | length }}` - Explicit default
+  - ❌ `{{ items.length }}` - May fail on null
+- [ ] **Type checking** for operations:
+  - ✅ `{{ value if value else 0 }}` - Ensure number for math
+  - ✅ `{{ list | default([]) | first }}` - Safe access
+  - ❌ `{{ undefined_var + 5 }}` - Runtime error!
+
+### Spreadsheet Row Calculations
+- [ ] **Always account for header rows** when using forEach with sheets:
+  ```yaml
+  # If data starts at row 2 (row 1 is header):
+  vars:
+    start_row: 2
+
+  steps:
+    - foreach: "{{ sheet_data.values }}"
+      as: "row"
+      do:
+        - use: google_sheets.values.update
+          with:
+            # CORRECT: index 0 → row 2, index 1 → row 3
+            range: "A{{ row_index + vars.start_row }}"
+
+            # WRONG: row_row is 1, 2, 3... writes to rows 1, 2, 3 (overwrites header!)
+            # range: "A{{ row_row }}"  ← DON'T USE THIS!
+  ```
 
 ### Common Mistakes to Avoid
 - [ ] ❌ Don't use `${}`  syntax → ✅ Use `{{ }}`
@@ -1598,6 +2077,8 @@ Before generating any BeemFlow workflow, verify:
 - [ ] ❌ Don't use `continue_on_error` → ✅ Use `catch` blocks
 - [ ] ❌ Don't use `env.*` directly → ✅ Use `secrets.*`
 - [ ] ❌ Don't use date filters or `now()` → ✅ Not available in Minijinja
+- [ ] ❌ Don't use `item_row` for spreadsheet updates → ✅ Use `item_index + start_row`
+- [ ] ❌ Don't access nested API data without null checks → ✅ Use `if` conditions or ternary with checks
 
 ---
 

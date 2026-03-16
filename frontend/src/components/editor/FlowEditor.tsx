@@ -13,6 +13,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import toast, { Toaster } from 'react-hot-toast';
 
+import { useAuth } from '../../contexts/AuthContext';
 import { useFlowEditorStore } from '../../stores/flowEditorStore';
 import { StepNode } from './nodes/StepNode';
 import { TriggerNode } from './nodes/TriggerNode';
@@ -24,6 +25,7 @@ import { VarsEditor } from './VarsEditor';
 import { useFlow, useSaveFlow, useDeployFlow } from '../../hooks/useFlows';
 import { useStartRun } from '../../hooks/useRuns';
 import { graphToFlow, flowToGraph } from '../../lib/flowConverter';
+import { Permission } from '../../types/beemflow';
 import type { StepId, RegistryEntry, JsonValue } from '../../types/beemflow';
 
 // Define custom node types
@@ -35,6 +37,7 @@ const nodeTypes = {
 export function FlowEditor() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
+  const { role, hasPermission } = useAuth();
   const [flowName, setFlowName] = useState(name || '');
   const [description, setDescription] = useState('');
   const [vars, setVars] = useState<Record<string, JsonValue>>({});
@@ -45,6 +48,14 @@ export function FlowEditor() {
   const [showToolsPalette, setShowToolsPalette] = useState(true);
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'TB' | 'LR'>('TB');
+
+  // Permission checks
+  const isNewFlow = !name;
+  const canCreate = hasPermission(Permission.FlowsCreate);
+  const canUpdate = hasPermission(Permission.FlowsUpdate);
+  const canDeploy = hasPermission(Permission.FlowsDeploy);
+  const canTriggerRuns = hasPermission(Permission.RunsTrigger);
+  const isReadOnly = !canCreate && !canUpdate;
 
   // Resizable panel widths
   const [toolsPaletteWidth, setToolsPaletteWidth] = useState(280);
@@ -370,6 +381,41 @@ export function FlowEditor() {
     );
   }
 
+  // Permission check: Block viewers from creating new flows
+  if (isReadOnly && isNewFlow) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md w-full mx-auto">
+          <div className="rounded-md bg-red-50 p-6 border border-red-200">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-6 w-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">Access Denied</h3>
+                <div className="mt-2 text-sm text-red-700">
+                  <p>You don't have permission to create flows.</p>
+                  <p className="mt-1">Your current role is: <span className="font-medium capitalize">{role}</span></p>
+                  <p className="mt-2 text-xs">Contact an administrator to request elevated permissions.</p>
+                </div>
+                <div className="mt-4">
+                  <button
+                    onClick={() => navigate('/')}
+                    className="text-sm font-medium text-red-800 hover:text-red-900 underline"
+                  >
+                    Return to Dashboard
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const actualToolsPaletteWidth = showToolsPalette ? toolsPaletteWidth : 0;
   const actualInspectorWidth = showInspector ? inspectorWidth : 0;
   const actualYamlPreviewWidth = showYamlPreview ? yamlPreviewWidth : 0;
@@ -382,19 +428,33 @@ export function FlowEditor() {
       <div className="bg-white border-b border-gray-200 px-6 py-4 z-10 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex-1 max-w-2xl">
-            <input
-              type="text"
-              value={flowName}
-              onChange={(e) => setFlowName(e.target.value)}
-              placeholder="Flow name"
-              className="text-2xl font-bold border-none outline-none focus:ring-2 focus:ring-primary-500 rounded px-2 w-full"
-            />
+            <div className="flex items-center space-x-3">
+              <input
+                type="text"
+                value={flowName}
+                onChange={(e) => setFlowName(e.target.value)}
+                disabled={isReadOnly}
+                placeholder="Flow name"
+                className="text-2xl font-bold border-none outline-none focus:ring-2 focus:ring-primary-500 rounded px-2 flex-1 disabled:bg-transparent disabled:text-gray-600 disabled:cursor-not-allowed"
+              />
+              {isReadOnly && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                  Read-only
+                </span>
+              )}
+              {role && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 capitalize">
+                  {role}
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              disabled={isReadOnly}
               placeholder="Description (optional)"
-              className="mt-1 text-sm text-gray-600 border-none outline-none focus:ring-2 focus:ring-primary-500 rounded px-2 w-full"
+              className="mt-1 text-sm text-gray-600 border-none outline-none focus:ring-2 focus:ring-primary-500 rounded px-2 w-full disabled:bg-transparent disabled:cursor-not-allowed"
             />
           </div>
           <div className="flex items-center space-x-3">
@@ -461,22 +521,33 @@ export function FlowEditor() {
             >
               Cancel
             </button>
-            <button
-              onClick={handleSaveDraft}
-              disabled={saveFlow.isPending}
-              className="px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saveFlow.isPending ? 'Saving...' : 'Save Draft'}
-            </button>
-            <button
-              onClick={handleDeployAndRun}
-              disabled={saveFlow.isPending || deployFlow.isPending || startRun.isPending}
-              className="px-4 py-2 bg-primary-600 text-white hover:bg-primary-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saveFlow.isPending || deployFlow.isPending || startRun.isPending
-                ? 'Processing...'
-                : 'Deploy & Run'}
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={handleSaveDraft}
+                disabled={saveFlow.isPending}
+                className="px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={isNewFlow ? 'Save new flow' : 'Save changes to flow'}
+              >
+                {saveFlow.isPending ? 'Saving...' : 'Save Draft'}
+              </button>
+            )}
+            {canDeploy && (
+              <button
+                onClick={handleDeployAndRun}
+                disabled={saveFlow.isPending || deployFlow.isPending || startRun.isPending || !canTriggerRuns}
+                className="px-4 py-2 bg-primary-600 text-white hover:bg-primary-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={!canTriggerRuns ? 'You do not have permission to trigger runs' : 'Deploy flow and start a test run'}
+              >
+                {saveFlow.isPending || deployFlow.isPending || startRun.isPending
+                  ? 'Processing...'
+                  : 'Deploy & Run'}
+              </button>
+            )}
+            {isReadOnly && (
+              <div className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg">
+                Read-only mode - You don't have permission to edit flows
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -527,6 +598,9 @@ export function FlowEditor() {
             onPaneClick={handlePaneClick}
             onSelectionChange={handleSelectionChange}
             nodeTypes={nodeTypes}
+            nodesDraggable={!isReadOnly}
+            nodesConnectable={!isReadOnly}
+            elementsSelectable={true}
             defaultEdgeOptions={{
               animated: true,
               style: { stroke: '#6366f1', strokeWidth: 2 },
