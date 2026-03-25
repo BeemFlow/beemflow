@@ -1,13 +1,14 @@
-# NOTICE: This project is archived.
-BeemFlow is now a founder-led product studio & automation agency. Visit [beemflow.com](https://beemflow.com) for the latest.
-
-> This project served its purpose, but better tools have since emerged. We're always committed to using the right tool for the right job, whichever requires the least overhead and maintenance.
-
 ### BeemFlow
 
-> **GitHub Actions for every business process — text-first, AI-native, open-source.**
+# NOTICE: This project is archived.
 
-BeemFlow is a **workflow protocol, runtime, and global tool registry** for the age of LLM co-workers.
+BeemFlow is now a founder-led automation studio. Visit [beemflow.com](https://beemflow.com) for the latest.
+
+This project served its purpose, but better tools have since emerged. We're always committed to using the right tool for the right job, whichever requires the least overhead and maintenance.
+
+BeemFlow (was) a **workflow protocol, runtime, and global tool registry** for the age of LLM co-workers.
+
+> **GitHub Actions for every business process — text-first, AI-native, open-source.**
 
 Define workflows with YAML, JSON, or native code → execute anywhere through CLI, HTTP, or Model Context Protocol (MCP).
 
